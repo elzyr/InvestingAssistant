@@ -37,7 +37,7 @@ public class PortfolioController {
     return ResponseEntity.ok().body(portfolioService.getPortfolio(userId, id));
   }
 
-  @PatchMapping("/{id}")
+  @PutMapping("/{id}")
   public ResponseEntity<PortfolioResponse> updatePortfolio(
       @RequestHeader("X-User-Id") UUID userId,
       @Valid @RequestBody UpdatePortfolioRequest request,

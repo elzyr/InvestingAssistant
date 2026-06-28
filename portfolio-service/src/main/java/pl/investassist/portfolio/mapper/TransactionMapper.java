@@ -38,8 +38,9 @@ public final class TransactionMapper {
     transaction.setPrice(request.price());
     transaction.setCommission(request.commission());
     transaction.setCurrency(request.currency());
-    transaction.setExchangeRate(request.exchangeRate());
-    transaction.setExecutedAt(LocalDateTime.now());
+    if (request.exchangeRate() != null) {
+      transaction.setExchangeRate(request.exchangeRate());
+    }
     return transaction;
   }
 }

@@ -33,7 +33,6 @@ public final class PortfolioMapper {
     portfolio.setName(request.name());
     portfolio.setDescription(request.description());
     portfolio.setBaseCurrency(request.baseCurrency());
-    portfolio.setCreatedAt(LocalDateTime.now());
     portfolio.setPositions(new ArrayList<>());
     portfolio.setTransactions(new ArrayList<>());
     return portfolio;

@@ -134,7 +134,7 @@ public class Transaction {
         + price
         + ", commission="
         + commission
-        + ", baseCurrency="
+        + ", currency="
         + currency
         + ", exchangeRate="
         + exchangeRate
