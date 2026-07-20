@@ -34,8 +34,8 @@ services:
       - "5432:5432"
     environment:
       - POSTGRES_DB=${DB_NAME:-postgres}
-      - POSTGRES_USER=${DB_USER:-admin}
-      - POSTGRES_PASSWORD=${DB_PASSWORD:-adminpass
+      - POSTGRES_USER=${DB_USER}
+      - POSTGRES_PASSWORD=${DB_PASSWORD}
     volumes:
       - postgres_data:/var/lib/postgresql/data
       - ./postgres-init:/docker-entrypoint-initdb.d
@@ -52,10 +52,15 @@ services:
       - "8082:8082"
     environment:
       - DB_URL=jdbc:postgresql://postgres:5432/investing_assistant
-      - DB_USER=${DB_USER:-admin}
-      - DB_PASSWORD=${DB_PASSWORD:-adminpass}
+      - DB_USER=${DB_USER}
+      - DB_PASSWORD=${DB_PASSWORD}
+      - JPA_DDL_AUTO=update
+      - INSTRUMENT_SERVICE_URL=http://instrument-service:8084
+      - MARKET_DATA_SERVICE_URL=http://market-data-service:8083
     depends_on:
       - postgres
+      - instrument-service
+      - market-data-service
     networks:
       - investassist-network
     restart: always
@@ -69,8 +74,8 @@ services:
       - "8084:8084"
     environment:
       - DB_URL=jdbc:postgresql://postgres:5432/instrument_db
-      - DB_USER=${DB_USER:-admin}
-      - DB_PASSWORD=${DB_PASSWORD:-adminpass}
+      - DB_USER=${DB_USER}
+      - DB_PASSWORD=${DB_PASSWORD}
     depends_on:
       - postgres
     networks:

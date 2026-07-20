@@ -1,6 +1,8 @@
 package pl.investassist.instrument.service.impl;
 
 import java.util.List;
+import java.util.UUID;
+
 import org.springframework.stereotype.Service;
 import pl.investassist.instrument.dto.request.CreateInstrumentRequest;
 import pl.investassist.instrument.dto.response.InstrumentResponse;
@@ -34,6 +36,15 @@ public class InstrumentServiceImpl implements InstrumentService {
             .orElseThrow(
                 () ->
                     new ResourceNotFoundException("Instrument not found with symbol: " + symbol)));
+  }
+
+  @Override
+  public InstrumentResponse getInstrument(UUID uuid) {
+    return InstrumentMapper.toResponse(
+        instrumentRepository
+            .findById(uuid)
+            .orElseThrow(
+                () -> new ResourceNotFoundException("Instrument not found with UUID: " + uuid)));
   }
 
   @Override
