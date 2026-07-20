@@ -14,5 +14,4 @@ public record CreateTransactionRequest(
     @NotNull @Positive BigDecimal price,
     @NotNull @Positive BigDecimal quantity,
     @NotNull @PositiveOrZero BigDecimal commission,
-    @NotNull Currency currency,
-    @Positive BigDecimal exchangeRate) {}
+    @NotNull Currency currency) {}

@@ -9,6 +9,7 @@ import pl.investassist.portfolio.dto.request.CreateTransactionRequest;
 import pl.investassist.portfolio.dto.response.PositionResponse;
 import pl.investassist.portfolio.entity.Portfolio;
 import pl.investassist.portfolio.entity.Position;
+import pl.investassist.portfolio.enums.Currency;
 import pl.investassist.portfolio.enums.TransactionType;
 import pl.investassist.portfolio.exception.InsufficientPositionException;
 import pl.investassist.portfolio.mapper.PositionMapper;
@@ -38,14 +39,18 @@ public class PositionServiceImpl implements PositionService {
   }
 
   @Override
-  public void updatePosition(Portfolio portfolio, CreateTransactionRequest request) {
+  public void updatePosition(
+      Portfolio portfolio,
+      CreateTransactionRequest request,
+      Currency instrumentCurrency,
+      BigDecimal resolvedPrice) {
     Position position =
         positionRepository
             .findByPortfolioIdAndInstrumentId(portfolio.getId(), request.instrumentId())
-            .orElseGet(() -> createPosition(portfolio, request));
+            .orElseGet(() -> createPosition(portfolio, request, instrumentCurrency));
 
     if (request.transactionType().equals(TransactionType.BUY)) {
-      operateBuy(position, request);
+      operateBuy(position, request, resolvedPrice);
     } else if (request.transactionType().equals(TransactionType.SELL)) {
       operateSell(position, request);
     } else {
@@ -53,19 +58,21 @@ public class PositionServiceImpl implements PositionService {
     }
   }
 
-  private Position createPosition(Portfolio portfolio, CreateTransactionRequest request) {
+  private Position createPosition(
+      Portfolio portfolio, CreateTransactionRequest request, Currency instrumentCurrency) {
     Position position = new Position();
     position.setPortfolio(portfolio);
     position.setInstrumentId(request.instrumentId());
     position.setQuantity(BigDecimal.ZERO);
     position.setAverageBuyPrice(BigDecimal.ZERO);
-    position.setCurrency(request.currency());
+    position.setCurrency(instrumentCurrency);
     return position;
   }
 
-  private void operateBuy(Position position, CreateTransactionRequest request) {
+  private void operateBuy(
+      Position position, CreateTransactionRequest request, BigDecimal resolvedPrice) {
     BigDecimal newQuantity = position.getQuantity().add(request.quantity());
-    BigDecimal transactionValue = request.price().multiply(request.quantity());
+    BigDecimal transactionValue = resolvedPrice.multiply(request.quantity());
     BigDecimal currentPositionValue =
         position.getAverageBuyPrice().multiply(position.getQuantity());
     BigDecimal newAveragePrice =

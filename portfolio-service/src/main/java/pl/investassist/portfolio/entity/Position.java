@@ -6,6 +6,7 @@ import java.util.UUID;
 import pl.investassist.portfolio.enums.Currency;
 
 @Entity
+@Table(uniqueConstraints = @UniqueConstraint(columnNames = {"portfolio_id", "instrument_id"}))
 public class Position {
 
   @Id

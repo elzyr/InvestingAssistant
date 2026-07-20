@@ -1,6 +1,9 @@
 package pl.investassist.instrument.controller;
 
 import jakarta.validation.Valid;
+import java.util.List;
+import java.util.UUID;
+
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
@@ -8,8 +11,6 @@ import pl.investassist.instrument.dto.request.CreateInstrumentRequest;
 import pl.investassist.instrument.dto.response.InstrumentResponse;
 import pl.investassist.instrument.enums.InstrumentType;
 import pl.investassist.instrument.service.InstrumentService;
-
-import java.util.List;
 
 @RestController
 @RequestMapping("/api/instruments")
@@ -40,5 +41,11 @@ public class InstrumentController {
     
     List<InstrumentResponse> responses = instrumentService.getInstruments(search, type);
     return ResponseEntity.ok(responses);
+  }
+
+  @GetMapping("/{id}")
+  public ResponseEntity<InstrumentResponse> getInstrumentById(@PathVariable UUID id) {
+    InstrumentResponse response = instrumentService.getInstrument(id);
+    return ResponseEntity.ok(response);
   }
 }
