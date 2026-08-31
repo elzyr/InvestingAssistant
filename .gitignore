@@ -6,17 +6,29 @@
 .venv/
 __pycache__/
 *.pyc
+*.pyo
 
-# Java/Maven
+# Java / Maven
 target/
 *.class
 .mvn/wrapper/maven-wrapper.jar
+HELP.md
+
+# Frontend / Node
+node_modules/
+dist/
+.vite/
+
+# Logs
+*.log
+logs/
 
 # IDEs and System files
 .idea/
 *.iml
 .vscode/
 .DS_Store
+Thumbs.db
 
 # AI Agent configuration and rules
 .agents/
