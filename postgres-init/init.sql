@@ -3,3 +3,6 @@ WHERE NOT EXISTS (SELECT FROM pg_database WHERE datname = 'investing_assistant')
 
 SELECT 'CREATE DATABASE instrument_db'
 WHERE NOT EXISTS (SELECT FROM pg_database WHERE datname = 'instrument_db')\gexec
+
+SELECT 'CREATE DATABASE auth_db'
+WHERE NOT EXISTS (SELECT FROM pg_database WHERE datname = 'auth_db')\gexec
