@@ -3,8 +3,17 @@ package pl.investassist.portfolio.controller;
 import jakarta.validation.Valid;
 import java.util.List;
 import java.util.UUID;
-import org.springframework.http.ResponseEntity;
-import org.springframework.web.bind.annotation.*;
+import org.springframework.http.HttpStatus;
+import org.springframework.web.bind.annotation.DeleteMapping;
+import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PathVariable;
+import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.PutMapping;
+import org.springframework.web.bind.annotation.RequestBody;
+import org.springframework.web.bind.annotation.RequestHeader;
+import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.ResponseStatus;
+import org.springframework.web.bind.annotation.RestController;
 import pl.investassist.portfolio.dto.request.CreatePortfolioRequest;
 import pl.investassist.portfolio.dto.request.UpdatePortfolioRequest;
 import pl.investassist.portfolio.dto.response.PortfolioResponse;
@@ -20,35 +29,35 @@ public class PortfolioController {
   }
 
   @PostMapping
-  public ResponseEntity<PortfolioResponse> createPortfolio(
+  public PortfolioResponse createPortfolio(
       @RequestHeader("X-User-Id") UUID userId, @Valid @RequestBody CreatePortfolioRequest request) {
-    return ResponseEntity.ok().body(portfolioService.createPortfolio(userId, request));
+    return portfolioService.createPortfolio(userId, request);
   }
 
   @GetMapping
-  public ResponseEntity<List<PortfolioResponse>> getAllPortfolios(
+  public List<PortfolioResponse> getAllPortfolios(
       @RequestHeader("X-User-Id") UUID userId) {
-    return ResponseEntity.ok().body(portfolioService.getAllPortfolios(userId));
+    return portfolioService.getAllPortfolios(userId);
   }
 
   @GetMapping("/{id}")
-  public ResponseEntity<PortfolioResponse> getPortfolio(
+  public PortfolioResponse getPortfolio(
       @RequestHeader("X-User-Id") UUID userId, @PathVariable UUID id) {
-    return ResponseEntity.ok().body(portfolioService.getPortfolio(userId, id));
+    return portfolioService.getPortfolio(userId, id);
   }
 
   @PutMapping("/{id}")
-  public ResponseEntity<PortfolioResponse> updatePortfolio(
+  public PortfolioResponse updatePortfolio(
       @RequestHeader("X-User-Id") UUID userId,
       @Valid @RequestBody UpdatePortfolioRequest request,
       @PathVariable UUID id) {
-    return ResponseEntity.ok().body(portfolioService.updatePortfolio(userId, id, request));
+    return portfolioService.updatePortfolio(userId, id, request);
   }
 
   @DeleteMapping("/{id}")
-  public ResponseEntity<Void> deletePortfolio(
+  @ResponseStatus(HttpStatus.NO_CONTENT)
+  public void deletePortfolio(
       @RequestHeader("X-User-Id") UUID userId, @PathVariable UUID id) {
     portfolioService.deletePortfolio(userId, id);
-    return ResponseEntity.noContent().build();
   }
 }

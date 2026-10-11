@@ -9,6 +9,9 @@ import org.hibernate.annotations.CreationTimestamp;
 import pl.investassist.portfolio.enums.Currency;
 
 @Entity
+@Table(
+    name = "portfolio",
+    indexes = {@Index(name = "idx_portfolio_user_id", columnList = "user_id")})
 public class Portfolio {
   @Id
   @GeneratedValue(strategy = GenerationType.UUID)

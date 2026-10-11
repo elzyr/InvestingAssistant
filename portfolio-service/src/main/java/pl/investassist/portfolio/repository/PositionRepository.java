@@ -9,5 +9,9 @@ import pl.investassist.portfolio.entity.Position;
 public interface PositionRepository extends JpaRepository<Position, UUID> {
   List<Position> findAllByPortfolioId(UUID portfolioId);
 
-  Optional<Position> findByPortfolioIdAndInstrumentId(UUID portfolioId, UUID instrumentId);
+  Optional<Position> findFirstByPortfolioIdAndInstrumentIdAndSeriesNameIsNull(
+      UUID portfolioId, UUID instrumentId);
+
+  Optional<Position> findFirstByPortfolioIdAndInstrumentIdAndSeriesName(
+      UUID portfolioId, UUID instrumentId, String seriesName);
 }

@@ -2,8 +2,11 @@ package pl.investassist.portfolio.controller;
 
 import java.util.List;
 import java.util.UUID;
-import org.springframework.http.ResponseEntity;
-import org.springframework.web.bind.annotation.*;
+import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PathVariable;
+import org.springframework.web.bind.annotation.RequestHeader;
+import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RestController;
 import pl.investassist.portfolio.dto.response.PositionResponse;
 import pl.investassist.portfolio.service.PositionService;
 
@@ -17,8 +20,8 @@ public class PositionController {
   }
 
   @GetMapping
-  public ResponseEntity<List<PositionResponse>> getAllPositions(
+  public List<PositionResponse> getAllPositions(
       @RequestHeader("X-User-Id") UUID userId, @PathVariable UUID portfolioId) {
-    return ResponseEntity.ok().body(positionService.getPositions(userId, portfolioId));
+    return positionService.getPositions(userId, portfolioId);
   }
 }

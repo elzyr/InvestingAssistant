@@ -41,6 +41,8 @@ memory-bank/
 *-kopia/
 *— kopia/
 portfolio-service — kopia/
-*kopia/
+# User data & scratch sheets
+*.xlsx
+*.csv
 
 

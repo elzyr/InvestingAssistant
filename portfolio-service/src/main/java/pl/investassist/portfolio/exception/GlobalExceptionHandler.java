@@ -49,10 +49,14 @@ public class GlobalExceptionHandler {
     return ResponseEntity.status(HttpStatus.BAD_REQUEST).body(error);
   }
 
+  private static final org.slf4j.Logger log =
+      org.slf4j.LoggerFactory.getLogger(GlobalExceptionHandler.class);
+
   @ExceptionHandler(Exception.class)
   public ResponseEntity<ErrorResponse> handleGeneralException(Exception ex) {
+    log.error("Unhandled exception in portfolio-service:", ex);
     ErrorResponse error =
-        new ErrorResponse("An unexpected error occurred", Instant.now().toEpochMilli());
+        new ErrorResponse("An unexpected error occurred: " + ex.getMessage(), Instant.now().toEpochMilli());
     return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body(error);
   }
 

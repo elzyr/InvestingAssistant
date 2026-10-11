@@ -1,0 +1,71 @@
+{
+  "common": {
+    "appName": "InvestingAssistant",
+    "save": "Zapisz",
+    "cancel": "Anuluj",
+    "loading": "Ładowanie...",
+    "logout": "Wyloguj",
+    "error": "Wystąpił błąd",
+    "success": "Sukces",
+    "language": "Język",
+    "polish": "Polski",
+    "english": "Angielski"
+  },
+  "nav": {
+    "overview": "Przegląd",
+    "accounts": "Rachunki",
+    "transactions": "Transakcje",
+    "monteCarlo": "Symulator & Prognoza",
+    "settings": "Ustawienia",
+    "base": "Baza"
+  },
+  "auth": {
+    "loginTitle": "Zaloguj się do InvestingAssistant",
+    "loginSubtitle": "Zarządzaj swoimi inwestycjami",
+    "registerTitle": "Utwórz nowe konto",
+    "registerSubtitle": "Uzupełnij formularz, aby rozpocząć",
+    "emailLabel": "Adres e-mail",
+    "emailPlaceholder": "twoj.email@example.com",
+    "passwordLabel": "Hasło",
+    "passwordPlaceholder": "••••••••",
+    "firstNameLabel": "Imię",
+    "firstNamePlaceholder": "Jan",
+    "lastNameLabel": "Nazwisko",
+    "lastNamePlaceholder": "Kowalski",
+    "baseCurrencyLabel": "Waluta bazowa portfela",
+    "submitLogin": "Zaloguj się",
+    "submitRegister": "Zarejestruj się",
+    "noAccount": "Nie masz konta?",
+    "registerLink": "Utwórz konto",
+    "hasAccount": "Masz już konto?",
+    "loginLink": "Zaloguj się",
+    "errors": {
+      "defaultLoginError": "Nieprawidłowy e-mail lub hasło.",
+      "defaultRegisterError": "Rejestracja nie powiodła się. Spróbuj ponownie.",
+      "sessionExpired": "Twoja sesja wygasła. Zaloguj się ponownie."
+    }
+  },
+  "dashboard": {
+    "title": "Skonsolidowany Portfel Inwestycyjny",
+    "subtitle": "Wyceny w czasie rzeczywistym przeliczone po kursach NBP",
+    "refresh": "Odśwież wyceny",
+    "newTransaction": "+ Nowa transakcja",
+    "portfolioValue": "Wartość aktywów",
+    "nominalProfit": "Zysk nominalny (P&L)",
+    "realProfit": "Realny zysk (po inflacji)",
+    "purchasingPower": "Siła nabywcza",
+    "currencyExposure": "Ekspozycja walutowa",
+    "today": "Dziś",
+    "allTime": "Od początku",
+    "valuationVsBenchmark": "Wycena Portfela vs Benchmark",
+    "assetStructure": "Struktura Aktywów",
+    "holdingsTitle": "Pozycje w Portfelu i Trendy 7D",
+    "holdingsSubtitle": "Automatyczny przelicznik zysków z uwzględnieniem kursu walutowego transakcji",
+    "searchPlaceholder": "Szukaj tickera..."
+  },
+  "monteCarlo": {
+    "title": "Symulacje Przyszłości Portfela — Monte Carlo",
+    "subtitle": "Prognoza 10 000 równoległych ścieżek stóp zwrotu z uwzględnieniem inflacji",
+    "recalculate": "Przelicz ponownie"
+  }
+}

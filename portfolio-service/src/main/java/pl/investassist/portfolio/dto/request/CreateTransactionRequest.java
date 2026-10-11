@@ -1,10 +1,14 @@
 package pl.investassist.portfolio.dto.request;
 
 import jakarta.validation.constraints.NotNull;
+import jakarta.validation.constraints.PastOrPresent;
 import jakarta.validation.constraints.Positive;
 import jakarta.validation.constraints.PositiveOrZero;
 import java.math.BigDecimal;
+import java.time.LocalDateTime;
 import java.util.UUID;
+import pl.investassist.portfolio.entity.Portfolio;
+import pl.investassist.portfolio.entity.Transaction;
 import pl.investassist.portfolio.enums.Currency;
 import pl.investassist.portfolio.enums.TransactionType;
 
@@ -14,4 +18,30 @@ public record CreateTransactionRequest(
     @NotNull @Positive BigDecimal price,
     @NotNull @Positive BigDecimal quantity,
     @NotNull @PositiveOrZero BigDecimal commission,
-    @NotNull Currency currency) {}
+    @NotNull Currency currency,
+    @PastOrPresent(message = "Transaction date cannot be in the future")
+    LocalDateTime executedAt,
+    String seriesName,
+    BigDecimal bondRate,
+    BigDecimal bondMargin,
+    Integer termMonths,
+    BigDecimal baseAmount) {
+
+  public Transaction toEntity(Portfolio portfolio) {
+    Transaction transaction = new Transaction();
+    transaction.setPortfolio(portfolio);
+    transaction.setInstrumentId(instrumentId);
+    transaction.setTransactionType(transactionType);
+    transaction.setQuantity(quantity);
+    transaction.setPrice(price);
+    transaction.setCommission(commission);
+    transaction.setCurrency(currency);
+    transaction.setExecutedAt(executedAt != null ? executedAt : LocalDateTime.now());
+    transaction.setSeriesName(seriesName);
+    transaction.setBondRate(bondRate);
+    transaction.setBondMargin(bondMargin);
+    transaction.setTermMonths(termMonths);
+    transaction.setBaseAmount(baseAmount);
+    return transaction;
+  }
+}

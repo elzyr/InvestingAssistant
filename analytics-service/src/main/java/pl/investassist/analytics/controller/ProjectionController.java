@@ -6,30 +6,23 @@ import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
-import pl.investassist.analytics.dto.request.InvestmentProjectionRequest;
 import pl.investassist.analytics.dto.request.MonteCarloRequest;
-import pl.investassist.analytics.dto.response.InvestmentProjectionResponse;
 import pl.investassist.analytics.dto.response.MonteCarloResponse;
-import pl.investassist.analytics.service.ProjectionService;
+import pl.investassist.analytics.service.MonteCarloService;
 
 @RestController
 @RequestMapping("/api/analytics")
 public class ProjectionController {
-  private final ProjectionService projectionService;
 
-  public ProjectionController(ProjectionService projectionService) {
-    this.projectionService = projectionService;
-  }
+  private final MonteCarloService monteCarloService;
 
-  @PostMapping("/projections")
-  public ResponseEntity<InvestmentProjectionResponse> createProjection(
-      @Valid @RequestBody InvestmentProjectionRequest projection) {
-    return ResponseEntity.ok(projectionService.calculateProjection(projection));
+  public ProjectionController(MonteCarloService monteCarloService) {
+    this.monteCarloService = monteCarloService;
   }
 
   @PostMapping("/monte-carlo")
   public ResponseEntity<MonteCarloResponse> createMonteCarlo(
       @Valid @RequestBody MonteCarloRequest monteCarlo) {
-    return ResponseEntity.ok(projectionService.calculateMonteCarlo(monteCarlo));
+    return ResponseEntity.ok(monteCarloService.calculateMonteCarlo(monteCarlo));
   }
 }

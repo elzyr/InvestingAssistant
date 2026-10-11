@@ -3,12 +3,11 @@ package pl.investassist.instrument.controller;
 import jakarta.validation.Valid;
 import java.util.List;
 import java.util.UUID;
-
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
-import pl.investassist.instrument.dto.request.CreateInstrumentRequest;
-import pl.investassist.instrument.dto.response.InstrumentResponse;
+import pl.investassist.instrument.dto.CreateInstrumentRequest;
+import pl.investassist.instrument.dto.InstrumentResponse;
 import pl.investassist.instrument.enums.InstrumentType;
 import pl.investassist.instrument.service.InstrumentService;
 
@@ -38,7 +37,6 @@ public class InstrumentController {
   public ResponseEntity<List<InstrumentResponse>> getInstruments(
       @RequestParam(required = false) String search,
       @RequestParam(required = false) InstrumentType type) {
-    
     List<InstrumentResponse> responses = instrumentService.getInstruments(search, type);
     return ResponseEntity.ok(responses);
   }
