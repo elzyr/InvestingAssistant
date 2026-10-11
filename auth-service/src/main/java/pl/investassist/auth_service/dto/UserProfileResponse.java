@@ -1,4 +1,4 @@
-﻿package pl.investassist.auth_service.dto;
+package pl.investassist.auth_service.dto;
 
 import java.time.LocalDateTime;
 import java.util.UUID;

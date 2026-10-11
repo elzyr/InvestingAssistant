@@ -32,3 +32,11 @@ class CacheService:
             )
         except Exception as e:
             logging.warning(f"Cache set error: {e}")
+
+    def delete(self, key: str):
+        try:
+            self.redis_client.delete(key)
+        except Exception as e:
+            logging.warning(f"Cache delete error: {e}")
+
+cache_service = CacheService()

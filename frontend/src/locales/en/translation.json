@@ -1,0 +1,71 @@
+{
+  "common": {
+    "appName": "InvestingAssistant",
+    "save": "Save",
+    "cancel": "Cancel",
+    "loading": "Loading...",
+    "logout": "Logout",
+    "error": "An error occurred",
+    "success": "Success",
+    "language": "Language",
+    "polish": "Polish",
+    "english": "English"
+  },
+  "nav": {
+    "overview": "Overview",
+    "accounts": "Accounts",
+    "transactions": "Transactions",
+    "monteCarlo": "Simulator & Forecast",
+    "settings": "Settings",
+    "base": "Base"
+  },
+  "auth": {
+    "loginTitle": "Sign in to InvestingAssistant",
+    "loginSubtitle": "Manage your investments",
+    "registerTitle": "Create a new account",
+    "registerSubtitle": "Fill in the form to get started",
+    "emailLabel": "Email address",
+    "emailPlaceholder": "your.email@example.com",
+    "passwordLabel": "Password",
+    "passwordPlaceholder": "••••••••",
+    "firstNameLabel": "First name",
+    "firstNamePlaceholder": "John",
+    "lastNameLabel": "Last name",
+    "lastNamePlaceholder": "Doe",
+    "baseCurrencyLabel": "Portfolio base currency",
+    "submitLogin": "Sign in",
+    "submitRegister": "Sign up",
+    "noAccount": "Don't have an account?",
+    "registerLink": "Create account",
+    "hasAccount": "Already have an account?",
+    "loginLink": "Sign in",
+    "errors": {
+      "defaultLoginError": "Invalid email or password.",
+      "defaultRegisterError": "Registration failed. Please try again.",
+      "sessionExpired": "Your session has expired. Please sign in again."
+    }
+  },
+  "dashboard": {
+    "title": "Consolidated Investment Portfolio",
+    "subtitle": "Real-time valuations converted via central bank rates",
+    "refresh": "Refresh prices",
+    "newTransaction": "+ New transaction",
+    "portfolioValue": "Portfolio value",
+    "nominalProfit": "Nominal profit (P&L)",
+    "realProfit": "Real profit (after inflation)",
+    "purchasingPower": "Purchasing power",
+    "currencyExposure": "Currency exposure",
+    "today": "Today",
+    "allTime": "All time",
+    "valuationVsBenchmark": "Portfolio Value vs Benchmark",
+    "assetStructure": "Asset Structure",
+    "holdingsTitle": "Portfolio Holdings & 7D Trends",
+    "holdingsSubtitle": "Automatic multi-currency profit calculation including historical FX rates",
+    "searchPlaceholder": "Search ticker..."
+  },
+  "monteCarlo": {
+    "title": "Portfolio Future Simulations — Monte Carlo",
+    "subtitle": "Forecast of 10,000 parallel return paths adjusted for inflation",
+    "recalculate": "Recalculate"
+  }
+}

@@ -2,7 +2,7 @@ package pl.investassist.portfolio.client;
 
 import java.math.BigDecimal;
 import java.time.Duration;
-
+import java.time.LocalDate;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.client.SimpleClientHttpRequestFactory;
 import org.springframework.stereotype.Component;
@@ -26,15 +26,18 @@ public class MarketDataClient {
         .build();
   }
 
-  public BigDecimal getExchangeRate(Currency from, Currency to) {
+  public BigDecimal getExchangeRate(Currency from, Currency to, LocalDate date) {
+    if (from.equals(to)) {
+      return BigDecimal.ONE;
+    }
     try {
+      String uri = date != null
+          ? String.format("/api/currencies/rate?from_currency=%s&to_currency=%s&date=%s", from.name(), to.name(), date)
+          : String.format("/api/currencies/rate?from_currency=%s&to_currency=%s", from.name(), to.name());
       ExchangeRateResponse response =
           restClient
               .get()
-              .uri(
-                  "/api/currencies/rate?from_currency={from}&to_currency={to}",
-                  from.name(),
-                  to.name())
+              .uri(uri)
               .retrieve()
               .body(ExchangeRateResponse.class);
       if (response == null || response.rate() == null) {

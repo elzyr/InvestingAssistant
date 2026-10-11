@@ -6,18 +6,36 @@ spring:
     name: api-gateway
   cloud:
     gateway:
+      globalcors:
+        cors-configurations:
+          '[/**]':
+            allowedOrigins:
+              - "http://localhost:5173"
+              - "http://localhost:3000"
+            allowedMethods:
+              - GET
+              - POST
+              - PUT
+              - DELETE
+              - OPTIONS
+              - PATCH
+            allowedHeaders:
+              - "*"
+            exposedHeaders:
+              - Authorization
+              - X-User-Id
+            allowCredentials: true
+            maxAge: 3600
       routes:
         - id: auth-service
           uri: ${AUTH_SERVICE_URL:http://localhost:8081}
           predicates:
-            - Path=/api/auth/**
+            - Path=/api/auth, /api/auth/**
 
         - id: portfolio-service
           uri: ${PORTFOLIO_SERVICE_URL:http://localhost:8082}
           predicates:
-            - Path=/api/portfolios/**
-            - Path=/api/positions/**
-            - Path=/api/transactions/**
+            - Path=/api/portfolios, /api/portfolios/**, /api/positions/**, /api/transactions/**
 
         - id: market-data-service
           uri: ${MARKET_DATA_SERVICE_URL:http://localhost:8083}
@@ -27,12 +45,12 @@ spring:
         - id: instrument-service
           uri: ${INSTRUMENT_SERVICE_URL:http://localhost:8084}
           predicates:
-            - Path=/api/instruments/**
+            - Path=/api/instruments, /api/instruments/**
 
         - id: analytics-service
           uri: ${ANALYTICS_SERVICE_URL:http://localhost:8085}
           predicates:
-            - Path=/api/analytics/**
+            - Path=/api/analytics, /api/analytics/**
 
 jwt:
   secret: ${JWT_SECRET}

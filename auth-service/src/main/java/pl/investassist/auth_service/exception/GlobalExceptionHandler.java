@@ -9,25 +9,15 @@ import org.springframework.validation.FieldError;
 import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
+import org.springframework.web.server.ResponseStatusException;
 
 @RestControllerAdvice
 public class GlobalExceptionHandler {
 
-  @ExceptionHandler(UserAlreadyExistsException.class)
-  public ResponseEntity<Map<String, Object>> handleUserAlreadyExists(
-      UserAlreadyExistsException ex) {
-    return buildResponse(HttpStatus.CONFLICT, ex.getMessage());
-  }
-
-  @ExceptionHandler(InvalidCredentialsException.class)
-  public ResponseEntity<Map<String, Object>> handleInvalidCredentials(
-      InvalidCredentialsException ex) {
-    return buildResponse(HttpStatus.UNAUTHORIZED, ex.getMessage());
-  }
-
-  @ExceptionHandler(InvalidTokenException.class)
-  public ResponseEntity<Map<String, Object>> handleInvalidToken(InvalidTokenException ex) {
-    return buildResponse(HttpStatus.UNAUTHORIZED, ex.getMessage());
+  @ExceptionHandler(ResponseStatusException.class)
+  public ResponseEntity<Map<String, Object>> handleResponseStatusException(
+      ResponseStatusException ex) {
+    return buildResponse(HttpStatus.valueOf(ex.getStatusCode().value()), ex.getReason());
   }
 
   @ExceptionHandler(MethodArgumentNotValidException.class)
