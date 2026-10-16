@@ -86,6 +86,7 @@ public class TransactionService {
     }
 
     UUID oldInstrumentId = transaction.getInstrumentId();
+    Currency oldCurrency = transaction.getCurrency() != null ? transaction.getCurrency() : portfolio.getBaseCurrency();
     String oldSeries = (transaction.getSeriesName() != null && !transaction.getSeriesName().trim().isBlank())
         ? transaction.getSeriesName().trim() : null;
     String newSeries = (request.seriesName() != null && !request.seriesName().trim().isBlank())
@@ -98,9 +99,6 @@ public class TransactionService {
     ResolvedFinancials financials = resolveFinancials(
         foundInstrument, portfolio, request.currency(), request.price(),
         request.quantity(), request.commission(), request.baseAmount(), txDate);
-
-    InstrumentResponse oldInstrument = !sameInstrumentAndSeries
-        ? instrumentClient.getInstrumentById(oldInstrumentId) : null;
 
     return transactionTemplate.execute(status -> {
       transaction.setInstrumentId(request.instrumentId());
@@ -122,8 +120,7 @@ public class TransactionService {
       Transaction savedTransaction = transactionRepository.save(transaction);
 
       if (!sameInstrumentAndSeries) {
-        Currency oldCur = oldInstrument != null ? oldInstrument.currency() : portfolio.getBaseCurrency();
-        positionService.recalculatePosition(portfolio, oldInstrumentId, oldCur, oldSeries);
+        positionService.recalculatePosition(portfolio, oldInstrumentId, oldCurrency, oldSeries);
       }
       positionService.recalculatePosition(portfolio, foundInstrument.id(), foundInstrument.currency(), request.seriesName());
 
@@ -140,8 +137,7 @@ public class TransactionService {
     String seriesName = (transaction.getSeriesName() != null && !transaction.getSeriesName().trim().isBlank())
         ? transaction.getSeriesName().trim() : null;
 
-    InstrumentResponse foundInstrument = instrumentClient.getInstrumentById(instrumentId);
-    Currency cur = foundInstrument != null ? foundInstrument.currency() : portfolio.getBaseCurrency();
+    Currency cur = transaction.getCurrency() != null ? transaction.getCurrency() : portfolio.getBaseCurrency();
 
     transactionTemplate.executeWithoutResult(status -> {
       transactionRepository.delete(transaction);
@@ -149,6 +145,7 @@ public class TransactionService {
     });
   }
 
+  @org.springframework.transaction.annotation.Transactional(readOnly = true)
   public List<TransactionResponse> getTransactions(UUID userId, UUID portfolioId) {
     portfolioService.validateAndGetPortfolioEntity(userId, portfolioId);
     return transactionRepository.findAllByPortfolioIdOrderByExecutedAtDesc(portfolioId).stream()

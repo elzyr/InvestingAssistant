@@ -12,7 +12,7 @@ export const loginThunk = createAsyncThunk<{ accessToken: string; user: UserProf
         try {
             const authData = await authService.login(credentials);
             setAccessToken(authData.accessToken);
-            const user = await authService.getCurrentUser();
+            const user = authData.user ?? (await authService.getCurrentUser());
             return {accessToken: authData.accessToken, user};
         } catch (error) {
             if (axios.isAxiosError(error) && error.response?.data?.message) {
@@ -32,7 +32,7 @@ export const registerThunk = createAsyncThunk<{ accessToken: string; user: UserP
         try {
             const authData = await authService.register(credentials);
             setAccessToken(authData.accessToken);
-            const user = await authService.getCurrentUser();
+            const user = authData.user ?? (await authService.getCurrentUser());
             return {accessToken: authData.accessToken, user};
         } catch (error) {
             if (axios.isAxiosError(error) && error.response?.data?.message) {
@@ -51,14 +51,14 @@ export const checkAuthThunk = createAsyncThunk<{ accessToken: string; user: User
         try {
             const authData = await authService.refreshToken();
             setAccessToken(authData.accessToken);
-            const user = await authService.getCurrentUser();
+            const user = authData.user ?? (await authService.getCurrentUser());
             return {accessToken: authData.accessToken, user};
         } catch {
             setAccessToken(null);
             return rejectWithValue(null);
         }
     }
-)
+);
 
 export const logoutThunk = createAsyncThunk<void, void>(
     'auth/logout',

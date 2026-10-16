@@ -22,7 +22,8 @@ public class Transaction {
   @GeneratedValue(strategy = GenerationType.UUID)
   private UUID id;
 
-  @ManyToOne private Portfolio portfolio;
+  @ManyToOne(fetch = FetchType.LAZY)
+  private Portfolio portfolio;
 
   private UUID instrumentId;
 

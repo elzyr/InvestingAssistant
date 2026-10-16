@@ -128,7 +128,7 @@ export const MonteCarloPage = () => {
       const inst = instruments[tx.instrumentId];
       const sName = (tx.seriesName || inst?.symbol || '').toUpperCase();
       const fx = (tx.currency === baseCurrency ? 1 : rates[tx.currency]) || 1;
-      const cost = (tx.baseAmount ?? tx.quantity * tx.price) * fx;
+      const cost = tx.baseAmount ?? tx.quantity * tx.price * fx;
 
       if (sName.startsWith('TOS')) {
         tosTotal += cost;

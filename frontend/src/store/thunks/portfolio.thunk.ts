@@ -38,6 +38,8 @@ export const fetchPortfolios = createAsyncThunk<
   }
 });
 
+import type { RootState, AppDispatch } from '../store.ts';
+
 export const fetchPositions = createAsyncThunk<
   {
     positions: PositionResponse[];
@@ -48,36 +50,45 @@ export const fetchPositions = createAsyncThunk<
     historicalSortedDates: Record<string, string[]>;
   },
   string,
-  { rejectValue: string }
->('portfolio/fetchPositions', async (portfolioId, { rejectWithValue }) => {
+  { state: RootState; rejectValue: string }
+>('portfolio/fetchPositions', async (portfolioId, { getState, rejectWithValue }) => {
   try {
-    const [positions, instrumentsList] = await Promise.all([
+    const currentState = getState().portfolio;
+    const hasInstrumentsCached = Object.keys(currentState.instruments).length > 0;
+
+    const [positions, fetchedInstruments] = await Promise.all([
       portfolioService.getPositions(portfolioId),
-      instrumentService.getInstruments(),
+      hasInstrumentsCached ? Promise.resolve([]) : instrumentService.getInstruments(),
     ]);
 
-    const instrumentsMap: Record<string, InstrumentResponse> = {};
-    instrumentsList.forEach((inst) => {
+    const instrumentsMap: Record<string, InstrumentResponse> = {
+      ...currentState.instruments,
+    };
+    fetchedInstruments.forEach((inst) => {
       instrumentsMap[inst.id] = inst;
     });
 
-    const quotes: Record<string, PriceQuote> = {};
+    const quotes: Record<string, PriceQuote> = { ...currentState.quotes };
     const historicalPrices: Record<string, Record<string, number>> = {};
     const historicalSortedDates: Record<string, string[]> = {};
 
+    const uniqueInstrumentIds = Array.from(new Set(positions.map((p) => p.instrumentId)));
+
     await Promise.all(
-      positions.map(async (pos) => {
-        const inst = instrumentsMap[pos.instrumentId];
-        if (inst && !quotes[inst.symbol]) {
-          try {
-            quotes[inst.symbol] = await marketService.getPrice(inst.symbol);
-          } catch {
-            // Price quote fallback
-          }
+      uniqueInstrumentIds.map(async (instId) => {
+        const inst = instrumentsMap[instId];
+        if (!inst) return;
+
+        try {
+          quotes[inst.symbol] = await marketService.getPrice(inst.symbol);
+        } catch {
+          // Quote fallback
         }
 
-        const isBond = inst?.type === 'BOND' || pos.bondRate != null;
-        if (inst && !isBond && !inst.symbol.startsWith('PL_BOND') && !historicalPrices[inst.symbol]) {
+        const isBond = inst.type === 'BOND';
+        const alreadyHasHistory = !!currentState.historicalPrices[inst.symbol];
+
+        if (!isBond && !inst.symbol.startsWith('PL_BOND') && !alreadyHasHistory) {
           try {
             const hist = await marketService.getHistoricalPrices(inst.symbol, '5y', '1d');
             if (hist && Array.isArray(hist.history) && hist.history.length > 0) {
@@ -98,18 +109,19 @@ export const fetchPositions = createAsyncThunk<
       })
     );
 
-    const rates: Record<string, number> = { PLN: 1 };
-    const distinctCurrencies = Array.from(new Set(positions.map((p) => p.currency)));
+    const rates: Record<string, number> = { PLN: 1, ...currentState.rates };
+    const distinctCurrencies = Array.from(new Set(positions.map((p) => p.currency))).filter(
+      (curr): curr is Currency => !!curr && curr !== 'PLN'
+    );
+
     await Promise.all(
       distinctCurrencies.map(async (curr) => {
-        if (curr && curr !== 'PLN') {
-          try {
-            const fx = await marketService.getExchangeRate(curr, 'PLN');
-            if (fx && fx.rate) {
-              rates[curr] = fx.rate;
-            }
-          } catch {}
-        }
+        try {
+          const fx = await marketService.getExchangeRate(curr, 'PLN');
+          if (fx && fx.rate) {
+            rates[curr] = fx.rate;
+          }
+        } catch {}
       })
     );
 
@@ -151,7 +163,7 @@ export const fetchTransactions = createAsyncThunk<
 export const createTransaction = createAsyncThunk<
   TransactionResponse,
   { portfolioId: string; request: CreateTransactionRequest },
-  { rejectValue: string }
+  { dispatch: AppDispatch; rejectValue: string }
 >(
   'portfolio/createTransaction',
   async ({ portfolioId, request }, { dispatch, rejectWithValue }) => {
@@ -174,7 +186,7 @@ export const createTransaction = createAsyncThunk<
 export const updateTransaction = createAsyncThunk<
   TransactionResponse,
   { portfolioId: string; transactionId: string; request: CreateTransactionRequest },
-  { rejectValue: string }
+  { dispatch: AppDispatch; rejectValue: string }
 >(
   'portfolio/updateTransaction',
   async ({ portfolioId, transactionId, request }, { dispatch, rejectWithValue }) => {
@@ -197,7 +209,7 @@ export const updateTransaction = createAsyncThunk<
 export const deleteTransaction = createAsyncThunk<
   void,
   { portfolioId: string; transactionId: string },
-  { rejectValue: string }
+  { dispatch: AppDispatch; rejectValue: string }
 >(
   'portfolio/deleteTransaction',
   async ({ portfolioId, transactionId }, { dispatch, rejectWithValue }) => {

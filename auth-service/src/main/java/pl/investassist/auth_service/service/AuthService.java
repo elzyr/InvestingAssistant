@@ -61,9 +61,14 @@ public class AuthService {
     String accessToken = jwtService.generateAccessToken(savedUser);
     String refreshToken = refreshTokenService.createRefreshToken(savedUser.getId());
 
-    return AuthResponse.of(accessToken, refreshToken, jwtService.getJwtExpirationMs());
+    return AuthResponse.of(
+        accessToken,
+        refreshToken,
+        jwtService.getJwtExpirationMs(),
+        UserProfileResponse.from(savedUser));
   }
 
+  @Transactional(readOnly = true)
   public AuthResponse login(LoginRequest request) {
     String normalizedEmail = request.email().trim().toLowerCase(Locale.ROOT);
     User user =
@@ -81,9 +86,11 @@ public class AuthService {
     String accessToken = jwtService.generateAccessToken(user);
     String refreshToken = refreshTokenService.createRefreshToken(user.getId());
 
-    return AuthResponse.of(accessToken, refreshToken, jwtService.getJwtExpirationMs());
+    return AuthResponse.of(
+        accessToken, refreshToken, jwtService.getJwtExpirationMs(), UserProfileResponse.from(user));
   }
 
+  @Transactional(readOnly = true)
   public AuthResponse refreshToken(RefreshTokenRequest request) {
     UUID userId =
         refreshTokenService
@@ -104,7 +111,11 @@ public class AuthService {
     String newAccessToken = jwtService.generateAccessToken(user);
     String newRefreshToken = refreshTokenService.createRefreshToken(user.getId());
 
-    return AuthResponse.of(newAccessToken, newRefreshToken, jwtService.getJwtExpirationMs());
+    return AuthResponse.of(
+        newAccessToken,
+        newRefreshToken,
+        jwtService.getJwtExpirationMs(),
+        UserProfileResponse.from(user));
   }
 
   public void logout(String refreshToken) {
@@ -113,6 +124,7 @@ public class AuthService {
     }
   }
 
+  @Transactional(readOnly = true)
   public UserProfileResponse getUserProfile(UUID userId) {
     User user =
         userRepository

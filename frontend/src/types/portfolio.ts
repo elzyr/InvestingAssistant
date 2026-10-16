@@ -8,11 +8,6 @@ export interface CreatePortfolioRequest {
   baseCurrency: Currency;
 }
 
-export interface UpdatePortfolioRequest {
-  name: string;
-  description?: string;
-}
-
 export interface PortfolioResponse {
   id: string;
   userId: string;

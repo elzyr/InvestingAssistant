@@ -3,6 +3,9 @@ import apiClient from '../api/client.ts';
 export interface PriceQuote {
   symbol: string;
   price: number;
+  previousClose?: number;
+  change?: number;
+  changePercent?: number;
   currency: string;
   source: string;
 }

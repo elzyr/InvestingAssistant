@@ -19,6 +19,7 @@ export interface AuthResponse {
   refreshToken: string;
   tokenType: string;
   expiresIn: number;
+  user?: UserProfileResponse;
 }
 
 export interface UserProfileResponse {
@@ -34,7 +35,6 @@ export interface UserProfileResponse {
 export interface AuthState {
   user: UserProfileResponse | null;
   accessToken: string | null;
-  refreshToken?: string | null;
   isAuthenticated: boolean;
   isInitialized: boolean;
   loading: boolean;

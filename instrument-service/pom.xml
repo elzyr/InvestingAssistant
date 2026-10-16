@@ -11,21 +11,9 @@
 	<groupId>pl.investassist</groupId>
 	<artifactId>instrument-service</artifactId>
 	<version>0.0.1-SNAPSHOT</version>
-	<name/>
-	<description/>
-	<url/>
-	<licenses>
-		<license/>
-	</licenses>
-	<developers>
-		<developer/>
-	</developers>
-	<scm>
-		<connection/>
-		<developerConnection/>
-		<tag/>
-		<url/>
-	</scm>
+	<name>instrument-service</name>
+	<description>Instrument Service for InvestingAssistant</description>
+
 	<properties>
 		<java.version>25</java.version>
 	</properties>

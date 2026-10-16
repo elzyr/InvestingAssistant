@@ -220,6 +220,7 @@ export function generateUnifiedPortfolioTimeline({
       return {
         timeMs,
         executedAt: tx.executedAt,
+        transactionType: tx.transactionType || 'BUY',
         quantity: tx.quantity,
         fx,
         txCost,
@@ -354,9 +355,10 @@ export function generateUnifiedPortfolioTimeline({
     for (let k = 0; k < preparedTxs.length; k++) {
       const tx = preparedTxs[k];
       if (tx.timeMs > tMs) break;
+      const sign = tx.transactionType === 'SELL' ? -1 : 1;
 
       if (tx.isBond) {
-        bondCostAtT += tx.txCost;
+        bondCostAtT += sign * tx.txCost;
         const unitPrice = calculateBondCurrentPrice({
           purchaseDate: tx.executedAt,
           bondRate: tx.bondRate,
@@ -364,18 +366,23 @@ export function generateUnifiedPortfolioTimeline({
           cpi,
           targetDate: tMs,
         });
-        bondValAtT += tx.quantity * unitPrice * tx.fx;
+        bondValAtT += sign * tx.quantity * unitPrice * tx.fx;
       } else {
-        nonBondCostAtT += tx.txCost;
+        nonBondCostAtT += sign * tx.txCost;
         const realClose = getHistoricalPrice(
           historicalPrices[tx.symbol],
           historicalSortedDates[tx.symbol],
           dayDateStr,
           tx.fallbackPrice
         );
-        nonBondValAtT += tx.quantity * realClose * tx.fx;
+        nonBondValAtT += sign * tx.quantity * realClose * tx.fx;
       }
     }
+
+    bondCostAtT = Math.max(0, bondCostAtT);
+    bondValAtT = Math.max(0, bondValAtT);
+    nonBondCostAtT = Math.max(0, nonBondCostAtT);
+    nonBondValAtT = Math.max(0, nonBondValAtT);
 
     let finalCost = bondCostAtT + nonBondCostAtT;
     let rawValuation = bondValAtT + nonBondValAtT;
@@ -401,7 +408,7 @@ export function generateUnifiedPortfolioTimeline({
 
     const bondProfit = Math.max(0, bondValAtT - bondCostAtT);
     const nonBondProfit = Math.max(0, nonBondValAtT - nonBondCostAtT);
-    const totalProfitGross = Math.max(0, rawValuation - finalCost);
+    const totalProfitGross = rawValuation - finalCost;
 
     let profit = totalProfitGross;
     let valuation = rawValuation;
@@ -411,8 +418,8 @@ export function generateUnifiedPortfolioTimeline({
       const nonBondBelka = isIkeAccount ? 0 : nonBondProfit * 0.19;
       const totalBelka = bondBelka + nonBondBelka;
 
-      profit = Math.max(0, totalProfitGross - totalBelka);
-      valuation = finalCost + profit;
+      profit = totalProfitGross - totalBelka;
+      valuation = rawValuation - totalBelka;
     }
 
     const returnPct = finalCost > 0 ? (profit / finalCost) * 100 : 0;

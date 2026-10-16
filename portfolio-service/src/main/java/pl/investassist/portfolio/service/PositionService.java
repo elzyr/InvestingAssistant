@@ -36,6 +36,7 @@ public class PositionService {
     this.transactionRepository = transactionRepository;
   }
 
+  @Transactional(readOnly = true)
   public List<PositionResponse> getPositions(UUID userId, UUID portfolioId) {
     portfolioService.validateAndGetPortfolioEntity(userId, portfolioId);
     return positionRepository.findAllByPortfolioId(portfolioId).stream()
@@ -58,7 +59,6 @@ public class PositionService {
           String s = (t.getSeriesName() != null && !t.getSeriesName().trim().isBlank()) ? t.getSeriesName().trim() : null;
           return Objects.equals(s, cleanSeries);
         })
-        .sorted(Comparator.comparing(Transaction::getExecutedAt, Comparator.nullsFirst(Comparator.naturalOrder())))
         .toList();
 
     Optional<Position> posOpt = (cleanSeries != null)

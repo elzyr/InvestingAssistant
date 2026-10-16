@@ -20,25 +20,20 @@ def _to_record(row: tuple) -> dict:
 
 ALL_RECORDS = [_to_record(r) for r in INFLATION_HISTORY]
 
+_latest = ALL_RECORDS[-1]
+_last_per_year = {r["year"]: r["rate"] for r in ALL_RECORDS}
+_CPI_SUMMARY = {
+    "currentCpi": _latest["rate"],
+    "source": _latest["source"],
+    "period": f"{_latest['year']}-{_latest['month']:02d}",
+    "history": [{"year": str(y), "cpi": rate} for y, rate in sorted(_last_per_year.items())],
+}
+
 class InflationService:
 
     @staticmethod
     def get_cpi() -> dict:
-        cached = cache_service.get(CACHE_KEY_INFLATION)
-        if cached:
-            return cached
-
-        latest = ALL_RECORDS[-1]
-        last_per_year = {r["year"]: r["rate"] for r in ALL_RECORDS}
-
-        result = {
-            "currentCpi": latest["rate"],
-            "source": latest["source"],
-            "period": f"{latest['year']}-{latest['month']:02d}",
-            "history": [{"year": str(y), "cpi": rate} for y, rate in sorted(last_per_year.items())],
-        }
-        cache_service.set(CACHE_KEY_INFLATION, result, expire=86400)
-        return result
+        return _CPI_SUMMARY
 
     @staticmethod
     def get_monthly_cpi(year: int | None = None) -> list[dict]:

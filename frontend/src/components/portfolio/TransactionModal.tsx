@@ -3,7 +3,7 @@ import { isAxiosError } from 'axios';
 import { X, ArrowDownRight, ArrowUpRight, Loader2, ShieldCheck, Sparkles, Trash2 } from 'lucide-react';
 import { instrumentService } from '../../services/instrument.service.ts';
 import { marketService } from '../../services/market.service.ts';
-import { useAppDispatch } from '../../store/hooks.ts';
+import { useAppDispatch, useAppSelector } from '../../store/hooks.ts';
 import {
   createTransaction,
   updateTransaction,
@@ -31,6 +31,8 @@ export const TransactionModal: React.FC<TransactionModalProps> = ({
   instrument,
 }) => {
   const dispatch = useAppDispatch();
+  const reduxInstruments = useAppSelector((state) => state.portfolio.instruments);
+  const reduxQuotes = useAppSelector((state) => state.portfolio.quotes);
   const isEdit = Boolean(transaction);
 
   const [instruments, setInstruments] = useState<InstrumentResponse[]>([]);
@@ -90,30 +92,38 @@ export const TransactionModal: React.FC<TransactionModalProps> = ({
     transaction?.bondRate !== undefined ||
     Boolean(transaction?.seriesName);
 
-  const handleInstrumentSelect = useCallback((inst: InstrumentResponse) => {
-    setSelectedInstrumentId(inst.id);
-    const instrumentIsBond =
-      inst.type === 'BOND' || inst.symbol.startsWith('PL_BOND');
+  const handleInstrumentSelect = useCallback(
+    (inst: InstrumentResponse) => {
+      setSelectedInstrumentId(inst.id);
+      const instrumentIsBond =
+        inst.type === 'BOND' || inst.symbol.startsWith('PL_BOND');
 
-    if (instrumentIsBond) {
-      setCurrency('PLN');
-      setPrice('100.00');
-    } else {
-      setCurrency(inst.currency || 'USD');
-      setLoadingPrice(true);
-      marketService
-        .getPrice(inst.symbol)
-        .then((quote) => {
-          if (quote?.price) {
-            setPrice(quote.price.toFixed(2));
-          }
-        })
-        .catch(() => {})
-        .finally(() => {
-          setLoadingPrice(false);
-        });
-    }
-  }, []);
+      if (instrumentIsBond) {
+        setCurrency('PLN');
+        setPrice('100.00');
+      } else {
+        setCurrency(inst.currency || 'USD');
+        const cached = reduxQuotes[inst.symbol];
+        if (cached?.price) {
+          setPrice(cached.price.toFixed(2));
+        } else {
+          setLoadingPrice(true);
+          marketService
+            .getPrice(inst.symbol)
+            .then((quote) => {
+              if (quote?.price) {
+                setPrice(quote.price.toFixed(2));
+              }
+            })
+            .catch(() => {})
+            .finally(() => {
+              setLoadingPrice(false);
+            });
+        }
+      }
+    },
+    [reduxQuotes]
+  );
 
   const handleSeriesNameChange = (val: string) => {
     setSeriesName(val);
@@ -172,7 +182,24 @@ export const TransactionModal: React.FC<TransactionModalProps> = ({
   };
 
   useEffect(() => {
-    if (!isOpen || transaction) return;
+    if (!isOpen) {
+      if (!transaction) {
+        setSelectedInstrumentId('');
+      }
+      return;
+    }
+
+    const cachedList = Object.values(reduxInstruments);
+    if (cachedList.length > 0) {
+      const filtered = cachedList.filter((i) => i.type === 'ETF' || i.type === 'BOND');
+      setInstruments(filtered);
+      if (!transaction && filtered.length > 0 && !selectedInstrumentId) {
+        handleInstrumentSelect(filtered[0]);
+      }
+      return;
+    }
+
+    if (transaction) return;
 
     let mounted = true;
     const loadData = async () => {
@@ -183,7 +210,7 @@ export const TransactionModal: React.FC<TransactionModalProps> = ({
         if (!mounted) return;
         const filtered = data.filter((i) => i.type === 'ETF' || i.type === 'BOND');
         setInstruments(filtered);
-        if (filtered.length > 0) {
+        if (filtered.length > 0 && !selectedInstrumentId) {
           handleInstrumentSelect(filtered[0]);
         }
       } catch (err: unknown) {
@@ -202,7 +229,7 @@ export const TransactionModal: React.FC<TransactionModalProps> = ({
     return () => {
       mounted = false;
     };
-  }, [isOpen, transaction, handleInstrumentSelect]);
+  }, [isOpen, transaction, reduxInstruments, handleInstrumentSelect, selectedInstrumentId]);
 
   if (!isOpen) return null;
 
