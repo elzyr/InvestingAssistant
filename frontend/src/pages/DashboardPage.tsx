@@ -42,7 +42,6 @@ function formatMoney(amount: number, currency: string, showSign = false): string
 export const DashboardPage = () => {
   const dispatch = useAppDispatch();
   const { user } = useAppSelector((state) => state.auth);
-  const baseCurrency = user?.baseCurrency || 'PLN';
 
   const {
     activePortfolioId,
@@ -56,6 +55,12 @@ export const DashboardPage = () => {
     historicalSortedDates,
     loading,
   } = useAppSelector((state) => state.portfolio);
+
+  const activePortfolio = useMemo(
+    () => portfolios.find((p) => p.id === activePortfolioId),
+    [portfolios, activePortfolioId]
+  );
+  const baseCurrency = activePortfolio?.baseCurrency || user?.baseCurrency || 'PLN';
 
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [isCreatePortfolioOpen, setIsCreatePortfolioOpen] = useState(false);
@@ -213,7 +218,6 @@ export const DashboardPage = () => {
 
   const monthlyDca = userMonthlyDca ?? defaultDca;
 
-  const activePortfolio = portfolios.find((p) => p.id === activePortfolioId);
   const isIkeAccount = activePortfolio?.name.toLowerCase().includes('ike') || false;
   const shouldApplyTax = taxMode === 'NETTO' && !isIkeAccount;
 
@@ -244,6 +248,7 @@ export const DashboardPage = () => {
           valueFormatted: `${txVal.toLocaleString('pl-PL', { maximumFractionDigits: 0 })} ${baseCurrency}`,
           profitFormatted: `${txProfit >= 0 ? '+' : ''}${txProfit.toLocaleString('pl-PL', { maximumFractionDigits: 0 })} ${baseCurrency}`,
           profitPercentFormatted: `${txProfitPct >= 0 ? '+' : ''}${txProfitPct.toFixed(1)}%`,
+          transactionId: tx.id,
         };
       });
 
@@ -346,6 +351,15 @@ export const DashboardPage = () => {
           const yProfitPct = yCost > 0 ? (yProfit / yCost) * 100 : 0;
           const yPrice = yQty > 0 ? yVal / yQty : 100;
           const yShare = totalPortfolioValue > 0 ? (yVal / totalPortfolioValue) * 100 : 0;
+          const yearTx = transactions.find(
+            (t) =>
+              t.transactionType === 'BUY' &&
+              yearItems.some(
+                (i) =>
+                  i.ticker === t.seriesName ||
+                  (i.purchaseDate && t.executedAt && t.executedAt.startsWith(i.purchaseDate.substring(0, 10)))
+              )
+          );
 
           return {
             id: `${family}-${year}`,
@@ -357,6 +371,7 @@ export const DashboardPage = () => {
             valueFormatted: formatMoney(yVal, baseCurrency),
             profitFormatted: formatMoney(yProfit, baseCurrency, true),
             profitPercentFormatted: `+${yProfitPct.toFixed(1)}%`,
+            transactionId: yearTx?.id,
           };
         });
 
@@ -378,7 +393,7 @@ export const DashboardPage = () => {
     });
 
     return list;
-  }, [enrichedHoldings, transactions, totalPortfolioValue, baseCurrency, rates, taxMode, shouldApplyTax]);
+  }, [enrichedHoldings, transactions, totalPortfolioValue, baseCurrency, rates, shouldApplyTax]);
 
   const dashboardSummary = useMemo((): PortfolioSummary => {
     const grossProfit = totalPortfolioValue - totalPortfolioCost;
@@ -566,6 +581,12 @@ export const DashboardPage = () => {
         positions={filteredPositions}
         taxMode={taxMode}
         onAddTransaction={() => setIsModalOpen(true)}
+        onEditTransaction={(txId) => {
+          const tx = transactions.find((t) => t.id === txId);
+          if (tx) {
+            setEditingTx(tx);
+          }
+        }}
       />
 
       <TransactionModal

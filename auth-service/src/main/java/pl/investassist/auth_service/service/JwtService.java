@@ -1,7 +1,5 @@
 package pl.investassist.auth_service.service;
 
-import io.jsonwebtoken.Claims;
-import io.jsonwebtoken.JwtParser;
 import io.jsonwebtoken.Jwts;
 import io.jsonwebtoken.security.Keys;
 import jakarta.annotation.PostConstruct;
@@ -23,7 +21,6 @@ public class JwtService {
   private long jwtExpirationMs;
 
   private SecretKey signingKey;
-  private JwtParser jwtParser;
 
   @PostConstruct
   void init() {
@@ -32,7 +29,6 @@ public class JwtService {
       throw new IllegalStateException("jwt.secret must be set and at least 32 bytes (HS256)");
     }
     this.signingKey = Keys.hmacShaKeyFor(keyBytes);
-    this.jwtParser = Jwts.parser().verifyWith(this.signingKey).build();
   }
 
   public String generateAccessToken(User user) {
@@ -50,24 +46,8 @@ public class JwtService {
         .compact();
   }
 
-  public Claims extractClaims(String token) {
-    return jwtParser.parseSignedClaims(token).getPayload();
-  }
-
-  public UUID extractUserId(String token) {
-    return UUID.fromString(extractClaims(token).getSubject());
-  }
-
-  public boolean validateToken(String token) {
-    try {
-      Date exp = extractClaims(token).getExpiration();
-      return exp != null && !exp.before(new Date());
-    } catch (Exception e) {
-      return false;
-    }
-  }
-
   public long getJwtExpirationMs() {
     return jwtExpirationMs;
   }
 }
+

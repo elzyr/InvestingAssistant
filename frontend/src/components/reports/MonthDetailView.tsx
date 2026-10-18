@@ -41,6 +41,7 @@ export const MonthDetailView: React.FC<MonthDetailViewProps> = ({
   const totalProfitNet = record.breakdown.reduce((sum, item) => sum + item.profitNet, 0);
   const totalReturnGross = totalInvested > 0 ? (totalProfitGross / totalInvested) * 100 : 0;
   const totalReturnNet = totalInvested > 0 ? (totalProfitNet / totalInvested) * 100 : 0;
+  const currency = record.baseCurrency || 'PLN';
 
   return (
     <div className="space-y-6">
@@ -54,11 +55,11 @@ export const MonthDetailView: React.FC<MonthDetailViewProps> = ({
           </div>
           <div className="mt-2">
             <div className="text-xl font-bold font-mono text-zinc-100 tabular-nums">
-              {formatPLN(record.portfolioValue)}
+              {formatPLN(record.portfolioValue, false, currency)}
             </div>
             <div className="text-[11px] text-zinc-400 mt-1 flex items-center gap-1 font-mono">
               <span>Wpłacone:</span>
-              <span className="text-zinc-300 font-medium">{formatPLN(record.investedTotal)}</span>
+              <span className="text-zinc-300 font-medium">{formatPLN(record.investedTotal, false, currency)}</span>
             </div>
           </div>
         </div>
@@ -75,12 +76,12 @@ export const MonthDetailView: React.FC<MonthDetailViewProps> = ({
                 record.profitNet
               )}`}
             >
-              {formatPLN(record.profitNet, true)}
+              {formatPLN(record.profitNet, true, currency)}
             </div>
             <div className="text-[11px] text-zinc-400 mt-1 flex items-center gap-1 font-mono">
               <span>Brutto:</span>
               <span className="text-zinc-300 font-medium">
-                {formatPLN(record.profitGross, true)}
+                {formatPLN(record.profitGross, true, currency)}
               </span>
             </div>
           </div>
@@ -121,7 +122,7 @@ export const MonthDetailView: React.FC<MonthDetailViewProps> = ({
                 record.profitNetMom
               )}`}
             >
-              {formatPLN(record.profitNetMom, true)}
+              {formatPLN(record.profitNetMom, true, currency)}
             </div>
             <div className="text-[11px] text-zinc-400 mt-1 flex items-center gap-1 font-mono">
               <span>Zmiana m/m:</span>
@@ -177,24 +178,24 @@ export const MonthDetailView: React.FC<MonthDetailViewProps> = ({
                       </div>
                     </td>
                     <td className="py-2.5 px-3 text-right text-zinc-400 tabular-nums whitespace-nowrap">
-                      {formatPLN(item.invested)}
+                      {formatPLN(item.invested, false, currency)}
                     </td>
                     <td className="py-2.5 px-3 text-right font-medium text-zinc-100 tabular-nums whitespace-nowrap">
-                      {formatPLN(item.currentValue)}
+                      {formatPLN(item.currentValue, false, currency)}
                     </td>
                     <td
                       className={`py-2.5 px-3 text-right tabular-nums whitespace-nowrap ${getValueColorClass(
                         item.profitGross
                       )}`}
                     >
-                      {formatPLN(item.profitGross, true)}
+                      {formatPLN(item.profitGross, true, currency)}
                     </td>
                     <td
                       className={`py-2.5 px-3 text-right font-semibold tabular-nums whitespace-nowrap ${getValueColorClass(
                         item.profitNet
                       )}`}
                     >
-                      {formatPLN(item.profitNet, true)}
+                      {formatPLN(item.profitNet, true, currency)}
                     </td>
                     <td
                       className={`py-2.5 px-3 text-right tabular-nums whitespace-nowrap ${getValueColorClass(
@@ -221,24 +222,24 @@ export const MonthDetailView: React.FC<MonthDetailViewProps> = ({
                     Razem
                   </td>
                   <td className="py-3 px-3 text-right text-zinc-300 tabular-nums whitespace-nowrap">
-                    {formatPLN(totalInvested)}
+                    {formatPLN(totalInvested, false, currency)}
                   </td>
                   <td className="py-3 px-3 text-right text-zinc-100 text-xs sm:text-sm tabular-nums whitespace-nowrap">
-                    {formatPLN(totalValue)}
+                    {formatPLN(totalValue, false, currency)}
                   </td>
                   <td
                     className={`py-3 px-3 text-right tabular-nums whitespace-nowrap ${getValueColorClass(
                       totalProfitGross
                     )}`}
                   >
-                    {formatPLN(totalProfitGross, true)}
+                    {formatPLN(totalProfitGross, true, currency)}
                   </td>
                   <td
                     className={`py-3 px-3 text-right text-xs sm:text-sm tabular-nums whitespace-nowrap ${getValueColorClass(
                       totalProfitNet
                     )}`}
                   >
-                    {formatPLN(totalProfitNet, true)}
+                    {formatPLN(totalProfitNet, true, currency)}
                   </td>
                   <td
                     className={`py-3 px-3 text-right tabular-nums whitespace-nowrap ${getValueColorClass(

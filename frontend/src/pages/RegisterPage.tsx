@@ -151,7 +151,6 @@ export const RegisterPage = () => {
                 <option value="PLN">PLN (Polski Złoty)</option>
                 <option value="EUR">EUR (Euro)</option>
                 <option value="USD">USD (Dolar Amerykański)</option>
-                <option value="GBP">GBP (Funt Brytyjski)</option>
               </select>
             </div>
 

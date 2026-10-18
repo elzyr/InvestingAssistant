@@ -109,19 +109,23 @@ export const fetchPositions = createAsyncThunk<
       })
     );
 
-    const rates: Record<string, number> = { PLN: 1, ...currentState.rates };
+    const activePortfolio = currentState.portfolios.find((p) => p.id === portfolioId);
+    const baseCurrency = activePortfolio?.baseCurrency || 'PLN';
+    const rates: Record<string, number> = { [baseCurrency]: 1 };
     const distinctCurrencies = Array.from(new Set(positions.map((p) => p.currency))).filter(
-      (curr): curr is Currency => !!curr && curr !== 'PLN'
+      (curr): curr is Currency => !!curr && curr !== baseCurrency
     );
 
     await Promise.all(
       distinctCurrencies.map(async (curr) => {
         try {
-          const fx = await marketService.getExchangeRate(curr, 'PLN');
+          const fx = await marketService.getExchangeRate(curr, baseCurrency);
           if (fx && fx.rate) {
             rates[curr] = fx.rate;
           }
-        } catch {}
+        } catch {
+          // Exchange rate fallback
+        }
       })
     );
 

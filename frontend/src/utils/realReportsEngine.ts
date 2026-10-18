@@ -327,6 +327,7 @@ export function generateRealAnnualSummary({
       realProfitPct: Number(realProfitPct.toFixed(2)),
       status: 'RECORDED',
       breakdown,
+      baseCurrency,
     });
   }
 
@@ -386,5 +387,6 @@ export function generateRealAnnualSummary({
     ytdReturnNetPct: Number(ytdReturnNetPct.toFixed(2)),
     ytdRealReturnPct: Number(ytdRealReturnPct.toFixed(2)),
     avgCpi: Number(avgCpi.toFixed(1)),
+    baseCurrency,
   };
 }

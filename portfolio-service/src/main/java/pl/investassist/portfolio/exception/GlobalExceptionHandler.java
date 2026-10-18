@@ -13,6 +13,9 @@ import org.springframework.web.bind.annotation.RestControllerAdvice;
 @RestControllerAdvice
 public class GlobalExceptionHandler {
 
+  private static final org.slf4j.Logger log =
+      org.slf4j.LoggerFactory.getLogger(GlobalExceptionHandler.class);
+
   @ExceptionHandler(ResourceNotFoundException.class)
   public ResponseEntity<ErrorResponse> handleResourceNotFound(ResourceNotFoundException ex) {
     ErrorResponse error = new ErrorResponse(ex.getMessage(), Instant.now().toEpochMilli());
@@ -49,16 +52,21 @@ public class GlobalExceptionHandler {
     return ResponseEntity.status(HttpStatus.BAD_REQUEST).body(error);
   }
 
-  private static final org.slf4j.Logger log =
-      org.slf4j.LoggerFactory.getLogger(GlobalExceptionHandler.class);
+  @ExceptionHandler(IllegalStateException.class)
+  public ResponseEntity<ErrorResponse> handleIllegalStateException(IllegalStateException ex) {
+    log.error("Service dependency error in portfolio-service:", ex);
+    ErrorResponse error = new ErrorResponse(ex.getMessage(), Instant.now().toEpochMilli());
+    return ResponseEntity.status(HttpStatus.SERVICE_UNAVAILABLE).body(error);
+  }
 
   @ExceptionHandler(Exception.class)
   public ResponseEntity<ErrorResponse> handleGeneralException(Exception ex) {
     log.error("Unhandled exception in portfolio-service:", ex);
     ErrorResponse error =
-        new ErrorResponse("An unexpected error occurred: " + ex.getMessage(), Instant.now().toEpochMilli());
+        new ErrorResponse("An unexpected error occurred", Instant.now().toEpochMilli());
     return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body(error);
   }
 
   public record ErrorResponse(String message, long timestamp) {}
 }
+

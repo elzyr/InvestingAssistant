@@ -11,8 +11,11 @@ import {
   fetchPositions,
   fetchTransactions,
   createTransaction,
+  updateTransaction,
+  deleteTransaction,
   createPortfolio,
 } from '../thunks/portfolio.thunk.ts';
+import { logoutThunk, checkAuthThunk } from '../thunks/auth.thunk.ts';
 
 export interface PortfolioState {
   portfolios: PortfolioResponse[];
@@ -54,9 +57,12 @@ export const portfolioSlice = createSlice({
     clearPortfolioError: (state) => {
       state.error = null;
     },
+    resetPortfolio: () => initialState,
   },
   extraReducers: (builder) => {
     builder
+      .addCase(logoutThunk.fulfilled, () => initialState)
+      .addCase(checkAuthThunk.rejected, () => initialState)
       .addCase(fetchPortfolios.pending, (state) => {
         state.loading = true;
         state.error = null;
@@ -103,6 +109,28 @@ export const portfolioSlice = createSlice({
         state.transactionSubmitting = false;
         state.error = action.payload || 'Błąd dodawania transakcji';
       })
+      .addCase(updateTransaction.pending, (state) => {
+        state.transactionSubmitting = true;
+        state.error = null;
+      })
+      .addCase(updateTransaction.fulfilled, (state) => {
+        state.transactionSubmitting = false;
+      })
+      .addCase(updateTransaction.rejected, (state, action) => {
+        state.transactionSubmitting = false;
+        state.error = action.payload || 'Błąd aktualizacji transakcji';
+      })
+      .addCase(deleteTransaction.pending, (state) => {
+        state.transactionSubmitting = true;
+        state.error = null;
+      })
+      .addCase(deleteTransaction.fulfilled, (state) => {
+        state.transactionSubmitting = false;
+      })
+      .addCase(deleteTransaction.rejected, (state, action) => {
+        state.transactionSubmitting = false;
+        state.error = action.payload || 'Błąd usuwania transakcji';
+      })
       .addCase(createPortfolio.fulfilled, (state, action) => {
         state.portfolios.push(action.payload);
         state.activePortfolioId = action.payload.id;
@@ -110,5 +138,5 @@ export const portfolioSlice = createSlice({
   },
 });
 
-export const { setActivePortfolioId, clearPortfolioError } = portfolioSlice.actions;
+export const { setActivePortfolioId, clearPortfolioError, resetPortfolio } = portfolioSlice.actions;
 export default portfolioSlice.reducer;
