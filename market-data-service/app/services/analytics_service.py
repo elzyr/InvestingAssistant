@@ -104,7 +104,8 @@ class AnalyticsService:
         if len(prices) >= 2:
             closes = np.array([p["closePrice"] for p in prices], dtype=np.float64)
             daily_returns = np.diff(closes) / closes[:-1]
-            annual_return = float(np.mean(daily_returns) * 252)
+            growth_factor = float(np.prod(1.0 + daily_returns))
+            annual_return = float(growth_factor ** (252.0 / len(daily_returns)) - 1.0) if growth_factor > 0 else 0.0
             annual_volatility = float(np.std(daily_returns, ddof=1) * np.sqrt(252)) if len(daily_returns) > 1 else 0.15
             daily_returns_list = daily_returns.tolist()
         else:

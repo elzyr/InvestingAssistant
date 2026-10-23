@@ -206,21 +206,41 @@ export const DashboardPage = () => {
     [enrichedHoldings]
   );
 
-  const [rawEmpiricalStats, setRawEmpiricalStats] = useState<PortfolioStatsResponse | null>(null);
-  const empiricalStats = equityHoldings.length > 0 ? rawEmpiricalStats : null;
+  const empiricalRequestKey = useMemo(() => {
+    if (!activePortfolioId || equityHoldings.length === 0) {
+      return null;
+    }
+    const holdingsKey = [...equityHoldings]
+      .map((h) => `${h.symbol}:${h.value.toFixed(2)}`)
+      .sort()
+      .join('|');
+    return `${activePortfolioId}|${holdingsKey}`;
+  }, [activePortfolioId, equityHoldings]);
+  const [rawEmpiricalStats, setRawEmpiricalStats] = useState<{
+    requestKey: string;
+    data: PortfolioStatsResponse;
+  } | null>(null);
+  const empiricalStats =
+    empiricalRequestKey && rawEmpiricalStats?.requestKey === empiricalRequestKey
+      ? rawEmpiricalStats.data
+      : null;
   const populatedPortfolioRef = useRef<string | null>(null);
+  const latestEmpiricalRequestKeyRef = useRef<string | null>(null);
 
   useEffect(() => {
-    if (equityHoldings.length === 0) {
+    if (!empiricalRequestKey) {
+      latestEmpiricalRequestKeyRef.current = null;
       return;
     }
 
     let isCancelled = false;
+    latestEmpiricalRequestKeyRef.current = empiricalRequestKey;
+
     marketService
       .getPortfolioStats({ holdings: equityHoldings })
       .then((stats) => {
-        if (!isCancelled && stats) {
-          setRawEmpiricalStats(stats);
+        if (!isCancelled && stats && latestEmpiricalRequestKeyRef.current === empiricalRequestKey) {
+          setRawEmpiricalStats({ requestKey: empiricalRequestKey, data: stats });
           if (activePortfolioId && populatedPortfolioRef.current !== activePortfolioId) {
             populatedPortfolioRef.current = activePortfolioId;
             setExpectedEtfReturn(Math.round(stats.weightedReturn * 1000) / 10);
@@ -234,7 +254,7 @@ export const DashboardPage = () => {
     return () => {
       isCancelled = true;
     };
-  }, [equityHoldings, activePortfolioId]);
+  }, [equityHoldings, activePortfolioId, empiricalRequestKey]);
 
   const totalPortfolioValue = useMemo(() => {
     return enrichedHoldings.reduce((sum, h) => sum + h.totalValue, 0);
@@ -390,15 +410,19 @@ export const DashboardPage = () => {
           const yProfitPct = yCost > 0 ? (yProfit / yCost) * 100 : 0;
           const yPrice = yQty > 0 ? yVal / yQty : 100;
           const yShare = totalPortfolioValue > 0 ? (yVal / totalPortfolioValue) * 100 : 0;
-          const yearTx = transactions.find(
+          const purchaseYear = Number(year);
+          const yearInstrumentIds = [...new Set(yearItems.map((i) => i.instrumentId))];
+          const yearTransactions = transactions.filter(
             (t) =>
               t.transactionType === 'BUY' &&
-              yearItems.some(
-                (i) =>
-                  i.ticker === t.seriesName ||
-                  (i.purchaseDate && t.executedAt && t.executedAt.startsWith(i.purchaseDate.substring(0, 10)))
-              )
+              yearInstrumentIds.includes(t.instrumentId) &&
+              t.executedAt &&
+              new Date(t.executedAt).getFullYear() === purchaseYear
           );
+          const yearTx =
+            yearInstrumentIds.length === 1 && yearTransactions.length === 1
+              ? yearTransactions[0]
+              : undefined;
 
           return {
             id: `${family}-${year}`,

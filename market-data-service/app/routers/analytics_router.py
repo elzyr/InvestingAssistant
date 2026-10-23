@@ -1,5 +1,6 @@
 from typing import List, Optional, Dict, Any
 from fastapi import APIRouter
+from fastapi.concurrency import run_in_threadpool
 from pydantic import BaseModel, Field
 from app.services.analytics_service import AnalyticsService
 
@@ -71,15 +72,17 @@ class MonteCarloResponse(BaseModel):
 
 @router.post("/portfolio-stats", response_model=PortfolioStatsResponse)
 async def calculate_portfolio_stats(request: PortfolioStatsRequest) -> PortfolioStatsResponse:
-    metrics = AnalyticsService.calculate_portfolio_metrics(
+    metrics = await run_in_threadpool(
+        AnalyticsService.calculate_portfolio_metrics,
         holdings=request.holdings,
-        benchmark_symbol=request.benchmarkSymbol or "SPY"
+        benchmark_symbol=request.benchmarkSymbol or "SPY",
     )
     return PortfolioStatsResponse(**metrics)
 
 @router.post("/monte-carlo", response_model=MonteCarloResponse)
 async def run_monte_carlo(request: MonteCarloRequest) -> MonteCarloResponse:
-    result = AnalyticsService.simulate_monte_carlo(
+    result = await run_in_threadpool(
+        AnalyticsService.simulate_monte_carlo,
         initial_amount=request.initialAmount,
         monthly_contribution=request.monthlyContribution,
         years=request.years,
@@ -91,6 +94,6 @@ async def run_monte_carlo(request: MonteCarloRequest) -> MonteCarloResponse:
         bond_weight=request.bondWeight,
         bond_rate=request.bondRate,
         is_tax_exempt=request.isTaxExempt,
-        target_goal=request.targetGoal
+        target_goal=request.targetGoal,
     )
     return MonteCarloResponse(**result)

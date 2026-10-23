@@ -36,16 +36,29 @@ export const TransactionModal: React.FC<TransactionModalProps> = ({
   const cachedInstruments = useMemo(() => {
     return Object.values(reduxInstruments).filter((i) => i.type === 'ETF' || i.type === 'BOND');
   }, [reduxInstruments]);
+  const initialInstrument = instrument || cachedInstruments[0];
+  const initialInstrumentIsBond = Boolean(
+    initialInstrument &&
+      (initialInstrument.type === 'BOND' || initialInstrument.symbol.startsWith('PL_BOND'))
+  );
+  const initialQuote = initialInstrument ? reduxQuotes[initialInstrument.symbol] : undefined;
   const [fetchedInstruments, setFetchedInstruments] = useState<InstrumentResponse[]>([]);
   const instruments = cachedInstruments.length > 0 ? cachedInstruments : fetchedInstruments;
   const isEdit = Boolean(transaction);
   const [loadingInstruments, setLoadingInstruments] = useState(false);
-  const [selectedInstrumentId, setSelectedInstrumentId] = useState('');
+  const [selectedInstrumentId, setSelectedInstrumentId] = useState(initialInstrument?.id || '');
   const [transactionType, setTransactionType] = useState<TransactionType>('BUY');
   const [quantity, setQuantity] = useState<string>('10');
-  const [price, setPrice] = useState<string>('100.00');
+  const [price, setPrice] = useState<string>(() => {
+    if (initialInstrumentIsBond) return '100.00';
+    if (initialQuote?.price) return initialQuote.price.toFixed(2);
+    return '100.00';
+  });
   const [commission, setCommission] = useState<string>('0');
-  const [currency, setCurrency] = useState<Currency>(defaultCurrency);
+  const [currency, setCurrency] = useState<Currency>(() => {
+    if (initialInstrumentIsBond) return 'PLN';
+    return (initialInstrument?.currency as Currency) || defaultCurrency;
+  });
   const [transactionDate, setTransactionDate] = useState<string>(
     () => new Date().toISOString().split('T')[0]
   );
@@ -197,6 +210,9 @@ export const TransactionModal: React.FC<TransactionModalProps> = ({
         if (!mounted) return;
         const filtered = data.filter((i) => i.type === 'ETF' || i.type === 'BOND');
         setFetchedInstruments(filtered);
+        if (!transaction && !selectedInstrumentId && filtered.length > 0) {
+          handleInstrumentSelect(filtered[0]);
+        }
       } catch (err: unknown) {
         if (!mounted) return;
         if (isAxiosError<{ message?: string }>(err)) {
@@ -213,7 +229,7 @@ export const TransactionModal: React.FC<TransactionModalProps> = ({
     return () => {
       mounted = false;
     };
-  }, [isOpen, transaction, cachedInstruments.length]);
+  }, [isOpen, transaction, cachedInstruments.length, selectedInstrumentId, handleInstrumentSelect]);
 
   if (!isOpen) return null;
 
@@ -649,7 +665,7 @@ export const TransactionModal: React.FC<TransactionModalProps> = ({
               </button>
               <button
                 type="submit"
-                disabled={submitting || deleting || !selectedInstrumentId}
+                disabled={submitting || deleting || !effectiveInstrumentId}
                 className="flex items-center gap-1.5 px-4 py-1.5 rounded bg-white hover:bg-zinc-200 text-zinc-950 text-xs font-semibold transition disabled:opacity-50"
               >
                 {submitting && <Loader2 className="w-3.5 h-3.5 animate-spin" />}
