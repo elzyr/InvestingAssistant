@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import { isAxiosError } from 'axios';
 import { X, ArrowDownRight, ArrowUpRight, Loader2, ShieldCheck, Sparkles, Trash2 } from 'lucide-react';
 import { instrumentService } from '../../services/instrument.service.ts';
@@ -33,16 +33,32 @@ export const TransactionModal: React.FC<TransactionModalProps> = ({
   const dispatch = useAppDispatch();
   const reduxInstruments = useAppSelector((state) => state.portfolio.instruments);
   const reduxQuotes = useAppSelector((state) => state.portfolio.quotes);
+  const cachedInstruments = useMemo(() => {
+    return Object.values(reduxInstruments).filter((i) => i.type === 'ETF' || i.type === 'BOND');
+  }, [reduxInstruments]);
+  const initialInstrument = instrument || cachedInstruments[0];
+  const initialInstrumentIsBond = Boolean(
+    initialInstrument &&
+      (initialInstrument.type === 'BOND' || initialInstrument.symbol.startsWith('PL_BOND'))
+  );
+  const initialQuote = initialInstrument ? reduxQuotes[initialInstrument.symbol] : undefined;
+  const [fetchedInstruments, setFetchedInstruments] = useState<InstrumentResponse[]>([]);
+  const instruments = cachedInstruments.length > 0 ? cachedInstruments : fetchedInstruments;
   const isEdit = Boolean(transaction);
-
-  const [instruments, setInstruments] = useState<InstrumentResponse[]>([]);
   const [loadingInstruments, setLoadingInstruments] = useState(false);
-  const [selectedInstrumentId, setSelectedInstrumentId] = useState('');
+  const [selectedInstrumentId, setSelectedInstrumentId] = useState(initialInstrument?.id || '');
   const [transactionType, setTransactionType] = useState<TransactionType>('BUY');
   const [quantity, setQuantity] = useState<string>('10');
-  const [price, setPrice] = useState<string>('100.00');
+  const [price, setPrice] = useState<string>(() => {
+    if (initialInstrumentIsBond) return '100.00';
+    if (initialQuote?.price) return initialQuote.price.toFixed(2);
+    return '100.00';
+  });
   const [commission, setCommission] = useState<string>('0');
-  const [currency, setCurrency] = useState<Currency>(defaultCurrency);
+  const [currency, setCurrency] = useState<Currency>(() => {
+    if (initialInstrumentIsBond) return 'PLN';
+    return (initialInstrument?.currency as Currency) || defaultCurrency;
+  });
   const [transactionDate, setTransactionDate] = useState<string>(
     () => new Date().toISOString().split('T')[0]
   );
@@ -85,7 +101,8 @@ export const TransactionModal: React.FC<TransactionModalProps> = ({
     setPrevTxId(null);
   }
 
-  const selectedInstrument = instruments.find((i) => i.id === selectedInstrumentId) || instrument;
+  const effectiveInstrumentId = selectedInstrumentId || instruments[0]?.id || '';
+  const selectedInstrument = instruments.find((i) => i.id === effectiveInstrumentId) || instrument;
   const isBond =
     selectedInstrument?.type === 'BOND' ||
     selectedInstrument?.symbol?.startsWith('PL_BOND') ||
@@ -182,24 +199,7 @@ export const TransactionModal: React.FC<TransactionModalProps> = ({
   };
 
   useEffect(() => {
-    if (!isOpen) {
-      if (!transaction) {
-        setSelectedInstrumentId('');
-      }
-      return;
-    }
-
-    const cachedList = Object.values(reduxInstruments);
-    if (cachedList.length > 0) {
-      const filtered = cachedList.filter((i) => i.type === 'ETF' || i.type === 'BOND');
-      setInstruments(filtered);
-      if (!transaction && filtered.length > 0 && !selectedInstrumentId) {
-        handleInstrumentSelect(filtered[0]);
-      }
-      return;
-    }
-
-    if (transaction) return;
+    if (!isOpen || transaction || cachedInstruments.length > 0) return;
 
     let mounted = true;
     const loadData = async () => {
@@ -209,8 +209,8 @@ export const TransactionModal: React.FC<TransactionModalProps> = ({
         const data = await instrumentService.getInstruments();
         if (!mounted) return;
         const filtered = data.filter((i) => i.type === 'ETF' || i.type === 'BOND');
-        setInstruments(filtered);
-        if (filtered.length > 0 && !selectedInstrumentId) {
+        setFetchedInstruments(filtered);
+        if (!transaction && !selectedInstrumentId && filtered.length > 0) {
           handleInstrumentSelect(filtered[0]);
         }
       } catch (err: unknown) {
@@ -229,13 +229,13 @@ export const TransactionModal: React.FC<TransactionModalProps> = ({
     return () => {
       mounted = false;
     };
-  }, [isOpen, transaction, reduxInstruments, handleInstrumentSelect, selectedInstrumentId]);
+  }, [isOpen, transaction, cachedInstruments.length, selectedInstrumentId, handleInstrumentSelect]);
 
   if (!isOpen) return null;
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!selectedInstrumentId) {
+    if (!effectiveInstrumentId) {
       setError('Wybierz instrument');
       return;
     }
@@ -272,7 +272,7 @@ export const TransactionModal: React.FC<TransactionModalProps> = ({
 
     const executedAt = transactionDate ? `${transactionDate}T12:00:00` : undefined;
     const requestPayload = {
-      instrumentId: selectedInstrumentId,
+      instrumentId: effectiveInstrumentId,
       transactionType,
       quantity: q,
       price: p,
@@ -371,7 +371,7 @@ export const TransactionModal: React.FC<TransactionModalProps> = ({
                 <div className="text-xs text-zinc-500 py-2">Ładowanie katalogu...</div>
               ) : (
                 <select
-                  value={selectedInstrumentId}
+                  value={effectiveInstrumentId}
                   onChange={(e) => {
                     const inst = instruments.find((i) => i.id === e.target.value);
                     if (inst) handleInstrumentSelect(inst);
@@ -636,8 +636,6 @@ export const TransactionModal: React.FC<TransactionModalProps> = ({
                     <option value="PLN">PLN</option>
                     <option value="USD">USD</option>
                     <option value="EUR">EUR</option>
-                    <option value="GBP">GBP</option>
-                    <option value="CHF">CHF</option>
                   </select>
                 </div>
               </div>
@@ -667,7 +665,7 @@ export const TransactionModal: React.FC<TransactionModalProps> = ({
               </button>
               <button
                 type="submit"
-                disabled={submitting || deleting || !selectedInstrumentId}
+                disabled={submitting || deleting || !effectiveInstrumentId}
                 className="flex items-center gap-1.5 px-4 py-1.5 rounded bg-white hover:bg-zinc-200 text-zinc-950 text-xs font-semibold transition disabled:opacity-50"
               >
                 {submitting && <Loader2 className="w-3.5 h-3.5 animate-spin" />}

@@ -8,6 +8,11 @@ interface CustomAxiosRequestConfig extends InternalAxiosRequestConfig {
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || '';
 
 let memoryToken: string | null = null;
+let onAuthExpiredCallback: (() => void) | null = null;
+
+export const setOnAuthExpired = (callback: () => void): void => {
+  onAuthExpiredCallback = callback;
+};
 
 export const setAccessToken = (token: string | null): void => {
   memoryToken = token;
@@ -76,6 +81,9 @@ apiClient.interceptors.response.use(
         return apiClient(originalRequest);
       } catch (refreshError) {
         setAccessToken(null);
+        if (onAuthExpiredCallback) {
+          onAuthExpiredCallback();
+        }
         return Promise.reject(refreshError);
       }
     }

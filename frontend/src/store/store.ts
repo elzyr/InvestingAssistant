@@ -1,13 +1,18 @@
 import {configureStore} from "@reduxjs/toolkit";
-import authReducer from './slices/auth.slice.ts';
-
-import portfolioReducer from './slices/portfolio.slice.ts';
+import authReducer, { forceLogout } from './slices/auth.slice.ts';
+import portfolioReducer, { resetPortfolio } from './slices/portfolio.slice.ts';
+import { setOnAuthExpired } from '../api/client.ts';
 
 export const store = configureStore({
     reducer: {
         auth: authReducer,
         portfolio: portfolioReducer,
     }
+});
+
+setOnAuthExpired(() => {
+    store.dispatch(forceLogout());
+    store.dispatch(resetPortfolio());
 });
 
 export type RootState = ReturnType<typeof store.getState>;

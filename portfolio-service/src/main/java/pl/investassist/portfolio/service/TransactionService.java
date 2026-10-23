@@ -100,6 +100,18 @@ public class TransactionService {
         foundInstrument, portfolio, request.currency(), request.price(),
         request.quantity(), request.commission(), request.baseAmount(), txDate);
 
+    Currency oldInstrumentCurrency = null;
+    if (!sameInstrumentAndSeries) {
+      try {
+        InstrumentResponse oldInst = instrumentClient.getInstrumentById(oldInstrumentId);
+        if (oldInst != null) {
+          oldInstrumentCurrency = oldInst.currency();
+        }
+      } catch (Exception ignored) {
+      }
+    }
+
+    final Currency finalOldCur = oldInstrumentCurrency;
     return transactionTemplate.execute(status -> {
       transaction.setInstrumentId(request.instrumentId());
       transaction.setTransactionType(request.transactionType());
@@ -120,7 +132,7 @@ public class TransactionService {
       Transaction savedTransaction = transactionRepository.save(transaction);
 
       if (!sameInstrumentAndSeries) {
-        positionService.recalculatePosition(portfolio, oldInstrumentId, oldCurrency, oldSeries);
+        positionService.recalculatePosition(portfolio, oldInstrumentId, finalOldCur, oldSeries);
       }
       positionService.recalculatePosition(portfolio, foundInstrument.id(), foundInstrument.currency(), request.seriesName());
 
@@ -137,11 +149,20 @@ public class TransactionService {
     String seriesName = (transaction.getSeriesName() != null && !transaction.getSeriesName().trim().isBlank())
         ? transaction.getSeriesName().trim() : null;
 
-    Currency cur = transaction.getCurrency() != null ? transaction.getCurrency() : portfolio.getBaseCurrency();
+    Currency instrumentCurrency = null;
+    try {
+      InstrumentResponse instrument = instrumentClient.getInstrumentById(instrumentId);
+      if (instrument != null) {
+        instrumentCurrency = instrument.currency();
+      }
+    } catch (Exception ignored) {
+      // Fallback handled inside recalculatePosition via existing position currency
+    }
 
+    final Currency finalCur = instrumentCurrency;
     transactionTemplate.executeWithoutResult(status -> {
       transactionRepository.delete(transaction);
-      positionService.recalculatePosition(portfolio, instrumentId, cur, seriesName);
+      positionService.recalculatePosition(portfolio, instrumentId, finalCur, seriesName);
     });
   }
 

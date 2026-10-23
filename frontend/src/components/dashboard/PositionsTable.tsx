@@ -1,17 +1,19 @@
 import { useState } from 'react';
-import { ChevronDown } from 'lucide-react';
+import { ChevronDown, Pencil } from 'lucide-react';
 import type { Position, TaxMode } from '../../types/dashboard.ts';
 
 interface PositionRowProps {
   position: Position;
   isExpanded: boolean;
   onToggle: () => void;
+  onEditTransaction?: (transactionId: string) => void;
 }
 
 const PositionRow = ({
   position,
   isExpanded,
   onToggle,
+  onEditTransaction,
 }: PositionRowProps) => {
   const isExpandable = Boolean(
     position.subPositions &&
@@ -59,13 +61,25 @@ const PositionRow = ({
         </div>
 
         <div className="w-8 flex items-center justify-center">
-          {isExpandable && (
+          {!isExpandable && position.subPositions?.length === 1 && position.subPositions[0].transactionId && onEditTransaction ? (
+            <button
+              type="button"
+              onClick={(e) => {
+                e.stopPropagation();
+                onEditTransaction(position.subPositions![0].transactionId!);
+              }}
+              className="p-1 rounded hover:bg-zinc-800 text-zinc-400 hover:text-white transition"
+              title="Edytuj transakcję"
+            >
+              <Pencil className="w-3.5 h-3.5" />
+            </button>
+          ) : isExpandable ? (
             <ChevronDown
               className={`w-4 h-4 text-zinc-400 group-hover:text-emerald-400 transition-transform duration-200 ${
                 isExpanded ? 'rotate-180 text-emerald-400' : ''
               }`}
             />
-          )}
+          ) : null}
         </div>
       </div>
 
@@ -125,7 +139,21 @@ const PositionRow = ({
                   </span>
                 </div>
 
-                <div className="w-8"></div>
+                <div className="w-8 flex items-center justify-center">
+                  {sub.transactionId && onEditTransaction && (
+                    <button
+                      type="button"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        onEditTransaction(sub.transactionId!);
+                      }}
+                      className="p-1 rounded hover:bg-zinc-800 text-zinc-400 hover:text-white transition"
+                      title="Edytuj transakcję"
+                    >
+                      <Pencil className="w-3.5 h-3.5" />
+                    </button>
+                  )}
+                </div>
               </div>
             );
           })}
@@ -139,12 +167,14 @@ interface PositionsTableProps {
   positions: Position[];
   taxMode?: TaxMode;
   onAddTransaction?: () => void;
+  onEditTransaction?: (transactionId: string) => void;
 }
 
 export const PositionsTable = ({
   positions,
   taxMode = 'NETTO',
   onAddTransaction,
+  onEditTransaction,
 }: PositionsTableProps) => {
   const [expandedIds, setExpandedIds] = useState<Set<string>>(new Set(['bond-EDO']));
 
@@ -196,6 +226,7 @@ export const PositionsTable = ({
               position={pos}
               isExpanded={expandedIds.has(pos.id)}
               onToggle={() => handleToggle(pos.id)}
+              onEditTransaction={onEditTransaction}
             />
           ))}
         </div>

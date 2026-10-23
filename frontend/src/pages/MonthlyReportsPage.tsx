@@ -27,8 +27,6 @@ import {
 export const MonthlyReportsPage: React.FC = () => {
   const dispatch = useAppDispatch();
   const { user } = useAppSelector((state) => state.auth);
-  const baseCurrency = user?.baseCurrency || 'PLN';
-
   const {
     activePortfolioId,
     portfolios,
@@ -40,6 +38,13 @@ export const MonthlyReportsPage: React.FC = () => {
     historicalSortedDates,
     loading,
   } = useAppSelector((state) => state.portfolio);
+
+  const activePortfolio = useMemo(
+    () => portfolios.find((p) => p.id === activePortfolioId),
+    [portfolios, activePortfolioId]
+  );
+
+  const baseCurrency = activePortfolio?.baseCurrency || user?.baseCurrency || 'PLN';
 
   const [cpi, setCpi] = useState<number>(3.6);
   const [monthlyCpiMap, setMonthlyCpiMap] = useState<Record<number, number>>({});
@@ -100,11 +105,6 @@ export const MonthlyReportsPage: React.FC = () => {
       })
       .catch(() => {});
   }, [activeYear]);
-
-  const activePortfolio = useMemo(
-    () => portfolios.find((p) => p.id === activePortfolioId),
-    [portfolios, activePortfolioId]
-  );
 
   const isIkeAccount = useMemo(() => {
     return activePortfolio?.name?.toLowerCase().includes('ike') ?? false;

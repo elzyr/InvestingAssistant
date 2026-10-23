@@ -21,13 +21,15 @@ public class InstrumentService {
     this.instrumentRepository = instrumentRepository;
   }
 
+  @Transactional
   public InstrumentResponse createInstrument(CreateInstrumentRequest request) {
-    String symbol = request.symbol().trim();
+    String symbol = request.symbol().trim().toUpperCase(java.util.Locale.ROOT);
     if (instrumentRepository.findBySymbolIgnoreCase(symbol).isPresent()) {
       throw new ResponseStatusException(
           HttpStatus.CONFLICT, "Instrument with symbol " + symbol + " already exists");
     }
     Instrument instrument = request.toEntity();
+    instrument.setSymbol(symbol);
     instrumentRepository.save(instrument);
     return InstrumentResponse.from(instrument);
   }

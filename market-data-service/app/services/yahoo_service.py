@@ -136,7 +136,7 @@ class YahooService:
                 raise HTTPException(status_code=404, detail=f"No historical data for symbol {symbol}")
             
             info = stock.fast_info
-            base_currency = (info.get("currency") or "USD").upper()
+            base_currency = (getattr(info, "currency", None) or "USD").upper()
 
             rate = 1.0
             actual_currency = base_currency

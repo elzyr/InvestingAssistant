@@ -1,4 +1,4 @@
-export type Currency = 'USD' | 'EUR' | 'PLN' | 'GBP';
+export type Currency = 'USD' | 'EUR' | 'PLN';
 export type Role = 'USER' | 'ADMIN';
 
 export interface LoginRequest {

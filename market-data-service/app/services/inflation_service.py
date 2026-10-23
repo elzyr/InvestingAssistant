@@ -1,6 +1,3 @@
-from app.services.cache_service import cache_service
-
-CACHE_KEY_INFLATION = "macro:inflation:cpi"
 
 INFLATION_HISTORY = [
     (2024, 12, 4.7, "GUS"),

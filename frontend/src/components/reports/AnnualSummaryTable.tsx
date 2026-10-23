@@ -107,14 +107,14 @@ export const AnnualSummaryTable: React.FC<AnnualSummaryTableProps> = ({
                     </div>
                   </td>
                   <td className="py-2.5 px-3 text-right font-medium text-zinc-100 tabular-nums whitespace-nowrap">
-                    {formatPLN(r.portfolioValue)}
+                    {formatPLN(r.portfolioValue, false, summary.baseCurrency)}
                   </td>
                   <td
                     className={`py-2.5 px-3 text-right tabular-nums whitespace-nowrap ${getValueColorClass(
                       r.profitGross
                     )}`}
                   >
-                    {formatPLN(r.profitGross, true)}
+                    {formatPLN(r.profitGross, true, summary.baseCurrency)}
                   </td>
                   <td
                     className={`py-2.5 px-3 text-right tabular-nums whitespace-nowrap ${getValueColorClass(
@@ -128,7 +128,7 @@ export const AnnualSummaryTable: React.FC<AnnualSummaryTableProps> = ({
                       r.profitNet
                     )}`}
                   >
-                    {formatPLN(r.profitNet, true)}
+                    {formatPLN(r.profitNet, true, summary.baseCurrency)}
                   </td>
                   <td
                     className={`py-2.5 px-3 text-right font-semibold tabular-nums whitespace-nowrap ${getValueColorClass(
@@ -170,14 +170,14 @@ export const AnnualSummaryTable: React.FC<AnnualSummaryTableProps> = ({
                 {ytdLabel}
               </td>
               <td className="py-3 px-3 text-right text-zinc-100 text-xs sm:text-sm tabular-nums whitespace-nowrap">
-                {formatPLN(summary.ytdPortfolioValue)}
+                {formatPLN(summary.ytdPortfolioValue, false, summary.baseCurrency)}
               </td>
               <td
                 className={`py-3 px-3 text-right tabular-nums whitespace-nowrap ${getValueColorClass(
                   summary.ytdProfitGross
                 )}`}
               >
-                {formatPLN(summary.ytdProfitGross, true)}
+                {formatPLN(summary.ytdProfitGross, true, summary.baseCurrency)}
               </td>
               <td
                 className={`py-3 px-3 text-right tabular-nums whitespace-nowrap ${getValueColorClass(
@@ -191,7 +191,7 @@ export const AnnualSummaryTable: React.FC<AnnualSummaryTableProps> = ({
                   summary.ytdProfitNet
                 )}`}
               >
-                {formatPLN(summary.ytdProfitNet, true)}
+                {formatPLN(summary.ytdProfitNet, true, summary.baseCurrency)}
               </td>
               <td
                 className={`py-3 px-3 text-right text-xs sm:text-sm tabular-nums whitespace-nowrap ${getValueColorClass(

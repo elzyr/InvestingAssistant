@@ -124,6 +124,30 @@ export const AppLayout = () => {
         </div>
       </header>
 
+      {/* Mobile Navigation Bar */}
+      <nav className="md:hidden border-b border-zinc-800 bg-[#0c0d12] px-2 py-1.5 flex items-center justify-around text-xs overflow-x-auto">
+        {navItems.map((item) => {
+          const Icon = item.icon;
+          return (
+            <NavLink
+              key={item.to}
+              to={item.to}
+              end={item.to === '/'}
+              className={({ isActive }) =>
+                `flex items-center gap-1.5 px-2.5 py-1.5 rounded-md font-medium text-xs whitespace-nowrap transition ${
+                  isActive
+                    ? 'bg-zinc-800 text-white font-semibold'
+                    : 'text-zinc-400 hover:text-zinc-200'
+                }`
+              }
+            >
+              <Icon className="w-3.5 h-3.5" />
+              <span>{item.label}</span>
+            </NavLink>
+          );
+        })}
+      </nav>
+
       {/* Main Content Area */}
       <main className="flex-1 flex flex-col min-w-0 overflow-y-auto">
         <Outlet />

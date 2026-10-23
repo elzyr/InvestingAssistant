@@ -37,6 +37,7 @@ export interface SubPosition {
   valueFormatted: string;
   profitFormatted: string;
   profitPercentFormatted: string;
+  transactionId?: string;
 }
 
 export interface Position {
