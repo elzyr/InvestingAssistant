@@ -1,8 +1,17 @@
 import apiClient from '../api/client.ts';
+import type {
+  PortfolioStatsRequest,
+  PortfolioStatsResponse,
+  MonteCarloRequest,
+  MonteCarloResponse,
+} from '../types/analytics.types.ts';
 
 export interface PriceQuote {
   symbol: string;
   price: number;
+  previousClose?: number;
+  change?: number;
+  changePercent?: number;
   currency: string;
   source: string;
 }
@@ -72,6 +81,22 @@ export const marketService = {
     const response = await apiClient.get<HistoricalPriceResponse>(
       `/api/prices/${symbol}/history`,
       { params }
+    );
+    return response.data;
+  },
+
+  async getPortfolioStats(request: PortfolioStatsRequest): Promise<PortfolioStatsResponse> {
+    const response = await apiClient.post<PortfolioStatsResponse>(
+      '/api/market/analytics/portfolio-stats',
+      request
+    );
+    return response.data;
+  },
+
+  async runMonteCarlo(request: MonteCarloRequest): Promise<MonteCarloResponse> {
+    const response = await apiClient.post<MonteCarloResponse>(
+      '/api/market/analytics/monte-carlo',
+      request
     );
     return response.data;
   },

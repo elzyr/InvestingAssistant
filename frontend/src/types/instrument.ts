@@ -9,10 +9,3 @@ export interface InstrumentResponse {
   type: InstrumentType;
   currency: Currency;
 }
-
-export interface CreateInstrumentRequest {
-  symbol: string;
-  name: string;
-  type: InstrumentType;
-  currency: Currency;
-}

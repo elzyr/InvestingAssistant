@@ -7,5 +7,6 @@ class Settings(BaseSettings):
     APP_PORT: int = 8083
     REDIS_HOST: str = "localhost"
     REDIS_PORT: int = 6379
+    MARKET_DB_PATH: str = "data/market_history.db"
 
 settings = Settings()

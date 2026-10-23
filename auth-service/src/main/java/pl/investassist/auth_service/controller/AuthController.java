@@ -25,21 +25,23 @@ import pl.investassist.auth_service.service.AuthService;
 @RequestMapping("/api/auth")
 public class AuthController {
 
-  private static final long REFRESH_TOKEN_EXPIRATION_SECONDS = 30L * 24 * 60 * 60;
-
   @Value("${app.security.cookie-secure:false}")
   private boolean cookieSecure;
 
+  private final long refreshExpirationSeconds;
   private final AuthService authService;
 
-  public AuthController(AuthService authService) {
+  public AuthController(
+      AuthService authService,
+      @Value("${jwt.refresh-expiration-ms:2592000000}") long refreshExpirationMs) {
     this.authService = authService;
+    this.refreshExpirationSeconds = refreshExpirationMs / 1000;
   }
 
   @PostMapping("/register")
   public ResponseEntity<AuthResponse> register(@Valid @RequestBody RegisterRequest request) {
     AuthResponse response = authService.register(request);
-    ResponseCookie cookie = createRefreshTokenCookie(response.refreshToken(), REFRESH_TOKEN_EXPIRATION_SECONDS);
+    ResponseCookie cookie = createRefreshTokenCookie(response.refreshToken(), refreshExpirationSeconds);
     return ResponseEntity.status(HttpStatus.CREATED)
         .header(HttpHeaders.SET_COOKIE, cookie.toString())
         .body(response);
@@ -48,7 +50,7 @@ public class AuthController {
   @PostMapping("/login")
   public ResponseEntity<AuthResponse> login(@Valid @RequestBody LoginRequest request) {
     AuthResponse response = authService.login(request);
-    ResponseCookie cookie = createRefreshTokenCookie(response.refreshToken(), REFRESH_TOKEN_EXPIRATION_SECONDS);
+    ResponseCookie cookie = createRefreshTokenCookie(response.refreshToken(), refreshExpirationSeconds);
     return ResponseEntity.ok()
         .header(HttpHeaders.SET_COOKIE, cookie.toString())
         .body(response);
@@ -65,7 +67,7 @@ public class AuthController {
     }
 
     AuthResponse response = authService.refreshToken(new RefreshTokenRequest(token));
-    ResponseCookie cookie = createRefreshTokenCookie(response.refreshToken(), REFRESH_TOKEN_EXPIRATION_SECONDS);
+    ResponseCookie cookie = createRefreshTokenCookie(response.refreshToken(), refreshExpirationSeconds);
 
     return ResponseEntity.ok()
         .header(HttpHeaders.SET_COOKIE, cookie.toString())

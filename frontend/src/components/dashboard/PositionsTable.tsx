@@ -1,17 +1,19 @@
 import { useState } from 'react';
-import { ChevronDown } from 'lucide-react';
+import { ChevronDown, Pencil } from 'lucide-react';
 import type { Position, TaxMode } from '../../types/dashboard.ts';
 
 interface PositionRowProps {
   position: Position;
   isExpanded: boolean;
   onToggle: () => void;
+  onEditTransaction?: (transactionId: string) => void;
 }
 
 const PositionRow = ({
   position,
   isExpanded,
   onToggle,
+  onEditTransaction,
 }: PositionRowProps) => {
   const isExpandable = Boolean(
     position.subPositions &&
@@ -50,22 +52,34 @@ const PositionRow = ({
         </div>
 
         <div className="text-right">
-          <span className="font-mono font-bold text-xs text-emerald-400 block">
+          <span className={`font-mono font-bold text-xs block ${position.isProfit ? 'text-emerald-400' : 'text-rose-400'}`}>
             {position.profitFormatted}
           </span>
-          <span className="font-mono text-[11px] text-emerald-400/90 font-medium">
+          <span className={`font-mono text-[11px] font-medium ${position.isProfit ? 'text-emerald-400/90' : 'text-rose-400/90'}`}>
             {position.profitPercentFormatted}
           </span>
         </div>
 
         <div className="w-8 flex items-center justify-center">
-          {isExpandable && (
+          {!isExpandable && position.subPositions?.length === 1 && position.subPositions[0].transactionId && onEditTransaction ? (
+            <button
+              type="button"
+              onClick={(e) => {
+                e.stopPropagation();
+                onEditTransaction(position.subPositions![0].transactionId!);
+              }}
+              className="p-1 rounded hover:bg-zinc-800 text-zinc-400 hover:text-white transition"
+              title="Edytuj transakcję"
+            >
+              <Pencil className="w-3.5 h-3.5" />
+            </button>
+          ) : isExpandable ? (
             <ChevronDown
               className={`w-4 h-4 text-zinc-400 group-hover:text-emerald-400 transition-transform duration-200 ${
                 isExpanded ? 'rotate-180 text-emerald-400' : ''
               }`}
             />
-          )}
+          ) : null}
         </div>
       </div>
 
@@ -79,51 +93,70 @@ const PositionRow = ({
             </span>
           </div>
 
-          {position.subPositions!.map((sub) => (
-            <div
-              key={sub.id}
-              className="grid grid-cols-[minmax(140px,1.8fr)_80px_100px_110px_140px_32px] gap-x-4 py-1.5 items-center text-xs font-mono"
-            >
-              <div>
-                <span className="text-zinc-100 font-semibold block">{sub.name}</span>
-                {sub.subName && (
-                  <span className="text-zinc-400 text-[11px] block">{sub.subName}</span>
-                )}
-              </div>
+          {position.subPositions!.map((sub) => {
+            const isSubProfit = !sub.profitFormatted.startsWith('-');
+            return (
+              <div
+                key={sub.id}
+                className="grid grid-cols-[minmax(140px,1.8fr)_80px_100px_110px_140px_32px] gap-x-4 py-1.5 items-center text-xs font-mono"
+              >
+                <div>
+                  <span className="text-zinc-100 font-semibold block">{sub.name}</span>
+                  {sub.subName && (
+                    <span className="text-zinc-400 text-[11px] block">{sub.subName}</span>
+                  )}
+                </div>
 
-              <div className="text-right font-mono">
-                {sub.sharePercent > 0 ? (
-                  <>
-                    <span className="text-xs text-zinc-300 font-medium block">
-                      {sub.sharePercent.toFixed(1)}%
-                    </span>
-                    {sub.shareNote && (
-                      <span className="text-[10px] text-zinc-400 block">{sub.shareNote}</span>
-                    )}
-                  </>
-                ) : (
-                  <span className="text-zinc-500">—</span>
-                )}
-              </div>
+                <div className="text-right font-mono">
+                  {sub.sharePercent > 0 ? (
+                    <>
+                      <span className="text-xs text-zinc-300 font-medium block">
+                        {sub.sharePercent.toFixed(1)}%
+                      </span>
+                      {sub.shareNote && (
+                        <span className="text-[10px] text-zinc-400 block">{sub.shareNote}</span>
+                      )}
+                    </>
+                  ) : (
+                    <span className="text-zinc-500">—</span>
+                  )}
+                </div>
 
-              <div className="text-right font-mono text-zinc-300 text-xs">
-                {sub.priceFormatted}
-              </div>
+                <div className="text-right font-mono text-zinc-300 text-xs">
+                  {sub.priceFormatted}
+                </div>
 
-              <div className="text-right font-mono font-bold text-white text-xs">
-                {sub.valueFormatted}
-              </div>
+                <div className="text-right font-mono font-bold text-white text-xs">
+                  {sub.valueFormatted}
+                </div>
 
-              <div className="text-right font-mono">
-                <span className="font-bold text-emerald-400 block">{sub.profitFormatted}</span>
-                <span className="text-[11px] text-emerald-400/90 font-medium block">
-                  {sub.profitPercentFormatted}
-                </span>
-              </div>
+                <div className="text-right font-mono">
+                  <span className={`font-bold block ${isSubProfit ? 'text-emerald-400' : 'text-rose-400'}`}>
+                    {sub.profitFormatted}
+                  </span>
+                  <span className={`text-[11px] font-medium block ${isSubProfit ? 'text-emerald-400/90' : 'text-rose-400/90'}`}>
+                    {sub.profitPercentFormatted}
+                  </span>
+                </div>
 
-              <div className="w-8"></div>
-            </div>
-          ))}
+                <div className="w-8 flex items-center justify-center">
+                  {sub.transactionId && onEditTransaction && (
+                    <button
+                      type="button"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        onEditTransaction(sub.transactionId!);
+                      }}
+                      className="p-1 rounded hover:bg-zinc-800 text-zinc-400 hover:text-white transition"
+                      title="Edytuj transakcję"
+                    >
+                      <Pencil className="w-3.5 h-3.5" />
+                    </button>
+                  )}
+                </div>
+              </div>
+            );
+          })}
         </div>
       )}
     </div>
@@ -134,12 +167,14 @@ interface PositionsTableProps {
   positions: Position[];
   taxMode?: TaxMode;
   onAddTransaction?: () => void;
+  onEditTransaction?: (transactionId: string) => void;
 }
 
 export const PositionsTable = ({
   positions,
   taxMode = 'NETTO',
   onAddTransaction,
+  onEditTransaction,
 }: PositionsTableProps) => {
   const [expandedIds, setExpandedIds] = useState<Set<string>>(new Set(['bond-EDO']));
 
@@ -191,6 +226,7 @@ export const PositionsTable = ({
               position={pos}
               isExpanded={expandedIds.has(pos.id)}
               onToggle={() => handleToggle(pos.id)}
+              onEditTransaction={onEditTransaction}
             />
           ))}
         </div>

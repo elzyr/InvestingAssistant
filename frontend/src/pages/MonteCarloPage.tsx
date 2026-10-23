@@ -8,10 +8,16 @@ import { StressTestingView } from '../components/analytics/StressTestingView.tsx
 export const MonteCarloPage = () => {
   const dispatch = useAppDispatch();
   const { user } = useAppSelector((state) => state.auth);
-  const baseCurrency = user?.baseCurrency || 'PLN';
 
   const { activePortfolioId, portfolios, positions, transactions, instruments, quotes, rates } =
     useAppSelector((state) => state.portfolio);
+
+  const activePortfolio = useMemo(
+    () => portfolios.find((p) => p.id === activePortfolioId),
+    [portfolios, activePortfolioId]
+  );
+
+  const baseCurrency = activePortfolio?.baseCurrency || user?.baseCurrency || 'PLN';
 
   const [cpi, setCpi] = useState<number>(3.4);
   const [nowTimestamp] = useState(() => Date.now());
@@ -40,11 +46,6 @@ export const MonteCarloPage = () => {
       .catch(() => {});
   }, []);
 
-  const activePortfolio = useMemo(
-    () => portfolios.find((p) => p.id === activePortfolioId),
-    [portfolios, activePortfolioId]
-  );
-
   const isIkeAccount = useMemo(() => {
     return activePortfolio?.name?.toLowerCase().includes('ike') ?? false;
   }, [activePortfolio]);
@@ -66,14 +67,14 @@ export const MonteCarloPage = () => {
         : (quotes[inst?.symbol || symbol]?.price ?? pos.averageBuyPrice);
 
       const totalValueNative = pos.quantity * currentPrice;
-      const totalCostNative = pos.quantity * pos.averageBuyPrice;
+      const totalCost = pos.totalCostBase != null ? pos.totalCostBase : pos.quantity * pos.averageBuyPrice * fxRate;
       return {
         symbol,
         isBond,
         bondRate: pos.bondRate,
         bondMargin: pos.bondMargin,
         totalValue: totalValueNative * fxRate,
-        totalCost: totalCostNative * fxRate,
+        totalCost,
       };
     });
   }, [positions, instruments, quotes, rates, baseCurrency, cpi]);
@@ -128,7 +129,7 @@ export const MonteCarloPage = () => {
       const inst = instruments[tx.instrumentId];
       const sName = (tx.seriesName || inst?.symbol || '').toUpperCase();
       const fx = (tx.currency === baseCurrency ? 1 : rates[tx.currency]) || 1;
-      const cost = (tx.baseAmount ?? tx.quantity * tx.price) * fx;
+      const cost = tx.baseAmount ?? tx.quantity * tx.price * fx;
 
       if (sName.startsWith('TOS')) {
         tosTotal += cost;

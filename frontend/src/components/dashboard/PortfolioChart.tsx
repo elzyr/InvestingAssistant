@@ -1,5 +1,5 @@
 import React, { useState, useMemo, useRef, useEffect } from 'react';
-import { ChevronDown, ChevronUp, LineChart, Sparkles, Check, Info, X, Settings2, Maximize2 } from 'lucide-react';
+import { ChevronDown, ChevronUp, LineChart, Sparkles, Check, Info, X, Settings2, Maximize2, Target } from 'lucide-react';
 import {
   createChart,
   ColorType,
@@ -21,6 +21,7 @@ import type {
   ProjectionHorizonOption,
   InflationAdjustMode,
 } from '../../types/dashboard.ts';
+import type { PortfolioStatsResponse } from '../../types/analytics.types.ts';
 
 interface PortfolioChartProps {
   data: ChartPoint[];
@@ -44,6 +45,7 @@ interface PortfolioChartProps {
   onInflationAdjustModeChange?: (mode: InflationAdjustMode) => void;
   targetGoal?: number | null;
   onTargetGoalChange?: (goal: number | null) => void;
+  empiricalStats?: PortfolioStatsResponse | null;
 }
 
 const TIMEFRAMES: TimeframeOption[] = ['1M', '3M', 'YTD', '1R', 'MAX'];
@@ -85,6 +87,7 @@ export const PortfolioChart: React.FC<PortfolioChartProps> = ({
   onInflationAdjustModeChange,
   targetGoal = null,
   onTargetGoalChange,
+  empiricalStats,
 }) => {
   const chartContainerRef = useRef<HTMLDivElement | null>(null);
   const chartRef = useRef<IChartApi | null>(null);
@@ -444,7 +447,7 @@ export const PortfolioChart: React.FC<PortfolioChartProps> = ({
                     : 'bg-rose-950/80 text-rose-300 border-rose-700/60'
                 }`}
               >
-                🎯 Cel {formatNumberWithSpaces(targetGoal / 1000)}k: <span className="font-bold">{goalProb}% szans</span>
+                <Target className="w-3 h-3 text-purple-400" /> Cel {formatNumberWithSpaces(targetGoal / 1000)}k: <span className="font-bold">{goalProb}% szans</span>
               </span>
             )}
             {isProjectionActive && (
@@ -700,8 +703,8 @@ export const PortfolioChart: React.FC<PortfolioChartProps> = ({
 
             <div className="flex items-center gap-1.5">
               <div className="flex items-center rounded-md border border-purple-900/60 bg-zinc-900/90 focus-within:border-purple-400 transition">
-                <span className="pl-2 pr-1 text-[11px] text-purple-300 flex items-center gap-1 select-none font-medium">
-                  <span>🎯</span> Cel:
+                <span className="pl-2 pr-1 text-[11px] text-purple-300 flex items-center gap-1.5 select-none font-medium">
+                  <Target className="w-3.5 h-3.5 text-purple-400" /> Cel:
                 </span>
                 <input
                   type="text"
@@ -738,6 +741,20 @@ export const PortfolioChart: React.FC<PortfolioChartProps> = ({
                   onChange={(e) => onExpectedEtfReturnChange(Number(e.target.value))}
                   className="bg-zinc-900/90 border border-zinc-750 text-emerald-400 font-bold text-xs rounded-md px-2 py-1 pr-6 focus:outline-none focus:border-emerald-500 cursor-pointer appearance-none"
                 >
+                  {empiricalStats && (
+                    <option
+                      value={Math.round(empiricalStats.weightedReturn * 1000) / 10}
+                      className="bg-zinc-900 text-zinc-200"
+                    >
+                      {(empiricalStats.weightedReturn * 100).toFixed(1)}% (Portfel)
+                    </option>
+                  )}
+                  {(!empiricalStats || Math.round(empiricalStats.weightedReturn * 1000) / 10 !== expectedEtfReturn) &&
+                    ![6.0, 7.5, 8.5, 10.0, 12.0].includes(expectedEtfReturn) && (
+                      <option value={expectedEtfReturn} className="bg-zinc-900 text-zinc-200">
+                        {expectedEtfReturn.toFixed(1)}% (Własny)
+                      </option>
+                    )}
                   <option value={6.0} className="bg-zinc-900 text-zinc-200">6.0% (Konserwatywny)</option>
                   <option value={7.5} className="bg-zinc-900 text-zinc-200">7.5% (Zrównoważony)</option>
                   <option value={8.5} className="bg-zinc-900 text-zinc-200">8.5% (MSCI World)</option>
@@ -747,6 +764,17 @@ export const PortfolioChart: React.FC<PortfolioChartProps> = ({
                 <ChevronDown className="w-3 h-3 text-zinc-400 absolute right-1.5 top-1/2 -translate-y-1/2 pointer-events-none" />
               </div>
             </div>
+
+            {empiricalStats && (
+              <div className="px-2 py-0.5 rounded-md bg-zinc-900 border border-zinc-750 text-[10px] text-zinc-300 font-mono flex items-center gap-1.5 select-none">
+                <span>ETF:</span>
+                <span className="text-zinc-400">TER {(empiricalStats.weightedTer * 100).toFixed(2)}%</span>
+                <span>·</span>
+                <span className="text-zinc-400">σ {(empiricalStats.weightedVolatility * 100).toFixed(1)}%</span>
+                <span>·</span>
+                <span className="text-zinc-400">P/E {empiricalStats.weightedPe.toFixed(1)}</span>
+              </div>
+            )}
           </div>
 
           <div className="relative">

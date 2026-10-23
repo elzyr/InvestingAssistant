@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo } from 'react';
+import { useState, useEffect, useMemo, useRef } from 'react';
 import { useAppDispatch, useAppSelector } from '../store/hooks.ts';
 import {
   fetchPortfolios,
@@ -31,6 +31,7 @@ import type {
   SortOption,
 } from '../types/dashboard.ts';
 import type { TransactionResponse } from '../types/portfolio.ts';
+import type { PortfolioStatsResponse } from '../types/analytics.types.ts';
 
 function formatMoney(amount: number, currency: string, showSign = false): string {
   const rounded = Math.round(amount);
@@ -42,7 +43,6 @@ function formatMoney(amount: number, currency: string, showSign = false): string
 export const DashboardPage = () => {
   const dispatch = useAppDispatch();
   const { user } = useAppSelector((state) => state.auth);
-  const baseCurrency = user?.baseCurrency || 'PLN';
 
   const {
     activePortfolioId,
@@ -56,6 +56,12 @@ export const DashboardPage = () => {
     historicalSortedDates,
     loading,
   } = useAppSelector((state) => state.portfolio);
+
+  const activePortfolio = useMemo(
+    () => portfolios.find((p) => p.id === activePortfolioId),
+    [portfolios, activePortfolioId]
+  );
+  const baseCurrency = activePortfolio?.baseCurrency || user?.baseCurrency || 'PLN';
 
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [isCreatePortfolioOpen, setIsCreatePortfolioOpen] = useState(false);
@@ -127,13 +133,40 @@ export const DashboardPage = () => {
             bondRate: pos.bondRate,
             bondMargin: pos.bondMargin,
             cpi,
+            targetDate: nowTimestamp,
           })
         : (quotes[symbol]?.price && quotes[symbol].price > 0 ? quotes[symbol].price : pos.averageBuyPrice);
+
+      let previousPrice = currentPrice;
+      if (isBond) {
+        previousPrice = calculateBondCurrentPrice({
+          purchaseDate: pos.purchaseDate,
+          bondRate: pos.bondRate,
+          bondMargin: pos.bondMargin,
+          cpi,
+          targetDate: nowTimestamp - 86400000,
+        });
+      } else if (quotes[symbol]?.previousClose && quotes[symbol].previousClose! > 0) {
+        previousPrice = quotes[symbol].previousClose!;
+      } else if (historicalPrices && historicalSortedDates && inst?.symbol && historicalPrices[inst.symbol]) {
+        const dates = historicalSortedDates[inst.symbol];
+        const dateMap = historicalPrices[inst.symbol];
+        if (dates && dates.length > 0) {
+          const todayDateStr = new Date(nowTimestamp).toISOString().slice(0, 10);
+          const lastDate = dates[dates.length - 1];
+          if (lastDate >= todayDateStr && dates.length >= 2) {
+            previousPrice = dateMap[dates[dates.length - 2]] ?? currentPrice;
+          } else {
+            previousPrice = dateMap[lastDate] ?? currentPrice;
+          }
+        }
+      }
 
       const totalVal = pos.quantity * currentPrice * fxRate;
       const totalCostVal = pos.totalCostBase !== undefined ? pos.totalCostBase : pos.quantity * pos.averageBuyPrice * fxRate;
       const profit = totalVal - totalCostVal;
       const profitPct = totalCostVal > 0 ? (profit / totalCostVal) * 100 : 0;
+      const dailyChange = pos.quantity * (currentPrice - previousPrice) * fxRate;
 
       let assetType: 'ETF' | 'BOND' | 'STOCK' = 'ETF';
       if (isBond) {
@@ -152,16 +185,76 @@ export const DashboardPage = () => {
         quantity: pos.quantity,
         averagePrice: pos.averageBuyPrice,
         currentPrice,
+        previousPrice,
         currency: pos.currency,
         totalValue: totalVal,
         totalCost: totalCostVal,
         profit,
         profitPct,
+        dailyChange,
         purchaseDate: pos.purchaseDate,
         bondRate: pos.bondRate,
       };
     });
-  }, [positions, instruments, quotes, rates, baseCurrency, cpi]);
+  }, [positions, instruments, quotes, rates, baseCurrency, cpi, nowTimestamp, historicalPrices, historicalSortedDates]);
+
+  const equityHoldings = useMemo(
+    () =>
+      enrichedHoldings
+        .filter((h) => !h.isBond)
+        .map((h) => ({ symbol: h.ticker, weight: 0, value: h.totalValue })),
+    [enrichedHoldings]
+  );
+
+  const empiricalRequestKey = useMemo(() => {
+    if (!activePortfolioId || equityHoldings.length === 0) {
+      return null;
+    }
+    const holdingsKey = [...equityHoldings]
+      .map((h) => `${h.symbol}:${h.value.toFixed(2)}`)
+      .sort()
+      .join('|');
+    return `${activePortfolioId}|${holdingsKey}`;
+  }, [activePortfolioId, equityHoldings]);
+  const [rawEmpiricalStats, setRawEmpiricalStats] = useState<{
+    requestKey: string;
+    data: PortfolioStatsResponse;
+  } | null>(null);
+  const empiricalStats =
+    empiricalRequestKey && rawEmpiricalStats?.requestKey === empiricalRequestKey
+      ? rawEmpiricalStats.data
+      : null;
+  const populatedPortfolioRef = useRef<string | null>(null);
+  const latestEmpiricalRequestKeyRef = useRef<string | null>(null);
+
+  useEffect(() => {
+    if (!empiricalRequestKey) {
+      latestEmpiricalRequestKeyRef.current = null;
+      return;
+    }
+
+    let isCancelled = false;
+    latestEmpiricalRequestKeyRef.current = empiricalRequestKey;
+
+    marketService
+      .getPortfolioStats({ holdings: equityHoldings })
+      .then((stats) => {
+        if (!isCancelled && stats && latestEmpiricalRequestKeyRef.current === empiricalRequestKey) {
+          setRawEmpiricalStats({ requestKey: empiricalRequestKey, data: stats });
+          if (activePortfolioId && populatedPortfolioRef.current !== activePortfolioId) {
+            populatedPortfolioRef.current = activePortfolioId;
+            setExpectedEtfReturn(Math.round(stats.weightedReturn * 1000) / 10);
+          }
+        }
+      })
+      .catch((err) => {
+        console.error('Failed to fetch empirical stats:', err);
+      });
+
+    return () => {
+      isCancelled = true;
+    };
+  }, [equityHoldings, activePortfolioId, empiricalRequestKey]);
 
   const totalPortfolioValue = useMemo(() => {
     return enrichedHoldings.reduce((sum, h) => sum + h.totalValue, 0);
@@ -184,21 +277,24 @@ export const DashboardPage = () => {
 
   const monthlyDca = userMonthlyDca ?? defaultDca;
 
+  const isIkeAccount = activePortfolio?.name.toLowerCase().includes('ike') || false;
+  const shouldApplyTax = taxMode === 'NETTO' && !isIkeAccount;
+
   const dashboardPositions = useMemo((): Position[] => {
     const list: Position[] = [];
 
     const nonBonds = enrichedHoldings.filter((h) => !h.isBond);
     for (const h of nonBonds) {
       const holdingTransactions = transactions
-        .filter((t) => t.instrumentId === h.instrumentId)
+        .filter((t) => t.instrumentId === h.instrumentId && t.transactionType === 'BUY')
         .sort((a, b) => new Date(a.executedAt).getTime() - new Date(b.executedAt).getTime());
 
       const subPositions: SubPosition[] = holdingTransactions.map((tx) => {
         const fx = (tx.currency === baseCurrency ? 1 : rates[tx.currency]) || 1;
-        const txCost = (tx.baseAmount ?? (tx.quantity * tx.price + (tx.commission || 0))) * fx;
+        const txCost = tx.baseAmount ?? (tx.quantity * tx.price + (tx.commission || 0)) * fx;
         const txVal = tx.quantity * h.currentPrice * fx;
         const txProfitGross = txVal - txCost;
-        const txTax = taxMode === 'NETTO' && txProfitGross > 0 ? txProfitGross * 0.19 : 0;
+        const txTax = shouldApplyTax && txProfitGross > 0 ? txProfitGross * 0.19 : 0;
         const txProfit = txProfitGross - txTax;
         const txProfitPct = txCost > 0 ? (txProfit / txCost) * 100 : 0;
 
@@ -211,11 +307,12 @@ export const DashboardPage = () => {
           valueFormatted: `${txVal.toLocaleString('pl-PL', { maximumFractionDigits: 0 })} ${baseCurrency}`,
           profitFormatted: `${txProfit >= 0 ? '+' : ''}${txProfit.toLocaleString('pl-PL', { maximumFractionDigits: 0 })} ${baseCurrency}`,
           profitPercentFormatted: `${txProfitPct >= 0 ? '+' : ''}${txProfitPct.toFixed(1)}%`,
+          transactionId: tx.id,
         };
       });
 
       const posProfitGross = h.profit;
-      const posTax = taxMode === 'NETTO' && posProfitGross > 0 ? posProfitGross * 0.19 : 0;
+      const posTax = shouldApplyTax && posProfitGross > 0 ? posProfitGross * 0.19 : 0;
       const posProfit = posProfitGross - posTax;
       const posProfitPct = h.totalCost > 0 ? (posProfit / h.totalCost) * 100 : 0;
 
@@ -257,7 +354,7 @@ export const DashboardPage = () => {
       const sumVal = items.reduce((s, b) => s + b.totalValue, 0);
       const sumCost = items.reduce((s, b) => s + b.totalCost, 0);
       const sumProfitGross = sumVal - sumCost;
-      const bondTax = taxMode === 'NETTO' && sumProfitGross > 0 ? sumProfitGross * 0.19 : 0;
+      const bondTax = shouldApplyTax && sumProfitGross > 0 ? sumProfitGross * 0.19 : 0;
       const sumProfit = sumProfitGross - bondTax;
       const sumProfitPct = sumCost > 0 ? (sumProfit / sumCost) * 100 : 0;
       const avgPrice = sumQty > 0 ? sumVal / sumQty : 100;
@@ -308,11 +405,24 @@ export const DashboardPage = () => {
           const yVal = yearItems.reduce((s, i) => s + i.totalValue, 0);
           const yCost = yearItems.reduce((s, i) => s + i.totalCost, 0);
           const yProfitGross = yVal - yCost;
-          const yTax = taxMode === 'NETTO' && yProfitGross > 0 ? yProfitGross * 0.19 : 0;
+          const yTax = shouldApplyTax && yProfitGross > 0 ? yProfitGross * 0.19 : 0;
           const yProfit = yProfitGross - yTax;
           const yProfitPct = yCost > 0 ? (yProfit / yCost) * 100 : 0;
           const yPrice = yQty > 0 ? yVal / yQty : 100;
           const yShare = totalPortfolioValue > 0 ? (yVal / totalPortfolioValue) * 100 : 0;
+          const purchaseYear = Number(year);
+          const yearInstrumentIds = [...new Set(yearItems.map((i) => i.instrumentId))];
+          const yearTransactions = transactions.filter(
+            (t) =>
+              t.transactionType === 'BUY' &&
+              yearInstrumentIds.includes(t.instrumentId) &&
+              t.executedAt &&
+              new Date(t.executedAt).getFullYear() === purchaseYear
+          );
+          const yearTx =
+            yearInstrumentIds.length === 1 && yearTransactions.length === 1
+              ? yearTransactions[0]
+              : undefined;
 
           return {
             id: `${family}-${year}`,
@@ -324,6 +434,7 @@ export const DashboardPage = () => {
             valueFormatted: formatMoney(yVal, baseCurrency),
             profitFormatted: formatMoney(yProfit, baseCurrency, true),
             profitPercentFormatted: `+${yProfitPct.toFixed(1)}%`,
+            transactionId: yearTx?.id,
           };
         });
 
@@ -345,19 +456,21 @@ export const DashboardPage = () => {
     });
 
     return list;
-  }, [enrichedHoldings, transactions, totalPortfolioValue, baseCurrency, rates, taxMode]);
+  }, [enrichedHoldings, transactions, totalPortfolioValue, baseCurrency, rates, shouldApplyTax]);
 
   const dashboardSummary = useMemo((): PortfolioSummary => {
     const grossProfit = totalPortfolioValue - totalPortfolioCost;
 
     let totalBelkaTax = 0;
-    enrichedHoldings.forEach((h) => {
-      if (h.profit > 0) {
-        totalBelkaTax += h.profit * 0.19;
-      }
-    });
+    if (shouldApplyTax) {
+      enrichedHoldings.forEach((h) => {
+        if (h.profit > 0) {
+          totalBelkaTax += h.profit * 0.19;
+        }
+      });
+    }
 
-    const profit = taxMode === 'NETTO' ? grossProfit - totalBelkaTax : grossProfit;
+    const profit = grossProfit - totalBelkaTax;
     const profitPct = totalPortfolioCost > 0 ? (profit / totalPortfolioCost) * 100 : 0;
 
     const earliestDate = enrichedHoldings.reduce((min, h) => {
@@ -373,29 +486,31 @@ export const DashboardPage = () => {
     const realProfit = profit - inflationImpact;
     const realProfitPct = profitPct - (cpi ?? 3.6) * yearsElapsed;
 
-    const taxNoteFormatted =
-      taxMode === 'NETTO'
-        ? `Belka: -${formatMoney(totalBelkaTax, baseCurrency)}`
-        : undefined;
+    const taxNoteFormatted = shouldApplyTax
+      ? `Belka: -${formatMoney(totalBelkaTax, baseCurrency)}`
+      : isIkeAccount
+      ? 'IKE (zwolnione z Belki)'
+      : undefined;
+
+    const totalDailyChange = enrichedHoldings.reduce((sum, h) => sum + (h.dailyChange || 0), 0);
+    const prevPortfolioVal = totalPortfolioValue - totalDailyChange;
+    const dailyChangePct = prevPortfolioVal > 0 ? (totalDailyChange / prevPortfolioVal) * 100 : 0;
 
     return {
       portfolioValueFormatted: formatMoney(totalPortfolioValue, baseCurrency),
-      dailyChangeAmountFormatted: formatMoney(profit, baseCurrency, true),
-      dailyChangePercentFormatted: `${profitPct >= 0 ? '+' : ''}${profitPct.toFixed(1)}% zwrotu`,
+      dailyChangeAmountFormatted: formatMoney(totalDailyChange, baseCurrency, true),
+      dailyChangePercentFormatted: `${totalDailyChange >= 0 ? '+' : ''}${dailyChangePct.toFixed(2)}% dzisiaj`,
       totalCostFormatted: formatMoney(totalPortfolioCost, baseCurrency),
       totalProfitAmountFormatted: formatMoney(profit, baseCurrency, true),
-      totalProfitPercentFormatted: `${profitPct >= 0 ? '+' : ''}${profitPct.toFixed(1)}% ${taxMode === 'NETTO' ? 'po podatku' : 'zwrotu'}`,
+      totalProfitPercentFormatted: `${profitPct >= 0 ? '+' : ''}${profitPct.toFixed(1)}% ${shouldApplyTax ? 'po podatku' : 'zwrotu'}`,
       realProfitAmountFormatted: formatMoney(realProfit, baseCurrency, true),
       realProfitPercentFormatted: `${realProfitPct >= 0 ? '+' : ''}${realProfitPct.toFixed(1)}% ponad inflację`,
       positionCount: positions.length,
       taxMode,
-      profitLabel: taxMode === 'NETTO' ? 'Zysk netto' : 'Zysk brutto',
+      profitLabel: shouldApplyTax ? 'Zysk netto' : 'Zysk brutto',
       taxNoteFormatted,
     };
-  }, [totalPortfolioValue, totalPortfolioCost, enrichedHoldings, baseCurrency, cpi, positions.length, taxMode, nowTimestamp]);
-
-  const activePortfolio = portfolios.find((p) => p.id === activePortfolioId);
-  const isIkeAccount = activePortfolio?.name.toLowerCase().includes('ike') || false;
+  }, [totalPortfolioValue, totalPortfolioCost, enrichedHoldings, baseCurrency, cpi, positions.length, taxMode, shouldApplyTax, isIkeAccount, nowTimestamp]);
 
   const chartData = useMemo(() => {
     const instrumentPrices: Record<string, number> = {};
@@ -419,7 +534,8 @@ export const DashboardPage = () => {
       monthlyDca,
       dcaBondShare,
       expectedEtfReturn,
-      etfVolatility: 15.0,
+      etfVolatility: empiricalStats ? Math.round(empiricalStats.weightedVolatility * 1000) / 10 : 15.0,
+      empiricalTer: empiricalStats ? Math.round(empiricalStats.weightedTer * 10000) / 100 : undefined,
       bondRollover,
       isIkeAccount,
       historicalPrices,
@@ -449,6 +565,7 @@ export const DashboardPage = () => {
     historicalSortedDates,
     inflationAdjustMode,
     targetGoal,
+    empiricalStats,
   ]);
 
   const filteredPositions = useMemo(() => {
@@ -464,7 +581,12 @@ export const DashboardPage = () => {
         return matchesQuery && matchesType;
       })
       .sort((a, b) => {
-        if (sortBy === 'share') return b.sharePercent - a.sharePercent;
+        if (sortBy === 'share' || sortBy === 'value') return b.sharePercent - a.sharePercent;
+        if (sortBy === 'profit') {
+          const profitA = parseFloat(a.profitPercentFormatted.replace(/[^0-9.-]/g, '')) || 0;
+          const profitB = parseFloat(b.profitPercentFormatted.replace(/[^0-9.-]/g, '')) || 0;
+          return profitB - profitA;
+        }
         if (sortBy === 'name') return a.ticker.localeCompare(b.ticker);
         return b.sharePercent - a.sharePercent;
       });
@@ -509,6 +631,7 @@ export const DashboardPage = () => {
         onInflationAdjustModeChange={setInflationAdjustMode}
         targetGoal={targetGoal}
         onTargetGoalChange={setTargetGoal}
+        empiricalStats={empiricalStats}
       />
 
       <FilterBar
@@ -524,6 +647,12 @@ export const DashboardPage = () => {
         positions={filteredPositions}
         taxMode={taxMode}
         onAddTransaction={() => setIsModalOpen(true)}
+        onEditTransaction={(txId) => {
+          const tx = transactions.find((t) => t.id === txId);
+          if (tx) {
+            setEditingTx(tx);
+          }
+        }}
       />
 
       <TransactionModal

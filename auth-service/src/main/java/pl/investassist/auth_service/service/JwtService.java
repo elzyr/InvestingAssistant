@@ -1,8 +1,8 @@
 package pl.investassist.auth_service.service;
 
-import io.jsonwebtoken.Claims;
 import io.jsonwebtoken.Jwts;
 import io.jsonwebtoken.security.Keys;
+import jakarta.annotation.PostConstruct;
 import java.nio.charset.StandardCharsets;
 import java.util.Date;
 import java.util.UUID;
@@ -20,12 +20,15 @@ public class JwtService {
   @Value("${jwt.expiration-ms}")
   private long jwtExpirationMs;
 
-  private SecretKey getSigningKey() {
+  private SecretKey signingKey;
+
+  @PostConstruct
+  void init() {
     byte[] keyBytes = secretKey != null ? secretKey.getBytes(StandardCharsets.UTF_8) : new byte[0];
     if (keyBytes.length < 32) {
       throw new IllegalStateException("jwt.secret must be set and at least 32 bytes (HS256)");
     }
-    return Keys.hmacShaKeyFor(keyBytes);
+    this.signingKey = Keys.hmacShaKeyFor(keyBytes);
   }
 
   public String generateAccessToken(User user) {
@@ -39,30 +42,12 @@ public class JwtService {
         .claim("baseCurrency", user.getBaseCurrency().name())
         .issuedAt(now)
         .expiration(expiryDate)
-        .signWith(getSigningKey())
+        .signWith(signingKey)
         .compact();
-  }
-
-  public Claims extractClaims(String token) {
-    return Jwts.parser().verifyWith(getSigningKey()).build().parseSignedClaims(token).getPayload();
-  }
-
-  public UUID extractUserId(String token) {
-    Claims claims = extractClaims(token);
-    return UUID.fromString(claims.getSubject());
-  }
-
-  public boolean validateToken(String token) {
-    try {
-      Claims claims = extractClaims(token);
-      Date exp = claims.getExpiration();
-      return exp != null && !exp.before(new Date());
-    } catch (Exception e) {
-      return false;
-    }
   }
 
   public long getJwtExpirationMs() {
     return jwtExpirationMs;
   }
 }
+

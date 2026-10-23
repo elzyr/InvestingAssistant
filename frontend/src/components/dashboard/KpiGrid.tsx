@@ -33,7 +33,9 @@ const KpiCard = ({
       <div
         className={`text-[11px] font-mono whitespace-nowrap mt-1 ${
           isAccent
-            ? 'font-semibold text-emerald-400'
+            ? subValue.startsWith('-')
+              ? 'font-semibold text-rose-400'
+              : 'font-semibold text-emerald-400'
             : 'font-medium text-zinc-400'
         }`}
       >

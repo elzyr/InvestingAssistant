@@ -8,6 +8,11 @@ interface CustomAxiosRequestConfig extends InternalAxiosRequestConfig {
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || '';
 
 let memoryToken: string | null = null;
+let onAuthExpiredCallback: (() => void) | null = null;
+
+export const setOnAuthExpired = (callback: () => void): void => {
+  onAuthExpiredCallback = callback;
+};
 
 export const setAccessToken = (token: string | null): void => {
   memoryToken = token;
@@ -36,6 +41,8 @@ apiClient.interceptors.request.use(
   (error: AxiosError) => Promise.reject(error)
 );
 
+let refreshPromise: Promise<string> | null = null;
+
 apiClient.interceptors.response.use(
   (response) => response,
   async (error: AxiosError) => {
@@ -52,19 +59,31 @@ apiClient.interceptors.response.use(
       originalRequest._retry = true;
 
       try {
-        const response = await axios.post<AuthResponse>(
-          `${API_BASE_URL}/api/auth/refresh`,
-          {},
-          { withCredentials: true }
-        );
+        if (!refreshPromise) {
+          refreshPromise = axios
+            .post<AuthResponse>(
+              `${API_BASE_URL}/api/auth/refresh`,
+              {},
+              { withCredentials: true }
+            )
+            .then((res) => {
+              const { accessToken } = res.data;
+              setAccessToken(accessToken);
+              return accessToken;
+            })
+            .finally(() => {
+              refreshPromise = null;
+            });
+        }
 
-        const { accessToken } = response.data;
-        setAccessToken(accessToken);
-
+        const accessToken = await refreshPromise;
         originalRequest.headers.Authorization = `Bearer ${accessToken}`;
         return apiClient(originalRequest);
       } catch (refreshError) {
         setAccessToken(null);
+        if (onAuthExpiredCallback) {
+          onAuthExpiredCallback();
+        }
         return Promise.reject(refreshError);
       }
     }

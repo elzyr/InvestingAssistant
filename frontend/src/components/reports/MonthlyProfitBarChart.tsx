@@ -199,7 +199,7 @@ export const MonthlyProfitBarChart: React.FC<MonthlyProfitBarChartProps> = ({
                 hoveredRecord.profitNetMom >= 0 ? 'text-emerald-400' : 'text-rose-400'
               }`}
             >
-              {formatPLN(hoveredRecord.profitNetMom, true)}
+              {formatPLN(hoveredRecord.profitNetMom, true, hoveredRecord.baseCurrency)}
             </span>
             <span className="text-zinc-400">
               ({formatPercent(hoveredRecord.returnNetMomPct, true)})

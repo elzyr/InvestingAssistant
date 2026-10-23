@@ -33,11 +33,6 @@ function App() {
               <Route path="/" element={<DashboardPage />} />
               <Route path="/reports" element={<MonthlyReportsPage />} />
               <Route path="/stress-testing" element={<MonteCarloPage />} />
-              <Route path="/strategy-comparison" element={<Navigate to="/stress-testing" replace />} />
-              <Route path="/forecast" element={<Navigate to="/stress-testing" replace />} />
-              <Route path="/monte-carlo" element={<Navigate to="/stress-testing" replace />} />
-              <Route path="/risk-metrics" element={<Navigate to="/stress-testing" replace />} />
-              <Route path="/efficient-frontier" element={<Navigate to="/stress-testing" replace />} />
             </Route>
           </Route>
 

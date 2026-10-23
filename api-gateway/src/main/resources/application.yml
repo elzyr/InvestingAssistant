@@ -47,10 +47,5 @@ spring:
           predicates:
             - Path=/api/instruments, /api/instruments/**
 
-        - id: analytics-service
-          uri: ${ANALYTICS_SERVICE_URL:http://localhost:8085}
-          predicates:
-            - Path=/api/analytics, /api/analytics/**
-
 jwt:
   secret: ${JWT_SECRET}

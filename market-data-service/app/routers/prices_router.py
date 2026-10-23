@@ -11,7 +11,7 @@ def get_price(symbol: str, currency: str = None):
     target_currency = currency.upper() if currency else None
 
     if symbol.startswith("PL_BOND"):
-        return {"symbol": symbol, "price": 100.0, "currency": "PLN", "source": "treasury_bond"}
+        return {"symbol": symbol, "price": 100.0, "previousClose": 100.0, "change": 0.0, "changePercent": 0.0, "currency": "PLN", "source": "treasury_bond"}
 
     try:
         cache_key = f"price:{symbol}:{target_currency or 'base'}"

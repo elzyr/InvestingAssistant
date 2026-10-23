@@ -3,6 +3,7 @@ package pl.investassist.portfolio.service;
 import java.util.List;
 import java.util.UUID;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 import pl.investassist.portfolio.dto.request.CreatePortfolioRequest;
 import pl.investassist.portfolio.dto.request.UpdatePortfolioRequest;
 import pl.investassist.portfolio.dto.response.PortfolioResponse;
@@ -24,10 +25,12 @@ public class PortfolioService {
     return PortfolioResponse.from(savedPortfolio);
   }
 
+  @Transactional(readOnly = true)
   public PortfolioResponse getPortfolio(UUID userId, UUID id) {
     return PortfolioResponse.from(validateAndGetPortfolioEntity(userId, id));
   }
 
+  @Transactional(readOnly = true)
   public List<PortfolioResponse> getAllPortfolios(UUID userId) {
     return portfolioRepository.findAllByUserId(userId).stream()
         .map(PortfolioResponse::from)
@@ -46,6 +49,7 @@ public class PortfolioService {
     portfolioRepository.delete(validateAndGetPortfolioEntity(userId, id));
   }
 
+  @Transactional(readOnly = true)
   public Portfolio validateAndGetPortfolioEntity(UUID userId, UUID portfolioId) {
     Portfolio foundPortfolio =
         portfolioRepository

@@ -155,6 +155,7 @@ export function generateRealAnnualSummary({
         symbol,
         cat,
         fallbackPrice,
+        transactionType: tx.transactionType || 'BUY',
       };
     })
     .sort((a, b) => a.timeMs - b.timeMs);
@@ -252,10 +253,15 @@ export function generateRealAnnualSummary({
             tx.fallbackPrice
           ) *
           tx.fx;
-
-      categoryMap[tx.cat.name].invested += tx.txCost;
-      categoryMap[tx.cat.name].currentValue += txVal;
+      const sign = tx.transactionType === 'SELL' ? -1 : 1;
+      categoryMap[tx.cat.name].invested += sign * tx.txCost;
+      categoryMap[tx.cat.name].currentValue += sign * txVal;
     }
+
+    Object.values(categoryMap).forEach((c) => {
+      c.invested = Math.max(0, c.invested);
+      c.currentValue = Math.max(0, c.currentValue);
+    });
 
     const totalInvested = Object.values(categoryMap).reduce(
       (sum, c) => sum + c.invested,
@@ -321,6 +327,7 @@ export function generateRealAnnualSummary({
       realProfitPct: Number(realProfitPct.toFixed(2)),
       status: 'RECORDED',
       breakdown,
+      baseCurrency,
     });
   }
 
@@ -380,5 +387,6 @@ export function generateRealAnnualSummary({
     ytdReturnNetPct: Number(ytdReturnNetPct.toFixed(2)),
     ytdRealReturnPct: Number(ytdRealReturnPct.toFixed(2)),
     avgCpi: Number(avgCpi.toFixed(1)),
+    baseCurrency,
   };
 }

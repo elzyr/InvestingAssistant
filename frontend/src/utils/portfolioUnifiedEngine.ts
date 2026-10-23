@@ -139,6 +139,7 @@ export interface UnifiedEngineParams {
   dcaBondShare?: number;
   expectedEtfReturn?: number;
   etfVolatility?: number;
+  empiricalTer?: number;
   bondRollover?: boolean;
   isIkeAccount?: boolean;
   whtDrag?: number;
@@ -147,6 +148,8 @@ export interface UnifiedEngineParams {
   inflationAdjustMode?: InflationAdjustMode;
   targetGoal?: number | null;
 }
+
+export type UnifiedTimelineParams = UnifiedEngineParams;
 
 export function getHistoricalPrice(
   symbolPrices: Record<string, number> | undefined,
@@ -194,7 +197,8 @@ export function generateUnifiedPortfolioTimeline({
   monthlyDca = 2000,
   dcaBondShare = 0.5,
   expectedEtfReturn = 8.5,
-  etfVolatility = 15.0,
+  etfVolatility,
+  empiricalTer,
   bondRollover = true,
   isIkeAccount = false,
   whtDrag = 0.25,
@@ -220,6 +224,7 @@ export function generateUnifiedPortfolioTimeline({
       return {
         timeMs,
         executedAt: tx.executedAt,
+        transactionType: tx.transactionType || 'BUY',
         quantity: tx.quantity,
         fx,
         txCost,
@@ -354,9 +359,10 @@ export function generateUnifiedPortfolioTimeline({
     for (let k = 0; k < preparedTxs.length; k++) {
       const tx = preparedTxs[k];
       if (tx.timeMs > tMs) break;
+      const sign = tx.transactionType === 'SELL' ? -1 : 1;
 
       if (tx.isBond) {
-        bondCostAtT += tx.txCost;
+        bondCostAtT += sign * tx.txCost;
         const unitPrice = calculateBondCurrentPrice({
           purchaseDate: tx.executedAt,
           bondRate: tx.bondRate,
@@ -364,18 +370,23 @@ export function generateUnifiedPortfolioTimeline({
           cpi,
           targetDate: tMs,
         });
-        bondValAtT += tx.quantity * unitPrice * tx.fx;
+        bondValAtT += sign * tx.quantity * unitPrice * tx.fx;
       } else {
-        nonBondCostAtT += tx.txCost;
+        nonBondCostAtT += sign * tx.txCost;
         const realClose = getHistoricalPrice(
           historicalPrices[tx.symbol],
           historicalSortedDates[tx.symbol],
           dayDateStr,
           tx.fallbackPrice
         );
-        nonBondValAtT += tx.quantity * realClose * tx.fx;
+        nonBondValAtT += sign * tx.quantity * realClose * tx.fx;
       }
     }
+
+    bondCostAtT = Math.max(0, bondCostAtT);
+    bondValAtT = Math.max(0, bondValAtT);
+    nonBondCostAtT = Math.max(0, nonBondCostAtT);
+    nonBondValAtT = Math.max(0, nonBondValAtT);
 
     let finalCost = bondCostAtT + nonBondCostAtT;
     let rawValuation = bondValAtT + nonBondValAtT;
@@ -401,7 +412,7 @@ export function generateUnifiedPortfolioTimeline({
 
     const bondProfit = Math.max(0, bondValAtT - bondCostAtT);
     const nonBondProfit = Math.max(0, nonBondValAtT - nonBondCostAtT);
-    const totalProfitGross = Math.max(0, rawValuation - finalCost);
+    const totalProfitGross = rawValuation - finalCost;
 
     let profit = totalProfitGross;
     let valuation = rawValuation;
@@ -411,8 +422,8 @@ export function generateUnifiedPortfolioTimeline({
       const nonBondBelka = isIkeAccount ? 0 : nonBondProfit * 0.19;
       const totalBelka = bondBelka + nonBondBelka;
 
-      profit = Math.max(0, totalProfitGross - totalBelka);
-      valuation = finalCost + profit;
+      profit = totalProfitGross - totalBelka;
+      valuation = rawValuation - totalBelka;
     }
 
     const returnPct = finalCost > 0 ? (profit / finalCost) * 100 : 0;
@@ -450,7 +461,7 @@ export function generateUnifiedPortfolioTimeline({
   const defaultBondRate = 5.43;
   const weightedBondRateAnnual = userBondValSum > 0 ? userBondWeightedRateSum / userBondValSum : defaultBondRate;
 
-  let weightedTer = 0.20;
+  let weightedTer = empiricalTer !== undefined ? empiricalTer : 0.20;
   let weightedWhtDrag = whtDrag ?? 0.25;
   let portfolioEquityVol = (etfVolatility ?? 15.0) / 100;
 
@@ -467,22 +478,30 @@ export function generateUnifiedPortfolioTimeline({
       sumWht += item.w * item.profile.whtDrag;
     }
 
-    weightedTer = sumTer;
+    if (empiricalTer !== undefined) {
+      weightedTer = empiricalTer;
+    } else {
+      weightedTer = sumTer;
+    }
     weightedWhtDrag = whtDrag !== undefined ? whtDrag : sumWht;
 
-    let portVariance = 0;
-    for (let i = 0; i < weights.length; i++) {
-      for (let j = 0; j < weights.length; j++) {
-        const wI = weights[i].w;
-        const wJ = weights[j].w;
-        const sigI = weights[i].profile.volatility / 100;
-        const sigJ = weights[j].profile.volatility / 100;
-        const rho =
-          CORRELATION_MATRIX[weights[i].profile.category]?.[weights[j].profile.category] ?? 0.85;
-        portVariance += wI * wJ * sigI * sigJ * rho;
+    if (etfVolatility !== undefined) {
+      portfolioEquityVol = etfVolatility / 100;
+    } else {
+      let portVariance = 0;
+      for (let i = 0; i < weights.length; i++) {
+        for (let j = 0; j < weights.length; j++) {
+          const wI = weights[i].w;
+          const wJ = weights[j].w;
+          const sigI = weights[i].profile.volatility / 100;
+          const sigJ = weights[j].profile.volatility / 100;
+          const rho =
+            CORRELATION_MATRIX[weights[i].profile.category]?.[weights[j].profile.category] ?? 0.85;
+          portVariance += wI * wJ * sigI * sigJ * rho;
+        }
       }
+      portfolioEquityVol = Math.sqrt(Math.max(0.0001, portVariance));
     }
-    portfolioEquityVol = Math.sqrt(Math.max(0.0001, portVariance));
   }
 
   const totalCostDrag = weightedTer + weightedWhtDrag;

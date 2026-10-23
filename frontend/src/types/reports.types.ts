@@ -29,6 +29,7 @@ export interface MonthlyReportRecord {
   realProfitPct: number;
   status: ReportMonthStatus;
   breakdown: MonthlyCategoryBreakdown[];
+  baseCurrency?: string;
 }
 
 export interface AnnualSummaryData {
@@ -42,6 +43,7 @@ export interface AnnualSummaryData {
   ytdReturnNetPct: number;
   ytdRealReturnPct: number;
   avgCpi: number;
+  baseCurrency?: string;
 }
 
 export type ReportViewMode = 'ANNUAL' | 'MONTH_DETAIL';

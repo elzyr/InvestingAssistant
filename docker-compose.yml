@@ -11,14 +11,12 @@ services:
       - PORTFOLIO_SERVICE_URL=http://portfolio-service:8082
       - MARKET_DATA_SERVICE_URL=http://market-data-service:8083
       - INSTRUMENT_SERVICE_URL=http://instrument-service:8084
-      - ANALYTICS_SERVICE_URL=http://analytics-service:8085
       - JWT_SECRET=${JWT_SECRET}
     depends_on:
       - auth-service
       - portfolio-service
       - market-data-service
       - instrument-service
-      - analytics-service
     networks:
       - investassist-network
     restart: always
@@ -26,8 +24,8 @@ services:
   redis:
     image: redis:7-alpine
     container_name: investassist-redis
-    ports:
-      - "6379:6379"
+    expose:
+      - "6379"
     volumes:
       - redis_data:/data
     networks:
@@ -39,12 +37,15 @@ services:
       context: ./market-data-service
       dockerfile: Dockerfile
     container_name: investassist-market-data
-    ports:
-      - "8083:8083"
+    expose:
+      - "8083"
     environment:
       - REDIS_HOST=redis
       - REDIS_PORT=6379
       - APP_PORT=8083
+      - MARKET_DB_PATH=/app/data/market_history.db
+    volumes:
+      - market_data:/app/data
     depends_on:
       - redis
     networks:
@@ -54,8 +55,8 @@ services:
   postgres:
     image: postgres:16-alpine
     container_name: investassist-postgres
-    ports:
-      - "5432:5432"
+    expose:
+      - "5432"
     environment:
       - POSTGRES_DB=${DB_NAME:-postgres}
       - POSTGRES_USER=${DB_USER}
@@ -72,8 +73,8 @@ services:
       context: ./auth-service
       dockerfile: Dockerfile
     container_name: investassist-auth
-    ports:
-      - "8081:8081"
+    expose:
+      - "8081"
     environment:
       - DB_URL=jdbc:postgresql://postgres:5432/auth_db
       - DB_USER=${DB_USER}
@@ -93,8 +94,8 @@ services:
       context: ./portfolio-service
       dockerfile: Dockerfile
     container_name: investassist-portfolio
-    ports:
-      - "8082:8082"
+    expose:
+      - "8082"
     environment:
       - DB_URL=jdbc:postgresql://postgres:5432/investing_assistant
       - DB_USER=${DB_USER}
@@ -115,25 +116,14 @@ services:
       context: ./instrument-service
       dockerfile: Dockerfile
     container_name: investassist-instrument
-    ports:
-      - "8084:8084"
+    expose:
+      - "8084"
     environment:
       - DB_URL=jdbc:postgresql://postgres:5432/instrument_db
       - DB_USER=${DB_USER}
       - DB_PASSWORD=${DB_PASSWORD}
     depends_on:
       - postgres
-    networks:
-      - investassist-network
-    restart: always
-
-  analytics-service:
-    build:
-      context: ./analytics-service
-      dockerfile: Dockerfile
-    container_name: investassist-analytics
-    ports:
-      - "8085:8085"
     networks:
       - investassist-network
     restart: always
@@ -152,6 +142,7 @@ services:
     restart: always
 
 volumes:
+  market_data:
   redis_data:
   postgres_data:
 

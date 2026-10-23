@@ -4,6 +4,7 @@ import java.util.List;
 import java.util.UUID;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.server.ResponseStatusException;
 import pl.investassist.instrument.dto.CreateInstrumentRequest;
 import pl.investassist.instrument.dto.InstrumentResponse;
@@ -20,12 +21,20 @@ public class InstrumentService {
     this.instrumentRepository = instrumentRepository;
   }
 
+  @Transactional
   public InstrumentResponse createInstrument(CreateInstrumentRequest request) {
+    String symbol = request.symbol().trim().toUpperCase(java.util.Locale.ROOT);
+    if (instrumentRepository.findBySymbolIgnoreCase(symbol).isPresent()) {
+      throw new ResponseStatusException(
+          HttpStatus.CONFLICT, "Instrument with symbol " + symbol + " already exists");
+    }
     Instrument instrument = request.toEntity();
+    instrument.setSymbol(symbol);
     instrumentRepository.save(instrument);
     return InstrumentResponse.from(instrument);
   }
 
+  @Transactional(readOnly = true)
   public InstrumentResponse getInstrument(String symbol) {
     return InstrumentResponse.from(
         instrumentRepository
@@ -36,6 +45,7 @@ public class InstrumentService {
                         HttpStatus.NOT_FOUND, "Instrument not found with symbol: " + symbol)));
   }
 
+  @Transactional(readOnly = true)
   public InstrumentResponse getInstrument(UUID uuid) {
     return InstrumentResponse.from(
         instrumentRepository
@@ -46,6 +56,7 @@ public class InstrumentService {
                         HttpStatus.NOT_FOUND, "Instrument not found with UUID: " + uuid)));
   }
 
+  @Transactional(readOnly = true)
   public List<InstrumentResponse> getInstruments(String search, InstrumentType type) {
     String searchQuery = (search != null) ? search : "";
     return instrumentRepository.searchInstruments(type, searchQuery).stream()
