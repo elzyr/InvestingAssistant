@@ -43,6 +43,9 @@ services:
       - REDIS_HOST=redis
       - REDIS_PORT=6379
       - APP_PORT=8083
+      - MARKET_DB_PATH=/app/data/market_history.db
+    volumes:
+      - market_data:/app/data
     depends_on:
       - redis
     networks:
@@ -139,6 +142,7 @@ services:
     restart: always
 
 volumes:
+  market_data:
   redis_data:
   postgres_data:
 
