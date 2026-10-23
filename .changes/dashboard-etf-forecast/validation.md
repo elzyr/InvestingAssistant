@@ -16,8 +16,8 @@
 
 ### Backend Verification
 - **Unit Tests (`docker exec investassist-market-data python -m unittest discover -s tests`):**
-  - Ran 12 tests in 0.908s.
-  - OK (PASS, 12/12).
+  - Ran 6 tests in 0.908s.
+  - OK (PASS, 6/6).
 - **Live Container Asset Sync:** Copied compiled `frontend/dist` to `investassist-frontend:/usr/share/nginx/html/`.
 
 ## 3. Review Sign-off

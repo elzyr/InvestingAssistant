@@ -7,11 +7,11 @@ Without persisting daily end-of-day (EOD) prices and fund profile metrics in a l
 
 ## Solution
 Implement an end-to-end historical market data repository and vector-optimized ETF analytics engine:
-1. **Database Persistence in `market-data-service` (PostgreSQL `market_data_db`):**
-   - Configure a dedicated PostgreSQL database `market_data_db` in the existing `postgres` container.
+1. **Database Persistence in `market-data-service` (SQLite `MARKET_DB_PATH`):**
+   - Configure a dedicated SQLite database file via `MARKET_DB_PATH` mounted in the existing `market_data` volume.
    - Tables: `daily_price_history` (symbol, date, close_price, currency, volume with unique constraint on `(symbol, date)`) and `etf_profile_metrics` (symbol, ter, trailing_pe, dividend_yield, beta, last_updated).
-   - Implement an incremental delta-backfill mechanism: check `MAX(date)` for any requested ticker; fetch only missing days from `yfinance` for completed sessions ($T < \text{today}$); save in bulk with `ON CONFLICT (symbol, date) DO NOTHING`; subsequent reads hit local DB in < 10ms.
-   - Self-healing database bootstrap on startup: `market-data-service` connects to Postgres and ensures `market_data_db` and tables exist idempotently, avoiding issues with existing Docker volumes.
+   - Implement an incremental delta-backfill mechanism: check `MAX(date)` for any requested ticker; fetch only missing days from `yfinance` for completed sessions ($T < \text{today}$); save in bulk with SQLite conflict-safe inserts; subsequent reads hit local DB in < 10ms.
+   - Self-healing database bootstrap on startup: `market-data-service` initializes the SQLite schema idempotently on first access, avoiding issues with existing Docker volumes.
 2. **Curated UCITS ETF Fallback & Data Quality:**
    - Because Yahoo Finance frequently omits `netExpenseRatio` or `trailingPE` on European UCITS tickers (`.DE`, `.L`, `.PA`), provide a curated deterministic fallback dictionary for common instruments (e.g. VWCE.DE $\to$ TER 0.22%, VUAA.DE $\to$ TER 0.07%, etc.) so that fee drag and valuation metrics never degrade to 0.
 3. **Vectorized Financial Analytics & Monte Carlo Engine (Python / NumPy):**
@@ -38,17 +38,16 @@ Implement an end-to-end historical market data repository and vector-optimized E
 ## Implementation Decisions
 - **Deep Module Architecture:**
   - `MarketAnalyticsService`: single deep interface in `market-data-service` exposing `get_portfolio_stats(holdings)` and `simulate_monte_carlo(params)`. Hides DB connection, delta-fetching, covariance calculation, and vectorized NumPy array generation behind a clean contract.
-  - `MarketHistoryRepository`: handles `psycopg[binary]` / SQLAlchemy storage for `daily_price_history` and `etf_profile_metrics` with upsert / batch insert and `ON CONFLICT DO NOTHING`.
+  - `MarketHistoryRepository`: handles SQLite storage for `daily_price_history` and `etf_profile_metrics` with idempotent insert / batch insert behavior.
 - **Optimization Standards (YAGNI & Performance):**
   - Use NumPy vectorized matrix operations for 10,000 paths (zero Python for-loops over paths).
-  - Database connection pool configured with SQLAlchemy / psycopg.
+  - Lightweight local persistence through SQLite file storage configured by `MARKET_DB_PATH`.
   - Delta queries use `MAX(date)` indexed queries to fetch only the incremental difference since last cached date.
-  - Concurrency safety: `ON CONFLICT (symbol, date) DO NOTHING` prevents duplicate insertion errors.
+  - Concurrency safety: unique constraints plus conflict-safe inserts prevent duplicate insertion errors.
   - Only persist closed trading sessions ($T < \text{today}$) to avoid caching partial intraday candles as EOD closing prices.
   - Return compact quantile timeline points (~15 KB JSON) instead of raw 10,000 simulation matrices (~28 MB).
 - **Environment & Docker:**
-  - Add `market_data_db` to `postgres-init/init.sql`.
-  - Pass clean environment variables (`DB_HOST`, `DB_PORT`, `DB_USER`, `DB_PASSWORD`, `DB_NAME`) to `market-data-service` in `docker-compose.yml`, with `depends_on: [postgres, redis]`.
+  - Mount persistent storage for `MARKET_DB_PATH` in `docker-compose.yml` (`market_data:/app/data`) so analytics cache survives container restarts.
 
 ## Testing Decisions
 - **Public Seams for Verification:**
