@@ -1,11 +1,9 @@
 import { useEffect, useMemo, useState } from 'react';
-import { Zap, Dices } from 'lucide-react';
 import { useAppDispatch, useAppSelector } from '../store/hooks.ts';
 import { fetchPortfolios, fetchPositions, fetchTransactions } from '../store/thunks/portfolio.thunk.ts';
 import { marketService } from '../services/market.service.ts';
 import { calculateBondCurrentPrice } from '../utils/portfolioUnifiedEngine.ts';
 import { StressTestingView } from '../components/analytics/StressTestingView.tsx';
-import { EmpiricalMonteCarloView } from '../components/analytics/EmpiricalMonteCarloView.tsx';
 
 export const MonteCarloPage = () => {
   const dispatch = useAppDispatch();
@@ -13,8 +11,6 @@ export const MonteCarloPage = () => {
 
   const { activePortfolioId, portfolios, positions, transactions, instruments, quotes, rates } =
     useAppSelector((state) => state.portfolio);
-
-  const [activeTab, setActiveTab] = useState<'stress' | 'empirical-mc'>('stress');
 
   const activePortfolio = useMemo(
     () => portfolios.find((p) => p.id === activePortfolioId),
@@ -98,14 +94,6 @@ export const MonteCarloPage = () => {
     [enrichedHoldings]
   );
 
-  const equityHoldings = useMemo(
-    () =>
-      enrichedHoldings
-        .filter((h) => !h.isBond)
-        .map((h) => ({ symbol: h.symbol, totalValue: h.totalValue })),
-    [enrichedHoldings]
-  );
-
   const weightedBondRate = useMemo(() => {
     if (currentBondVal <= 0) return 0.0543;
     const sumRateVal = enrichedHoldings
@@ -165,60 +153,18 @@ export const MonteCarloPage = () => {
   }, [transactions, instruments, rates, baseCurrency, nowTimestamp]);
 
   return (
-    <div className="w-full max-w-[1920px] mx-auto px-6 lg:px-8 py-6 space-y-6">
-      {/* Tab Switcher */}
-      <div className="flex items-center gap-2 border-b border-slate-800 pb-4">
-        <button
-          type="button"
-          onClick={() => setActiveTab('stress')}
-          className={`flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-semibold transition-all ${
-            activeTab === 'stress'
-              ? 'bg-indigo-600 text-white shadow-lg shadow-indigo-500/20'
-              : 'bg-slate-900/60 text-slate-400 hover:text-white border border-slate-800 hover:border-slate-700'
-          }`}
-        >
-          <Zap className="w-4 h-4 text-amber-400" />
-          ⚡ Testy Warunków Skrajnych
-        </button>
-
-        <button
-          type="button"
-          onClick={() => setActiveTab('empirical-mc')}
-          className={`flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-semibold transition-all ${
-            activeTab === 'empirical-mc'
-              ? 'bg-indigo-600 text-white shadow-lg shadow-indigo-500/20'
-              : 'bg-slate-900/60 text-slate-400 hover:text-white border border-slate-800 hover:border-slate-700'
-          }`}
-        >
-          <Dices className="w-4 h-4 text-emerald-400" />
-          🎲 Empiryczne Monte Carlo ETF
-        </button>
-      </div>
-
-      {activeTab === 'stress' ? (
-        <StressTestingView
-          currentBondVal={currentBondVal}
-          currentEquityVal={currentEquityVal}
-          currentCostVal={currentCostVal}
-          baseCurrency={baseCurrency}
-          isIkeAccount={isIkeAccount}
-          weightedBondRate={weightedBondRate}
-          defaultTosDca={calculatedDca.tos}
-          defaultEdoDca={calculatedDca.edo}
-          defaultEtfDca={calculatedDca.etf}
-        />
-      ) : (
-        <EmpiricalMonteCarloView
-          key={activePortfolioId}
-          equityHoldings={equityHoldings}
-          currentBondVal={currentBondVal}
-          currentEquityVal={currentEquityVal}
-          baseCurrency={baseCurrency}
-          isIkeAccount={isIkeAccount}
-          weightedBondRate={weightedBondRate}
-          defaultMonthlyDca={calculatedDca.total || calculatedDca.etf}
-        />
-      )}
+    <div className="w-full max-w-[1920px] mx-auto px-6 lg:px-8 py-6">
+      <StressTestingView
+        currentBondVal={currentBondVal}
+        currentEquityVal={currentEquityVal}
+        currentCostVal={currentCostVal}
+        baseCurrency={baseCurrency}
+        isIkeAccount={isIkeAccount}
+        weightedBondRate={weightedBondRate}
+        defaultTosDca={calculatedDca.tos}
+        defaultEdoDca={calculatedDca.edo}
+        defaultEtfDca={calculatedDca.etf}
+      />
     </div>
   );
 };

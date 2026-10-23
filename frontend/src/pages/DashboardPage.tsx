@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo } from 'react';
+import { useState, useEffect, useMemo, useRef } from 'react';
 import { useAppDispatch, useAppSelector } from '../store/hooks.ts';
 import {
   fetchPortfolios,
@@ -31,6 +31,7 @@ import type {
   SortOption,
 } from '../types/dashboard.ts';
 import type { TransactionResponse } from '../types/portfolio.ts';
+import type { PortfolioStatsResponse } from '../types/analytics.types.ts';
 
 function formatMoney(amount: number, currency: string, showSign = false): string {
   const rounded = Math.round(amount);
@@ -196,6 +197,44 @@ export const DashboardPage = () => {
       };
     });
   }, [positions, instruments, quotes, rates, baseCurrency, cpi, nowTimestamp, historicalPrices, historicalSortedDates]);
+
+  const equityHoldings = useMemo(
+    () =>
+      enrichedHoldings
+        .filter((h) => !h.isBond)
+        .map((h) => ({ symbol: h.ticker, weight: 0, value: h.totalValue })),
+    [enrichedHoldings]
+  );
+
+  const [rawEmpiricalStats, setRawEmpiricalStats] = useState<PortfolioStatsResponse | null>(null);
+  const empiricalStats = equityHoldings.length > 0 ? rawEmpiricalStats : null;
+  const populatedPortfolioRef = useRef<string | null>(null);
+
+  useEffect(() => {
+    if (equityHoldings.length === 0) {
+      return;
+    }
+
+    let isCancelled = false;
+    marketService
+      .getPortfolioStats({ holdings: equityHoldings })
+      .then((stats) => {
+        if (!isCancelled && stats) {
+          setRawEmpiricalStats(stats);
+          if (activePortfolioId && populatedPortfolioRef.current !== activePortfolioId) {
+            populatedPortfolioRef.current = activePortfolioId;
+            setExpectedEtfReturn(Math.round(stats.weightedReturn * 1000) / 10);
+          }
+        }
+      })
+      .catch((err) => {
+        console.error('Failed to fetch empirical stats:', err);
+      });
+
+    return () => {
+      isCancelled = true;
+    };
+  }, [equityHoldings, activePortfolioId]);
 
   const totalPortfolioValue = useMemo(() => {
     return enrichedHoldings.reduce((sum, h) => sum + h.totalValue, 0);
@@ -471,7 +510,8 @@ export const DashboardPage = () => {
       monthlyDca,
       dcaBondShare,
       expectedEtfReturn,
-      etfVolatility: 15.0,
+      etfVolatility: empiricalStats ? Math.round(empiricalStats.weightedVolatility * 1000) / 10 : 15.0,
+      empiricalTer: empiricalStats ? Math.round(empiricalStats.weightedTer * 10000) / 100 : undefined,
       bondRollover,
       isIkeAccount,
       historicalPrices,
@@ -501,6 +541,7 @@ export const DashboardPage = () => {
     historicalSortedDates,
     inflationAdjustMode,
     targetGoal,
+    empiricalStats,
   ]);
 
   const filteredPositions = useMemo(() => {
@@ -566,6 +607,7 @@ export const DashboardPage = () => {
         onInflationAdjustModeChange={setInflationAdjustMode}
         targetGoal={targetGoal}
         onTargetGoalChange={setTargetGoal}
+        empiricalStats={empiricalStats}
       />
 
       <FilterBar
