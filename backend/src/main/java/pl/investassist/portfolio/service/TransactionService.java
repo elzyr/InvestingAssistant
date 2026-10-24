@@ -3,9 +3,11 @@ package pl.investassist.portfolio.service;
 import java.math.BigDecimal;
 import java.math.RoundingMode;
 import java.time.LocalDate;
+import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Objects;
 import java.util.UUID;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.support.TransactionTemplate;
@@ -19,6 +21,7 @@ import pl.investassist.portfolio.dto.response.TransactionResponse;
 import pl.investassist.portfolio.entity.Portfolio;
 import pl.investassist.portfolio.entity.Transaction;
 import pl.investassist.portfolio.enums.TransactionType;
+import pl.investassist.portfolio.repository.PortfolioRepository;
 import pl.investassist.portfolio.repository.TransactionRepository;
 
 @Service
@@ -29,6 +32,9 @@ public class TransactionService {
   private final MarketDataClient marketDataClient;
   private final InstrumentService instrumentService;
   private final TransactionTemplate transactionTemplate;
+
+  @Autowired(required = false)
+  private PortfolioRepository portfolioRepository;
 
   public TransactionService(
       TransactionRepository transactionRepository,
@@ -52,20 +58,33 @@ public class TransactionService {
 
     Portfolio portfolio = portfolioService.validateAndGetPortfolioEntity(userId, portfolioId);
 
+    if (request.transactionType() == TransactionType.SELL) {
+      BigDecimal gross = request.price().multiply(request.quantity());
+      BigDecimal comm = request.commission() != null ? request.commission() : BigDecimal.ZERO;
+      if (comm.compareTo(gross) > 0) {
+        throw new IllegalArgumentException("Commission cannot exceed gross proceeds on SELL");
+      }
+    }
+
     LocalDate txDate = request.executedAt() != null ? request.executedAt().toLocalDate() : null;
     ResolvedFinancials financials = resolveFinancials(
         foundInstrument, portfolio, request.transactionType(), request.currency(), request.price(),
         request.quantity(), request.commission(), request.baseAmount(), txDate);
 
     return transactionTemplate.execute(status -> {
-      Transaction transaction = request.toEntity(portfolio);
+      Portfolio lockedPortfolio = portfolio;
+      if (portfolioRepository != null) {
+        lockedPortfolio = portfolioRepository.findByIdWithLock(portfolioId).orElse(portfolio);
+      }
+
+      Transaction transaction = request.toEntity(lockedPortfolio);
       transaction.setExchangeRate(financials.exchangeRate());
       transaction.setBaseAmount(financials.baseAmount());
 
       Transaction savedTransaction = transactionRepository.save(transaction);
 
       positionService.recalculatePosition(
-          portfolio, foundInstrument.id(), foundInstrument.currency(), request.seriesName());
+          lockedPortfolio, foundInstrument.id(), foundInstrument.currency(), request.seriesName());
       return TransactionResponse.from(savedTransaction);
     });
   }
@@ -79,6 +98,14 @@ public class TransactionService {
 
     InstrumentResponse foundInstrument = instrumentService.getInstrument(request.instrumentId());
 
+    if (request.transactionType() == TransactionType.SELL) {
+      BigDecimal gross = request.price().multiply(request.quantity());
+      BigDecimal comm = request.commission() != null ? request.commission() : BigDecimal.ZERO;
+      if (comm.compareTo(gross) > 0) {
+        throw new IllegalArgumentException("Commission cannot exceed gross proceeds on SELL");
+      }
+    }
+
     UUID oldInstrumentId = transaction.getInstrumentId();
     String oldSeries = (transaction.getSeriesName() != null && !transaction.getSeriesName().trim().isBlank())
         ? transaction.getSeriesName().trim() : null;
@@ -88,7 +115,8 @@ public class TransactionService {
     boolean sameInstrumentAndSeries = oldInstrumentId.equals(request.instrumentId())
         && Objects.equals(oldSeries, newSeries);
 
-    LocalDate txDate = request.executedAt() != null ? request.executedAt().toLocalDate() : null;
+    LocalDateTime effectiveExecutedAt = request.executedAt() != null ? request.executedAt() : transaction.getExecutedAt();
+    LocalDate txDate = effectiveExecutedAt != null ? effectiveExecutedAt.toLocalDate() : null;
     ResolvedFinancials financials = resolveFinancials(
         foundInstrument, portfolio, request.transactionType(), request.currency(), request.price(),
         request.quantity(), request.commission(), request.baseAmount(), txDate);
@@ -106,6 +134,12 @@ public class TransactionService {
 
     final Currency finalOldCur = oldInstrumentCurrency;
     return transactionTemplate.execute(status -> {
+      Portfolio lockedPortfolio = portfolio;
+      if (portfolioRepository != null) {
+        lockedPortfolio = portfolioRepository.findByIdWithLock(portfolioId).orElse(portfolio);
+      }
+
+      transaction.setPortfolio(lockedPortfolio);
       transaction.setInstrumentId(request.instrumentId());
       transaction.setTransactionType(request.transactionType());
       transaction.setQuantity(request.quantity());
@@ -125,9 +159,9 @@ public class TransactionService {
       Transaction savedTransaction = transactionRepository.save(transaction);
 
       if (!sameInstrumentAndSeries) {
-        positionService.recalculatePosition(portfolio, oldInstrumentId, finalOldCur, oldSeries);
+        positionService.recalculatePosition(lockedPortfolio, oldInstrumentId, finalOldCur, oldSeries);
       }
-      positionService.recalculatePosition(portfolio, foundInstrument.id(), foundInstrument.currency(), request.seriesName());
+      positionService.recalculatePosition(lockedPortfolio, foundInstrument.id(), foundInstrument.currency(), request.seriesName());
 
       return TransactionResponse.from(savedTransaction);
     });
@@ -153,8 +187,13 @@ public class TransactionService {
 
     final Currency finalCur = instrumentCurrency;
     transactionTemplate.executeWithoutResult(status -> {
+      Portfolio lockedPortfolio = portfolio;
+      if (portfolioRepository != null) {
+        lockedPortfolio = portfolioRepository.findByIdWithLock(portfolioId).orElse(portfolio);
+      }
+
       transactionRepository.delete(transaction);
-      positionService.recalculatePosition(portfolio, instrumentId, finalCur, seriesName);
+      positionService.recalculatePosition(lockedPortfolio, instrumentId, finalCur, seriesName);
     });
   }
 

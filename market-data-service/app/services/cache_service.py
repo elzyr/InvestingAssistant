@@ -6,7 +6,9 @@ from app.config import settings
 _redis_client = redis.Redis(
     host=settings.REDIS_HOST,
     port=settings.REDIS_PORT,
-    decode_responses=True
+    decode_responses=True,
+    socket_connect_timeout=1.0,
+    socket_timeout=1.0
 )
 
 class CacheService:
@@ -32,11 +34,5 @@ class CacheService:
             )
         except Exception as e:
             logging.warning(f"Cache set error: {e}")
-
-    def delete(self, key: str):
-        try:
-            self.redis_client.delete(key)
-        except Exception as e:
-            logging.warning(f"Cache delete error: {e}")
 
 cache_service = CacheService()

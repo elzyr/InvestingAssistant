@@ -10,6 +10,7 @@ import {
   fetchPortfolios,
   fetchPositions,
   fetchTransactions,
+  fetchInflation,
   createTransaction,
   updateTransaction,
   deleteTransaction,
@@ -27,8 +28,9 @@ export interface PortfolioState {
   rates: Record<string, number>;
   historicalPrices: Record<string, Record<string, number>>;
   historicalSortedDates: Record<string, string[]>;
+  cpi: number | null;
+  monthlyCpi: Record<number, number>;
   loading: boolean;
-  transactionSubmitting: boolean;
   error: string | null;
 }
 
@@ -42,8 +44,9 @@ const initialState: PortfolioState = {
   rates: { PLN: 1 },
   historicalPrices: {},
   historicalSortedDates: {},
+  cpi: null,
+  monthlyCpi: {},
   loading: false,
-  transactionSubmitting: false,
   error: null,
 };
 
@@ -53,6 +56,18 @@ export const portfolioSlice = createSlice({
   reducers: {
     setActivePortfolioId: (state, action: PayloadAction<string>) => {
       state.activePortfolioId = action.payload;
+    },
+    setInflation: (
+      state,
+      action: PayloadAction<{ cpi: number | null; monthlyCpi?: Record<number, number> }>
+    ) => {
+      state.cpi = action.payload.cpi;
+      if (action.payload.monthlyCpi) {
+        state.monthlyCpi = action.payload.monthlyCpi;
+      }
+    },
+    setMonthlyCpi: (state, action: PayloadAction<Record<number, number>>) => {
+      state.monthlyCpi = action.payload;
     },
     clearPortfolioError: (state) => {
       state.error = null;
@@ -98,37 +113,25 @@ export const portfolioSlice = createSlice({
       .addCase(fetchTransactions.fulfilled, (state, action) => {
         state.transactions = action.payload;
       })
+      .addCase(fetchInflation.fulfilled, (state, action) => {
+        state.cpi = action.payload.cpi;
+      })
       .addCase(createTransaction.pending, (state) => {
-        state.transactionSubmitting = true;
         state.error = null;
       })
-      .addCase(createTransaction.fulfilled, (state) => {
-        state.transactionSubmitting = false;
-      })
       .addCase(createTransaction.rejected, (state, action) => {
-        state.transactionSubmitting = false;
         state.error = action.payload || 'Błąd dodawania transakcji';
       })
       .addCase(updateTransaction.pending, (state) => {
-        state.transactionSubmitting = true;
         state.error = null;
       })
-      .addCase(updateTransaction.fulfilled, (state) => {
-        state.transactionSubmitting = false;
-      })
       .addCase(updateTransaction.rejected, (state, action) => {
-        state.transactionSubmitting = false;
         state.error = action.payload || 'Błąd aktualizacji transakcji';
       })
       .addCase(deleteTransaction.pending, (state) => {
-        state.transactionSubmitting = true;
         state.error = null;
       })
-      .addCase(deleteTransaction.fulfilled, (state) => {
-        state.transactionSubmitting = false;
-      })
       .addCase(deleteTransaction.rejected, (state, action) => {
-        state.transactionSubmitting = false;
         state.error = action.payload || 'Błąd usuwania transakcji';
       })
       .addCase(createPortfolio.fulfilled, (state, action) => {
@@ -138,5 +141,12 @@ export const portfolioSlice = createSlice({
   },
 });
 
-export const { setActivePortfolioId, clearPortfolioError, resetPortfolio } = portfolioSlice.actions;
+export const {
+  setActivePortfolioId,
+  setInflation,
+  setMonthlyCpi,
+  clearPortfolioError,
+  resetPortfolio,
+} = portfolioSlice.actions;
+
 export default portfolioSlice.reducer;

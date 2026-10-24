@@ -2,8 +2,6 @@ package pl.investassist.portfolio.entity;
 
 import jakarta.persistence.*;
 import java.time.LocalDateTime;
-import java.util.ArrayList;
-import java.util.List;
 import java.util.UUID;
 import org.hibernate.annotations.CreationTimestamp;
 import pl.investassist.common.enums.Currency;
@@ -17,23 +15,20 @@ public class Portfolio {
   @GeneratedValue(strategy = GenerationType.UUID)
   private UUID id;
 
+  @Column(nullable = false)
   private UUID userId;
 
+  @Column(nullable = false)
   private String name;
 
   private String description;
 
   @Enumerated(EnumType.STRING)
+  @Column(nullable = false)
   private Currency baseCurrency;
 
   @CreationTimestamp
   private LocalDateTime createdAt;
-
-  @OneToMany(mappedBy = "portfolio", cascade = CascadeType.ALL, orphanRemoval = true)
-  private List<Position> positions = new ArrayList<>();
-
-  @OneToMany(mappedBy = "portfolio", cascade = CascadeType.ALL, orphanRemoval = true)
-  private List<Transaction> transactions = new ArrayList<>();
 
   public Portfolio() {}
 
@@ -83,21 +78,5 @@ public class Portfolio {
 
   public void setCreatedAt(LocalDateTime createdAt) {
     this.createdAt = createdAt;
-  }
-
-  public List<Position> getPositions() {
-    return positions;
-  }
-
-  public void setPositions(List<Position> positions) {
-    this.positions = positions;
-  }
-
-  public List<Transaction> getTransactions() {
-    return transactions;
-  }
-
-  public void setTransactions(List<Transaction> transactions) {
-    this.transactions = transactions;
   }
 }

@@ -54,8 +54,7 @@ export const RegisterPage = () => {
     <div className="min-h-screen bg-[#09090b] flex flex-col items-center justify-center p-4 antialiased">
       <div className="w-full max-w-sm">
 
-        {/* Header */}
-        <div className="mb-6 text-center">
+                <div className="mb-6 text-center">
           <div className="inline-flex items-center justify-center w-8 h-8 rounded bg-zinc-100 text-zinc-950 font-bold text-xs mb-3">
             IA
           </div>
@@ -67,8 +66,7 @@ export const RegisterPage = () => {
           </p>
         </div>
 
-        {/* Card */}
-        <div className="bg-[#101115] border border-zinc-800 rounded-lg p-6 shadow-xl">
+                <div className="bg-[#101115] border border-zinc-800 rounded-lg p-6 shadow-xl">
           {error && (
             <div className="mb-4 p-2.5 rounded bg-rose-500/10 border border-rose-500/20 text-rose-400 text-xs">
               {t(error, { defaultValue: error })}
@@ -171,8 +169,7 @@ export const RegisterPage = () => {
           </div>
         </div>
 
-        {/* Language selector */}
-        <div className="mt-6 flex items-center justify-center gap-3 text-xs text-zinc-500">
+                <div className="mt-6 flex items-center justify-center gap-3 text-xs text-zinc-500">
           <Globe className="w-3.5 h-3.5 text-zinc-500" />
           <button
             onClick={() => toggleLanguage('pl')}

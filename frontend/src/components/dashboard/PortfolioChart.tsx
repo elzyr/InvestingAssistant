@@ -815,7 +815,6 @@ export const PortfolioChart: React.FC<PortfolioChartProps> = ({
 
       {!isCollapsed && (
         <div className="p-4 pt-2 pb-5 bg-[#10121a] relative">
-          {/* Floating On-Chart HUD Tooltip */}
           {hoveredPoint && (
             <div className="absolute top-4 left-4 z-30 pointer-events-none bg-zinc-950/95 border border-zinc-750/90 rounded-lg p-2.5 shadow-2xl text-xs font-mono backdrop-blur-md min-w-[230px]">
               <div className="flex items-center justify-between border-b border-zinc-800 pb-1 mb-1.5 text-zinc-300">
@@ -886,7 +885,6 @@ export const PortfolioChart: React.FC<PortfolioChartProps> = ({
           <div className="relative w-full">
             <div ref={chartContainerRef} className="w-full" />
 
-            {/* Dziś Vertical Line & Axis Badge Overlay */}
             {isProjectionActive && todayXCoord !== null && (
               <div className="pointer-events-none absolute inset-0">
                 <div

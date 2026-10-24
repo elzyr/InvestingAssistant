@@ -45,10 +45,8 @@ export const MonthDetailView: React.FC<MonthDetailViewProps> = ({
 
   return (
     <div className="space-y-6">
-      {/* Month Header Banner & Metric Cards */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-        {/* Total Valuation Card */}
-        <div className="bg-zinc-900/60 border border-zinc-800/80 rounded-xl p-4 flex flex-col justify-between">
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+                <div className="bg-zinc-900/60 border border-zinc-800/80 rounded-xl p-4 flex flex-col justify-between">
           <div className="flex items-center justify-between text-zinc-400">
             <span className="text-xs font-medium">Wycena portfela</span>
             <Wallet className="w-4 h-4 text-emerald-400" />
@@ -64,8 +62,7 @@ export const MonthDetailView: React.FC<MonthDetailViewProps> = ({
           </div>
         </div>
 
-        {/* Net Profit Card */}
-        <div className="bg-zinc-900/60 border border-zinc-800/80 rounded-xl p-4 flex flex-col justify-between">
+                <div className="bg-zinc-900/60 border border-zinc-800/80 rounded-xl p-4 flex flex-col justify-between">
           <div className="flex items-center justify-between text-zinc-400">
             <span className="text-xs font-medium">Zysk netto (po Belce)</span>
             <ShieldCheck className="w-4 h-4 text-emerald-400" />
@@ -87,8 +84,7 @@ export const MonthDetailView: React.FC<MonthDetailViewProps> = ({
           </div>
         </div>
 
-        {/* Net Return Rate Card */}
-        <div className="bg-zinc-900/60 border border-zinc-800/80 rounded-xl p-4 flex flex-col justify-between">
+                <div className="bg-zinc-900/60 border border-zinc-800/80 rounded-xl p-4 flex flex-col justify-between">
           <div className="flex items-center justify-between text-zinc-400">
             <span className="text-xs font-medium">Stopa zwrotu netto</span>
             <Percent className="w-4 h-4 text-cyan-400" />
@@ -110,8 +106,7 @@ export const MonthDetailView: React.FC<MonthDetailViewProps> = ({
           </div>
         </div>
 
-        {/* MoM Performance Card */}
-        <div className="bg-zinc-900/60 border border-zinc-800/80 rounded-xl p-4 flex flex-col justify-between">
+                <div className="bg-zinc-900/60 border border-zinc-800/80 rounded-xl p-4 flex flex-col justify-between">
           <div className="flex items-center justify-between text-zinc-400">
             <span className="text-xs font-medium">Zysk miesiąc do miesiąca</span>
             <TrendingUp className="w-4 h-4 text-amber-400" />
@@ -134,10 +129,8 @@ export const MonthDetailView: React.FC<MonthDetailViewProps> = ({
         </div>
       </div>
 
-      {/* Two-Column Desktop Layout: Table (Left 65%) + Donut (Right 35%) */}
-      <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
-        {/* Left Column: Asset Breakdown Table (8 cols out of 12 ~ 66.7%) */}
-        <div className="lg:col-span-8 bg-zinc-900/50 border border-zinc-800/80 rounded-xl overflow-hidden">
+            <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
+                <div className="lg:col-span-8 bg-zinc-900/50 border border-zinc-800/80 rounded-xl overflow-hidden">
           <div className="p-4 sm:p-5 border-b border-zinc-800/80 flex items-center justify-between">
             <div>
               <span className="text-xs font-semibold text-zinc-400 uppercase tracking-wider">
@@ -215,8 +208,7 @@ export const MonthDetailView: React.FC<MonthDetailViewProps> = ({
                 ))}
               </tbody>
 
-              {/* Total Footer */}
-              <tfoot className="bg-[#0b0c10] border-t-2 border-zinc-700/80 font-mono text-xs">
+                            <tfoot className="bg-[#0b0c10] border-t-2 border-zinc-700/80 font-mono text-xs">
                 <tr className="font-semibold text-zinc-200">
                   <td className="py-3 px-3 font-sans text-xs sm:text-sm text-zinc-100 whitespace-nowrap">
                     Razem
@@ -261,8 +253,7 @@ export const MonthDetailView: React.FC<MonthDetailViewProps> = ({
           </div>
         </div>
 
-        {/* Right Column: Donut Chart Allocation (4 cols out of 12 ~ 33.3%) */}
-        <div className="lg:col-span-4">
+                <div className="lg:col-span-4">
           <MonthDonutChart
             breakdown={record.breakdown}
             totalValue={record.portfolioValue}

@@ -22,32 +22,37 @@ public class Transaction {
   @GeneratedValue(strategy = GenerationType.UUID)
   private UUID id;
 
-  @ManyToOne(fetch = FetchType.LAZY)
+  @ManyToOne(fetch = FetchType.LAZY, optional = false)
+  @JoinColumn(name = "portfolio_id", nullable = false)
   private Portfolio portfolio;
 
+  @Column(name = "instrument_id", nullable = false)
   private UUID instrumentId;
 
   @Enumerated(EnumType.STRING)
+  @Column(name = "transaction_type", nullable = false)
   private TransactionType transactionType;
 
-  @Column(precision = 38, scale = 8)
+  @Column(precision = 38, scale = 8, nullable = false)
   private BigDecimal quantity = BigDecimal.ZERO;
 
-  @Column(precision = 38, scale = 6)
+  @Column(precision = 38, scale = 6, nullable = false)
   private BigDecimal price = BigDecimal.ZERO;
 
-  @Column(precision = 38, scale = 6)
+  @Column(precision = 38, scale = 6, nullable = false)
   private BigDecimal commission = BigDecimal.ZERO;
 
   @Enumerated(EnumType.STRING)
+  @Column(name = "currency", nullable = false)
   private Currency currency;
 
-  @Column(precision = 38, scale = 8)
+  @Column(precision = 38, scale = 8, nullable = false)
   private BigDecimal exchangeRate = BigDecimal.ONE;
 
-  @Column(precision = 38, scale = 4)
+  @Column(precision = 38, scale = 4, nullable = false)
   private BigDecimal baseAmount;
 
+  @Column(name = "executed_at", nullable = false)
   private LocalDateTime executedAt;
 
   @Column(length = 50)

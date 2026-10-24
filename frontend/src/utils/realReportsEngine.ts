@@ -128,7 +128,12 @@ export function generateRealAnnualSummary({
     .map((tx) => {
       const timeMs = new Date(tx.executedAt).getTime();
       const fx = (tx.currency === baseCurrency ? 1 : rates[tx.currency]) || 1;
-      const txCost = tx.baseAmount ?? (tx.quantity * tx.price + (tx.commission || 0)) * fx;
+      const commission = tx.commission || 0;
+      const txCost = tx.baseAmount ?? (
+        tx.transactionType === 'SELL'
+          ? (tx.quantity * tx.price - commission) * fx
+          : (tx.quantity * tx.price + commission) * fx
+      );
       const inst = instruments[tx.instrumentId];
       const isBond = isBondItem(tx, inst);
       const cat = resolveCategory(tx, instruments);
@@ -143,10 +148,13 @@ export function generateRealAnnualSummary({
         isBond,
         bondRate: tx.bondRate,
         bondMargin: tx.bondMargin,
+        seriesName: tx.seriesName,
+        termMonths: tx.termMonths,
         symbol,
         cat,
         fallbackPrice,
         transactionType: tx.transactionType || 'BUY',
+        instrumentId: tx.instrumentId,
       };
     })
     .sort((a, b) => a.timeMs - b.timeMs);
@@ -202,7 +210,89 @@ export function generateRealAnnualSummary({
       continue;
     }
 
-    const monthEndStr = new Date(tMs).toISOString().slice(0, 10);
+    const dMonth = new Date(tMs);
+    const monthEndStr = `${dMonth.getFullYear()}-${String(dMonth.getMonth() + 1).padStart(2, '0')}-${String(dMonth.getDate()).padStart(2, '0')}`;
+    const holdings = new Map<string, {
+      currentQty: number;
+      costBasis: number;
+      isBond: boolean;
+      symbol: string;
+      fallbackPrice: number;
+      fx: number;
+      cat: { name: string; color: string };
+      lots: {
+        quantity: number;
+        executedAt: string | Date | number;
+        bondRate?: number | null;
+        bondMargin?: number | null;
+        seriesName?: string | null;
+        termMonths?: number | null;
+        fx: number;
+      }[];
+    }>();
+
+    for (let k = 0; k < preparedTxs.length; k++) {
+      const tx = preparedTxs[k];
+      if (tx.timeMs > tMs) break;
+
+      const key = tx.isBond
+        ? `${tx.instrumentId}_${tx.seriesName || ''}`
+        : tx.instrumentId;
+
+      let h = holdings.get(key);
+      if (!h) {
+        h = {
+          currentQty: 0,
+          costBasis: 0,
+          isBond: tx.isBond,
+          symbol: tx.symbol,
+          fallbackPrice: tx.fallbackPrice,
+          fx: tx.fx,
+          cat: tx.cat,
+          lots: [],
+        };
+        holdings.set(key, h);
+      }
+
+      if (tx.transactionType === 'BUY') {
+        h.currentQty += tx.quantity;
+        h.costBasis += tx.txCost;
+        if (tx.isBond) {
+          h.lots.push({
+            quantity: tx.quantity,
+            executedAt: tx.executedAt,
+            bondRate: tx.bondRate,
+            bondMargin: tx.bondMargin,
+            seriesName: tx.seriesName,
+            termMonths: tx.termMonths,
+            fx: tx.fx,
+          });
+        }
+      } else if (tx.transactionType === 'SELL') {
+        if (h.currentQty > 0) {
+          const sellQty = Math.min(tx.quantity, h.currentQty);
+          h.costBasis -= h.costBasis * (sellQty / h.currentQty);
+          h.currentQty -= sellQty;
+          if (h.currentQty <= 0) {
+            h.costBasis = 0;
+            h.currentQty = 0;
+            h.lots = [];
+          } else if (tx.isBond) {
+            let toReduce = sellQty;
+            while (toReduce > 0 && h.lots.length > 0) {
+              if (h.lots[0].quantity <= toReduce) {
+                toReduce -= h.lots[0].quantity;
+                h.lots.shift();
+              } else {
+                h.lots[0].quantity -= toReduce;
+                toReduce = 0;
+              }
+            }
+          }
+        }
+      }
+    }
+
     const categoryMap: Record<
       string,
       {
@@ -213,40 +303,40 @@ export function generateRealAnnualSummary({
       }
     > = {};
 
-    for (let k = 0; k < preparedTxs.length; k++) {
-      const tx = preparedTxs[k];
-      if (tx.timeMs > tMs) break;
-
-      if (!categoryMap[tx.cat.name]) {
-        categoryMap[tx.cat.name] = {
-          name: tx.cat.name,
-          color: tx.cat.color,
+    for (const h of holdings.values()) {
+      if (h.currentQty <= 0) continue;
+      if (!categoryMap[h.cat.name]) {
+        categoryMap[h.cat.name] = {
+          name: h.cat.name,
+          color: h.cat.color,
           invested: 0,
           currentValue: 0,
         };
       }
+      categoryMap[h.cat.name].invested += h.costBasis;
 
-      const txVal = tx.isBond
-        ? tx.quantity *
-          calculateBondCurrentPrice({
-            purchaseDate: tx.executedAt,
-            bondRate: tx.bondRate,
-            bondMargin: tx.bondMargin,
-            cpi: monthInflation ?? cpi ?? 3.6,
+      if (h.isBond) {
+        for (const lot of h.lots) {
+          const unitPrice = calculateBondCurrentPrice({
+            purchaseDate: lot.executedAt,
+            bondRate: lot.bondRate,
+            bondMargin: lot.bondMargin,
+            cpi: hasMonthCpi ? monthInflation : (cpi ?? 3.6),
             targetDate: tMs,
-          }) *
-          tx.fx
-        : tx.quantity *
-          getHistoricalPrice(
-            historicalPrices[tx.symbol],
-            historicalSortedDates[tx.symbol],
-            monthEndStr,
-            tx.fallbackPrice
-          ) *
-          tx.fx;
-      const sign = tx.transactionType === 'SELL' ? -1 : 1;
-      categoryMap[tx.cat.name].invested += sign * tx.txCost;
-      categoryMap[tx.cat.name].currentValue += sign * txVal;
+            seriesName: lot.seriesName,
+            termMonths: lot.termMonths,
+          });
+          categoryMap[h.cat.name].currentValue += lot.quantity * unitPrice * lot.fx;
+        }
+      } else {
+        const realClose = getHistoricalPrice(
+          historicalPrices[h.symbol],
+          historicalSortedDates[h.symbol],
+          monthEndStr,
+          h.fallbackPrice
+        );
+        categoryMap[h.cat.name].currentValue += h.currentQty * realClose * h.fx;
+      }
     }
 
     Object.values(categoryMap).forEach((c) => {
@@ -289,12 +379,7 @@ export function generateRealAnnualSummary({
     );
 
     const profitGrossTotal = totalValue - totalInvested;
-    const totalTax = isIkeAccount
-      ? 0
-      : profitGrossTotal > 0
-      ? profitGrossTotal * 0.19
-      : 0;
-    const profitNetTotal = profitGrossTotal - totalTax;
+    const profitNetTotal = breakdown.reduce((sum, b) => sum + b.profitNet, 0);
     const returnGrossTotalPct =
       totalInvested > 0 ? (profitGrossTotal / totalInvested) * 100 : 0;
     const returnNetTotalPct =

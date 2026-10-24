@@ -16,7 +16,10 @@ class MarketHistoryRepository:
         db_dir = os.path.dirname(self.db_path)
         if db_dir:
             os.makedirs(db_dir, exist_ok=True)
-        return sqlite3.connect(self.db_path, check_same_thread=False), False
+        conn = sqlite3.connect(self.db_path, check_same_thread=False)
+        conn.execute("PRAGMA journal_mode=WAL;")
+        conn.execute("PRAGMA busy_timeout=5000;")
+        return conn, False
 
     def init_db(self) -> None:
         conn, is_external = self._get_connection()
@@ -68,41 +71,26 @@ class MarketHistoryRepository:
 
     def save_eod_prices_bulk(
         self,
-        symbol_or_records: Any,
-        records: Optional[List[Dict[str, Any]]] = None,
+        symbol: str,
+        records: List[Dict[str, Any]],
         currency: str = "USD"
     ) -> int:
-        if isinstance(symbol_or_records, str):
-            fixed_symbol = symbol_or_records
-            rows_data = records or []
-        else:
-            fixed_symbol = None
-            rows_data = symbol_or_records or []
-
-        if not rows_data:
+        if not symbol or not records:
             return 0
 
         today_str = datetime.date.today().isoformat()
         valid_rows = []
-        for r in rows_data:
-            if isinstance(r, dict):
-                sym = r.get("symbol") or fixed_symbol
-                dt = str(r.get("date", ""))[:10]
-                close = r.get("close_price") or r.get("closePrice") or r.get("close", 0.0)
-                curr = r.get("currency") or currency
-                vol = r.get("volume", 0) or 0
-            elif isinstance(r, (list, tuple)):
-                sym = fixed_symbol or r[0]
-                dt = str(r[1])[:10] if fixed_symbol else str(r[1])[:10]
-                close = r[2]
-                curr = r[3] if len(r) > 3 else currency
-                vol = r[4] if len(r) > 4 else 0
-            else:
+        for r in records:
+            if not isinstance(r, dict):
                 continue
+            dt = str(r.get("date", ""))[:10]
+            close = r.get("close_price") or r.get("closePrice") or r.get("close", 0.0)
+            curr = r.get("currency") or currency
+            vol = r.get("volume", 0) or 0
 
-            if dt < today_str and sym:
+            if dt and dt < today_str:
                 valid_rows.append((
-                    sym,
+                    symbol,
                     dt,
                     float(close),
                     curr,
@@ -116,11 +104,35 @@ class MarketHistoryRepository:
         try:
             cursor = conn.cursor()
             cursor.executemany(
-                "INSERT OR IGNORE INTO daily_price_history (symbol, date, close_price, currency, volume) VALUES (?, ?, ?, ?, ?)",
+                "INSERT OR REPLACE INTO daily_price_history (symbol, date, close_price, currency, volume) VALUES (?, ?, ?, ?, ?)",
                 valid_rows
             )
             conn.commit()
             return len(valid_rows)
+        finally:
+            if not is_external:
+                conn.close()
+
+    def delete_symbol_prices(self, symbol: str) -> None:
+        conn, is_external = self._get_connection()
+        try:
+            cursor = conn.cursor()
+            cursor.execute("DELETE FROM daily_price_history WHERE symbol = ?", (symbol,))
+            conn.commit()
+        finally:
+            if not is_external:
+                conn.close()
+
+    def get_price_on_date(self, symbol: str, date: str) -> Optional[float]:
+        conn, is_external = self._get_connection()
+        try:
+            cursor = conn.cursor()
+            cursor.execute(
+                "SELECT close_price FROM daily_price_history WHERE symbol = ? AND date = ?",
+                (symbol, date[:10])
+            )
+            row = cursor.fetchone()
+            return float(row[0]) if row and row[0] is not None else None
         finally:
             if not is_external:
                 conn.close()

@@ -1,19 +1,19 @@
 from typing import List, Optional
 from fastapi import APIRouter
 from fastapi.concurrency import run_in_threadpool
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from app.services.analytics_service import AnalyticsService
 
 router = APIRouter()
 
 class HoldingItem(BaseModel):
-    symbol: str
+    symbol: str = Field(..., pattern=r"^[A-Za-z0-9.\-^=]+$", max_length=20)
     weight: Optional[float] = None
     value: Optional[float] = None
 
 class PortfolioStatsRequest(BaseModel):
-    holdings: List[HoldingItem]
-    benchmarkSymbol: Optional[str] = "SPY"
+    holdings: List[HoldingItem] = Field(..., max_length=50)
+    benchmarkSymbol: Optional[str] = Field("SPY", pattern=r"^[A-Za-z0-9.\-^=]+$", max_length=20)
 
 class InstrumentMetricItem(BaseModel):
     symbol: str
@@ -25,7 +25,6 @@ class InstrumentMetricItem(BaseModel):
     trailingPe: float
     dividendYield: float
     beta: float
-    dailyReturns: Optional[List[float]] = []
 
 class PortfolioStatsResponse(BaseModel):
     weightedReturn: float

@@ -1,4 +1,4 @@
-import apiClient from '../api/client.ts';
+import apiClient, { refreshAuthResponse } from '../api/client.ts';
 import type { AuthResponse, LoginRequest, RegisterRequest } from '../types/auth.ts';
 
 export const authService = {
@@ -12,6 +12,6 @@ export const authService = {
     return (await apiClient.post('/api/auth/logout')).data;
   },
   refreshToken: async (): Promise<AuthResponse> => {
-    return (await apiClient.post('/api/auth/refresh')).data;
+    return await refreshAuthResponse();
   },
 };

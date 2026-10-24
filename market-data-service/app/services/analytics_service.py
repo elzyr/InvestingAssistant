@@ -34,6 +34,8 @@ class AnalyticsService:
 
         raw_yield = raw_info.get("dividendYield") or raw_info.get("yield")
         dividend_yield = _safe_float(raw_yield, fallback["dividendYield"]) if raw_yield is not None else fallback["dividendYield"]
+        if dividend_yield > 1.0:
+            dividend_yield /= 100.0
 
         raw_beta = raw_info.get("beta") or raw_info.get("beta3Year")
         beta = _safe_float(raw_beta, fallback["beta"]) if raw_beta is not None else fallback["beta"]
@@ -52,8 +54,8 @@ class AnalyticsService:
         yesterday_str = (datetime.date.today() - datetime.timedelta(days=1)).isoformat()
         max_date = market_history_repo.get_max_date(sym)
         existing_profile = market_history_repo.get_profile_metrics(sym)
+        profile = existing_profile
 
-        # Skip Yahoo fetch on weekends or if already refreshed today
         already_updated_today = existing_profile and existing_profile.get("lastUpdated") == today_str
         needs_fetch = not max_date or (max_date < yesterday_str and not already_updated_today)
 
@@ -65,6 +67,19 @@ class AnalyticsService:
                     hist = hist.reset_index().dropna(subset=["Close"])
                     date_col = "Date" if "Date" in hist.columns else ("Datetime" if "Datetime" in hist.columns else hist.columns[0])
                     currency = getattr(stock.fast_info, "currency", "USD") or "USD"
+
+                    if max_date:
+                        matching_row = hist[hist[date_col].astype(str).str[:10] == max_date]
+                        if not matching_row.empty:
+                            fetched_close = float(matching_row.iloc[0]["Close"])
+                            stored_close = market_history_repo.get_price_on_date(sym, max_date)
+                            if stored_close is not None and stored_close > 0 and abs(fetched_close - stored_close) / stored_close > 0.001:
+                                hist = stock.history(period="5y")
+                                if not hist.empty:
+                                    hist = hist.reset_index().dropna(subset=["Close"])
+                                    date_col = "Date" if "Date" in hist.columns else ("Datetime" if "Datetime" in hist.columns else hist.columns[0])
+                                market_history_repo.delete_symbol_prices(sym)
+
                     records = [
                         {
                             "date": str(row[date_col])[:10],
@@ -76,25 +91,25 @@ class AnalyticsService:
                     ]
                     market_history_repo.save_eod_prices_bulk(sym, records, currency)
 
-                info = {}
-                try:
-                    info = stock.info or {}
-                except Exception:
-                    pass
+                    info = {}
+                    try:
+                        info = stock.info or {}
+                    except Exception:
+                        pass
 
-                enriched = AnalyticsService.enrich_with_ucits_fallback(sym, info)
-                market_history_repo.save_profile_metrics(
-                    symbol=sym,
-                    ter=enriched["ter"],
-                    trailing_pe=enriched["trailingPe"],
-                    dividend_yield=enriched["dividendYield"],
-                    beta=enriched["beta"],
-                    last_updated=today_str,
-                )
+                    enriched = AnalyticsService.enrich_with_ucits_fallback(sym, info)
+                    market_history_repo.save_profile_metrics(
+                        symbol=sym,
+                        ter=enriched["ter"],
+                        trailing_pe=enriched["trailingPe"],
+                        dividend_yield=enriched["dividendYield"],
+                        beta=enriched["beta"],
+                        last_updated=today_str,
+                    )
+                    profile = enriched
             except Exception as e:
                 logging.warning(f"Failed to fetch market data from Yahoo for {sym}: {e}")
 
-        profile = market_history_repo.get_profile_metrics(sym)
         if not profile:
             profile = AnalyticsService.enrich_with_ucits_fallback(sym, {})
 
@@ -105,11 +120,14 @@ class AnalyticsService:
             growth_factor = float(np.prod(1.0 + daily_returns))
             annual_return = float(growth_factor ** (252.0 / len(daily_returns)) - 1.0) if growth_factor > 0 else 0.0
             annual_volatility = float(np.std(daily_returns, ddof=1) * np.sqrt(252)) if len(daily_returns) > 1 else 0.15
-            daily_returns_list = daily_returns.tolist()
+            daily_returns_dict = {
+                prices[i + 1]["date"]: float(daily_returns[i])
+                for i in range(len(daily_returns))
+            }
         else:
             annual_return = 0.08
             annual_volatility = 0.15
-            daily_returns_list = []
+            daily_returns_dict = {}
 
         return {
             "symbol": sym,
@@ -119,7 +137,7 @@ class AnalyticsService:
             "trailingPe": profile["trailingPe"],
             "dividendYield": profile["dividendYield"],
             "beta": profile["beta"],
-            "dailyReturns": daily_returns_list,
+            "dailyReturns": daily_returns_dict,
         }
 
     @staticmethod
@@ -150,11 +168,13 @@ class AnalyticsService:
 
         instruments_metrics = []
         normalized_weights = []
+        daily_returns_series = []
         for i, h in enumerate(holdings):
             sym = h.symbol
             w = calc_weights[i]
             normalized_weights.append(w)
             m = AnalyticsService.fetch_etf_market_metrics(sym)
+            daily_returns_series.append(m.get("dailyReturns"))
             instruments_metrics.append({
                 "symbol": sym,
                 "weight": round(w, 4),
@@ -165,7 +185,6 @@ class AnalyticsService:
                 "trailingPe": m["trailingPe"],
                 "dividendYield": m["dividendYield"],
                 "beta": m["beta"],
-                "dailyReturns": m.get("dailyReturns", []),
             })
 
         w_vec = np.array(normalized_weights, dtype=np.float64)
@@ -175,13 +194,27 @@ class AnalyticsService:
         weighted_dividend_yield = float(sum(w * m["dividendYield"] for w, m in zip(w_vec, instruments_metrics)))
         portfolio_beta = float(sum(w * m["beta"] for w, m in zip(w_vec, instruments_metrics)))
 
-        return_series = [m["dailyReturns"] for m in instruments_metrics if len(m.get("dailyReturns", [])) > 1]
-        if len(return_series) == len(instruments_metrics) and len(return_series) > 0:
-            min_len = min(len(s) for s in return_series)
-            if min_len > 1:
-                aligned_returns = np.column_stack([np.array(s[-min_len:], dtype=np.float64) for s in return_series])
-                port_daily = np.dot(aligned_returns, w_vec)
-                weighted_volatility = float(np.std(port_daily, ddof=1) * np.sqrt(252))
+        valid_series = [s for s in daily_returns_series if s]
+        if len(valid_series) == len(instruments_metrics) and len(valid_series) > 0:
+            if all(isinstance(s, dict) for s in valid_series):
+                common_dates = sorted(set.intersection(*(set(s.keys()) for s in valid_series)))
+                if len(common_dates) > 1:
+                    aligned_returns = np.column_stack([
+                        np.array([s[d] for d in common_dates], dtype=np.float64)
+                        for s in valid_series
+                    ])
+                    port_daily = np.dot(aligned_returns, w_vec)
+                    weighted_volatility = float(np.std(port_daily, ddof=1) * np.sqrt(252))
+                else:
+                    weighted_volatility = float(sum(w * m["annualVolatility"] for w, m in zip(w_vec, instruments_metrics)))
+            elif all(isinstance(s, list) for s in valid_series):
+                min_len = min(len(s) for s in valid_series)
+                if min_len > 1:
+                    aligned_returns = np.column_stack([np.array(s[-min_len:], dtype=np.float64) for s in valid_series])
+                    port_daily = np.dot(aligned_returns, w_vec)
+                    weighted_volatility = float(np.std(port_daily, ddof=1) * np.sqrt(252))
+                else:
+                    weighted_volatility = float(sum(w * m["annualVolatility"] for w, m in zip(w_vec, instruments_metrics)))
             else:
                 weighted_volatility = float(sum(w * m["annualVolatility"] for w, m in zip(w_vec, instruments_metrics)))
         else:

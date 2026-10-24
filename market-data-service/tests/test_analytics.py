@@ -48,11 +48,8 @@ class TestPortfolioStatsSeam(unittest.TestCase):
             self.assertIn("weightedPe", res)
             self.assertIn("portfolioBeta", res)
 
-            # Weighted TER: 0.6 * 0.0022 + 0.4 * 0.0007 = 0.0016
             self.assertAlmostEqual(res["weightedTer"], 0.0016, places=4)
-            # Weighted Return: 0.6 * 0.09 + 0.4 * 0.11 = 0.098
             self.assertAlmostEqual(res["weightedReturn"], 0.098, places=4)
-            # Weighted P/E: 0.6 * 21.0 + 0.4 * 24.0 = 22.2
             self.assertAlmostEqual(res["weightedPe"], 22.2, places=2)
 
     def test_ucits_fallback_when_yahoo_metadata_missing(self):
@@ -63,6 +60,90 @@ class TestPortfolioStatsSeam(unittest.TestCase):
 
         self.assertEqual(metrics["ter"], 0.0022)
         self.assertGreater(metrics["trailingPe"], 0)
+
+    def test_dividend_yield_normalized_when_percentage_returned(self):
+        from app.services.analytics_service import AnalyticsService
+
+        raw_info = {"symbol": "VWCE.DE", "dividendYield": 1.5}
+        metrics = AnalyticsService.enrich_with_ucits_fallback("VWCE.DE", raw_info)
+        self.assertAlmostEqual(metrics["dividendYield"], 0.015, places=4)
+
+    def test_portfolio_stats_request_enforces_max_holdings(self):
+        from pydantic import ValidationError
+        from app.routers.analytics_router import PortfolioStatsRequest, HoldingItem
+
+        with self.assertRaises(ValidationError):
+            PortfolioStatsRequest(
+                holdings=[HoldingItem(symbol="VWCE.DE", weight=1.0) for _ in range(51)]
+            )
+
+    def test_holding_item_rejects_invalid_symbol_format(self):
+        from pydantic import ValidationError
+        from app.routers.analytics_router import HoldingItem
+
+        with self.assertRaises(ValidationError):
+            HoldingItem(symbol="INVALID SYMBOL!@#", weight=1.0)
+
+    def test_portfolio_volatility_aligns_dates_across_exchanges(self):
+        from app.routers.analytics_router import HoldingItem
+        from app.services.analytics_service import AnalyticsService
+
+        holdings = [
+            HoldingItem(symbol="H1", weight=0.5),
+            HoldingItem(symbol="H2", weight=0.5),
+        ]
+
+        with patch("app.services.analytics_service.AnalyticsService.fetch_etf_market_metrics") as mock_fetch:
+            mock_fetch.side_effect = lambda symbol: {
+                "H1": {
+                    "symbol": "H1",
+                    "annualReturn": 0.08,
+                    "annualVolatility": 0.15,
+                    "ter": 0.002,
+                    "trailingPe": 20.0,
+                    "dividendYield": 0.015,
+                    "beta": 1.0,
+                    "dailyReturns": {
+                        "2024-01-02": 0.02,
+                        "2024-01-03": 0.05,
+                        "2024-01-04": 0.01,
+                    },
+                },
+                "H2": {
+                    "symbol": "H2",
+                    "annualReturn": 0.08,
+                    "annualVolatility": 0.15,
+                    "ter": 0.002,
+                    "trailingPe": 20.0,
+                    "dividendYield": 0.015,
+                    "beta": 1.0,
+                    "dailyReturns": {
+                        "2024-01-02": -0.02,
+                        "2024-01-04": -0.01,
+                    },
+                },
+            }[symbol]
+
+            res = AnalyticsService.calculate_portfolio_metrics(holdings)
+            self.assertAlmostEqual(res["weightedVolatility"], 0.0, places=4)
+
+    def test_currency_code_regex_validation_in_yahoo_service(self):
+        from fastapi import HTTPException
+        from app.services.yahoo_service import YahooService
+
+        with self.assertRaises(HTTPException) as ctx:
+            YahooService.get_exchange_rate("US1", "PLN")
+        self.assertEqual(ctx.exception.status_code, 400)
+
+        with self.assertRaises(HTTPException) as ctx:
+            YahooService.get_exchange_rate("USD", "POLISH")
+        self.assertEqual(ctx.exception.status_code, 400)
+
+        with self.assertRaises(HTTPException) as ctx:
+            YahooService.get_exchange_rate("", "PLN")
+        self.assertEqual(ctx.exception.status_code, 400)
+
+        self.assertEqual(YahooService.get_exchange_rate("usd", "USD"), 1.0)
 
 
 class TestSqliteRepositorySeam(unittest.TestCase):
@@ -76,7 +157,6 @@ class TestSqliteRepositorySeam(unittest.TestCase):
 
         yesterday = (datetime.date.today() - datetime.timedelta(days=1)).isoformat()
         repo.save_eod_price("VWCE.DE", yesterday, 120.5, "EUR", 50000)
-        # Duplicate row must not crash
         repo.save_eod_price("VWCE.DE", yesterday, 120.5, "EUR", 50000)
 
         prices = repo.get_historical_prices("VWCE.DE")
@@ -111,7 +191,7 @@ class TestSqliteRepositorySeam(unittest.TestCase):
         batch = [
             {"date": day1, "close_price": 118.5, "volume": 10000},
             {"date": day2, "close_price": 119.2, "volume": 12000},
-            {"date": today, "close_price": 120.0, "volume": 15000}, # Unclosed session, should be filtered
+            {"date": today, "close_price": 120.0, "volume": 15000},
         ]
 
         count = repo.save_eod_prices_bulk("VWCE.DE", batch, currency="EUR")

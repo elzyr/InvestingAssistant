@@ -8,6 +8,7 @@ import org.springframework.http.client.SimpleClientHttpRequestFactory;
 import org.springframework.stereotype.Component;
 import org.springframework.web.client.RestClient;
 import pl.investassist.common.enums.Currency;
+import pl.investassist.common.exception.MarketDataUnavailableException;
 import pl.investassist.portfolio.dto.response.ExchangeRateResponse;
 
 @Component
@@ -41,11 +42,13 @@ public class MarketDataClient {
               .retrieve()
               .body(ExchangeRateResponse.class);
       if (response == null || response.rate() == null) {
-        throw new IllegalStateException("Failed to fetch exchange rate");
+        throw new MarketDataUnavailableException("Failed to fetch exchange rate");
       }
       return response.rate();
+    } catch (MarketDataUnavailableException e) {
+      throw e;
     } catch (Exception e) {
-      throw new IllegalStateException("Market data service is not available", e);
+      throw new MarketDataUnavailableException("Market data service is not available", e);
     }
   }
 }

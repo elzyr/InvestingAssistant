@@ -41,7 +41,34 @@ apiClient.interceptors.request.use(
   (error: AxiosError) => Promise.reject(error)
 );
 
-let refreshPromise: Promise<string> | null = null;
+let refreshPromise: Promise<AuthResponse> | null = null;
+
+export const refreshAuthResponse = (): Promise<AuthResponse> => {
+  if (!refreshPromise) {
+    refreshPromise = axios
+      .post<AuthResponse>(
+        `${API_BASE_URL}/api/auth/refresh`,
+        {},
+        { withCredentials: true }
+      )
+      .then((res) => {
+        const authData = res.data;
+        setAccessToken(authData.accessToken);
+        return authData;
+      })
+      .catch((err) => {
+        setAccessToken(null);
+        if (onAuthExpiredCallback) {
+          onAuthExpiredCallback();
+        }
+        return Promise.reject(err);
+      })
+      .finally(() => {
+        refreshPromise = null;
+      });
+  }
+  return refreshPromise;
+};
 
 apiClient.interceptors.response.use(
   (response) => response,
@@ -49,41 +76,17 @@ apiClient.interceptors.response.use(
     const originalRequest = error.config as CustomAxiosRequestConfig;
 
     if (error.response?.status === 401 && originalRequest && !originalRequest._retry) {
-      if (
-        originalRequest.url?.includes('/api/auth/refresh') ||
-        originalRequest.url?.includes('/api/auth/login')
-      ) {
+      if (originalRequest.url?.includes('/api/auth/')) {
         return Promise.reject(error);
       }
 
       originalRequest._retry = true;
 
       try {
-        if (!refreshPromise) {
-          refreshPromise = axios
-            .post<AuthResponse>(
-              `${API_BASE_URL}/api/auth/refresh`,
-              {},
-              { withCredentials: true }
-            )
-            .then((res) => {
-              const { accessToken } = res.data;
-              setAccessToken(accessToken);
-              return accessToken;
-            })
-            .finally(() => {
-              refreshPromise = null;
-            });
-        }
-
-        const accessToken = await refreshPromise;
-        originalRequest.headers.Authorization = `Bearer ${accessToken}`;
+        const authData = await refreshAuthResponse();
+        originalRequest.headers.Authorization = `Bearer ${authData.accessToken}`;
         return apiClient(originalRequest);
       } catch (refreshError) {
-        setAccessToken(null);
-        if (onAuthExpiredCallback) {
-          onAuthExpiredCallback();
-        }
         return Promise.reject(refreshError);
       }
     }

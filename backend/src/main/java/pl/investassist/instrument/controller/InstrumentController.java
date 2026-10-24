@@ -7,6 +7,7 @@ import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 import pl.investassist.common.enums.InstrumentType;
+import pl.investassist.common.exception.AccessDeniedException;
 import pl.investassist.instrument.dto.CreateInstrumentRequest;
 import pl.investassist.instrument.dto.InstrumentResponse;
 import pl.investassist.instrument.service.InstrumentService;
@@ -22,7 +23,11 @@ public class InstrumentController {
 
   @PostMapping
   public ResponseEntity<InstrumentResponse> createInstrument(
+      @RequestHeader(value = "X-User-Role", required = false) String role,
       @Valid @RequestBody CreateInstrumentRequest request) {
+    if (!"ADMIN".equalsIgnoreCase(role)) {
+      throw new AccessDeniedException("Only ADMIN users can create instruments");
+    }
     InstrumentResponse response = instrumentService.createInstrument(request);
     return ResponseEntity.status(HttpStatus.CREATED).body(response);
   }

@@ -265,4 +265,98 @@ class PositionServiceTest {
     assertThat(saved.getBondMargin()).isNull();
     assertThat(saved.getTermMonths()).isNull();
   }
+
+  @Test
+  void recalculatePosition_whenMultiplePartialSells_reducesCostProportionallyWithoutRoundingDrift() {
+    Transaction buyTx = new Transaction();
+    buyTx.setTransactionType(TransactionType.BUY);
+    buyTx.setQuantity(new BigDecimal("32"));
+    buyTx.setPrice(new BigDecimal("10"));
+    buyTx.setBaseAmount(new BigDecimal("1.0000"));
+    buyTx.setExecutedAt(LocalDateTime.of(2025, 1, 1, 10, 0));
+
+    Transaction sell1 = new Transaction();
+    sell1.setTransactionType(TransactionType.SELL);
+    sell1.setQuantity(new BigDecimal("1"));
+    sell1.setPrice(new BigDecimal("12"));
+    sell1.setExecutedAt(LocalDateTime.of(2025, 1, 2, 10, 0));
+
+    Transaction sell2 = new Transaction();
+    sell2.setTransactionType(TransactionType.SELL);
+    sell2.setQuantity(new BigDecimal("1"));
+    sell2.setPrice(new BigDecimal("15"));
+    sell2.setExecutedAt(LocalDateTime.of(2025, 1, 3, 10, 0));
+
+    Transaction sell3 = new Transaction();
+    sell3.setTransactionType(TransactionType.SELL);
+    sell3.setQuantity(new BigDecimal("5"));
+    sell3.setPrice(new BigDecimal("20"));
+    sell3.setExecutedAt(LocalDateTime.of(2025, 1, 4, 10, 0));
+
+    when(transactionRepository.findAllByPortfolioIdAndInstrumentIdOrderByExecutedAtAsc(portfolio.getId(), instrumentId))
+        .thenReturn(List.of(buyTx, sell1, sell2, sell3));
+    when(positionRepository.findFirstByPortfolioIdAndInstrumentIdAndSeriesNameIsNull(portfolio.getId(), instrumentId))
+        .thenReturn(Optional.empty());
+
+    positionService.recalculatePosition(portfolio, instrumentId, Currency.PLN, null);
+
+    ArgumentCaptor<Position> captor = ArgumentCaptor.forClass(Position.class);
+    verify(positionRepository).save(captor.capture());
+    Position saved = captor.getValue();
+
+    assertThat(saved.getQuantity()).isEqualByComparingTo("25");
+    assertThat(saved.getTotalCostBase()).isEqualByComparingTo("0.7813");
+  }
+
+  @Test
+  void recalculatePosition_whenBuyAndSellOnSameTimestamp_processesBuyBeforeSellWithoutInsufficientPositionException() {
+    Transaction buyTx = new Transaction();
+    buyTx.setTransactionType(TransactionType.BUY);
+    buyTx.setQuantity(new BigDecimal("10"));
+    buyTx.setPrice(new BigDecimal("100"));
+    buyTx.setBaseAmount(new BigDecimal("1000"));
+    buyTx.setExecutedAt(LocalDateTime.of(2025, 1, 10, 10, 0));
+
+    Transaction sellTx = new Transaction();
+    sellTx.setTransactionType(TransactionType.SELL);
+    sellTx.setQuantity(new BigDecimal("5"));
+    sellTx.setPrice(new BigDecimal("110"));
+    sellTx.setExecutedAt(LocalDateTime.of(2025, 1, 10, 10, 0));
+
+    when(transactionRepository.findAllByPortfolioIdAndInstrumentIdOrderByExecutedAtAsc(portfolio.getId(), instrumentId))
+        .thenReturn(List.of(sellTx, buyTx));
+    when(positionRepository.findFirstByPortfolioIdAndInstrumentIdAndSeriesNameIsNull(portfolio.getId(), instrumentId))
+        .thenReturn(Optional.empty());
+
+    positionService.recalculatePosition(portfolio, instrumentId, Currency.PLN, null);
+
+    ArgumentCaptor<Position> captor = ArgumentCaptor.forClass(Position.class);
+    verify(positionRepository).save(captor.capture());
+    Position saved = captor.getValue();
+
+    assertThat(saved.getQuantity()).isEqualByComparingTo("5");
+    assertThat(saved.getTotalCostBase()).isEqualByComparingTo("500");
+  }
+
+  @Test
+  void recalculatePosition_whenSeriesNameProvided_queriesRepositoryFilteredBySeriesName() {
+    Transaction bondTx = new Transaction();
+    bondTx.setTransactionType(TransactionType.BUY);
+    bondTx.setQuantity(new BigDecimal("10"));
+    bondTx.setPrice(new BigDecimal("100"));
+    bondTx.setBaseAmount(new BigDecimal("1000"));
+    bondTx.setSeriesName("EDO1034");
+    bondTx.setExecutedAt(LocalDateTime.of(2025, 1, 10, 10, 0));
+
+    when(transactionRepository.findAllByPortfolioIdAndInstrumentIdAndSeriesNameOrderByExecutedAtAsc(
+        portfolio.getId(), instrumentId, "EDO1034"))
+        .thenReturn(List.of(bondTx));
+    when(positionRepository.findFirstByPortfolioIdAndInstrumentIdAndSeriesName(portfolio.getId(), instrumentId, "EDO1034"))
+        .thenReturn(Optional.empty());
+
+    positionService.recalculatePosition(portfolio, instrumentId, Currency.PLN, "EDO1034");
+
+    verify(transactionRepository).findAllByPortfolioIdAndInstrumentIdAndSeriesNameOrderByExecutedAtAsc(
+        portfolio.getId(), instrumentId, "EDO1034");
+  }
 }

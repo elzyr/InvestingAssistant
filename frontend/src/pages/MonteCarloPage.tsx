@@ -1,50 +1,21 @@
-import { useEffect, useMemo, useState } from 'react';
-import { useAppDispatch, useAppSelector } from '../store/hooks.ts';
-import { fetchPortfolios, fetchPositions, fetchTransactions } from '../store/thunks/portfolio.thunk.ts';
-import { marketService } from '../services/market.service.ts';
+import { useMemo, useState } from 'react';
+import { useActivePortfolioData } from '../hooks/useActivePortfolioData.ts';
 import { calculateBondCurrentPrice, isBondItem } from '../utils/portfolioUnifiedEngine.ts';
 import { StressTestingView } from '../components/analytics/StressTestingView.tsx';
 
 export const MonteCarloPage = () => {
-  const dispatch = useAppDispatch();
-  const { user } = useAppSelector((state) => state.auth);
+  const {
+    activePortfolio,
+    positions,
+    transactions,
+    instruments,
+    quotes,
+    rates,
+    baseCurrency,
+    cpi,
+  } = useActivePortfolioData();
 
-  const { activePortfolioId, portfolios, positions, transactions, instruments, quotes, rates } =
-    useAppSelector((state) => state.portfolio);
-
-  const activePortfolio = useMemo(
-    () => portfolios.find((p) => p.id === activePortfolioId),
-    [portfolios, activePortfolioId]
-  );
-
-  const baseCurrency = activePortfolio?.baseCurrency || user?.baseCurrency || 'PLN';
-
-  const [cpi, setCpi] = useState<number>(3.4);
   const [nowTimestamp] = useState(() => Date.now());
-
-  useEffect(() => {
-    if (!activePortfolioId) {
-      dispatch(fetchPortfolios(baseCurrency));
-    }
-  }, [dispatch, activePortfolioId, baseCurrency]);
-
-  useEffect(() => {
-    if (activePortfolioId) {
-      dispatch(fetchPositions(activePortfolioId));
-      dispatch(fetchTransactions(activePortfolioId));
-    }
-  }, [dispatch, activePortfolioId]);
-
-  useEffect(() => {
-    marketService
-      .getInflation()
-      .then((inf) => {
-        if (inf && inf.currentCpi != null) {
-          setCpi(inf.currentCpi);
-        }
-      })
-      .catch(() => {});
-  }, []);
 
   const isIkeAccount = useMemo(() => {
     return activePortfolio?.name?.toLowerCase().includes('ike') ?? false;
@@ -63,6 +34,8 @@ export const MonteCarloPage = () => {
             bondRate: pos.bondRate,
             bondMargin: pos.bondMargin,
             cpi,
+            seriesName: pos.seriesName,
+            termMonths: pos.termMonths,
           })
         : (quotes[inst?.symbol || symbol]?.price ?? pos.averageBuyPrice);
 
@@ -95,7 +68,7 @@ export const MonteCarloPage = () => {
   );
 
   const weightedBondRate = useMemo(() => {
-    if (currentBondVal <= 0) return 0.0543;
+    if (currentBondVal <= 0) return 5.43;
     const sumRateVal = enrichedHoldings
       .filter((h) => h.isBond)
       .reduce((sum, b) => {
@@ -103,7 +76,7 @@ export const MonteCarloPage = () => {
         if (b.bondMargin && b.bondMargin > 0) {
           r = Math.max(0, cpi) + b.bondMargin;
         }
-        return sum + (r / 100) * b.totalValue;
+        return sum + r * b.totalValue;
       }, 0);
     return sumRateVal / currentBondVal;
   }, [enrichedHoldings, currentBondVal, cpi]);

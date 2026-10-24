@@ -45,6 +45,20 @@ interface CrisisScenario {
   getInflationRate: (m: number) => number;
 }
 
+const normalizeDateStr = (time: Time | unknown): string => {
+  if (!time) return '';
+  if (typeof time === 'string') return time;
+  if (typeof time === 'object' && time !== null && 'year' in time && 'month' in time) {
+    const t = time as { year: number; month: number; day?: number };
+    return `${t.year}-${String(t.month).padStart(2, '0')}-01`;
+  }
+  if (typeof time === 'number') {
+    const d = new Date(time * 1000);
+    return `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, '0')}-01`;
+  }
+  return '';
+};
+
 const formatMonths = (m: number): string => {
   if (m === 1) return '1 miesiąc';
   const rem10 = m % 10;
@@ -337,7 +351,7 @@ export const StressTestingView = ({
         barSpacing: 26,
         minBarSpacing: 8,
         tickMarkFormatter: (time: Time) => {
-          const d = new Date(String(time));
+          const d = new Date(normalizeDateStr(time));
           const m = (d.getFullYear() - 2026) * 12 + d.getMonth();
           if (m === 0) return 'Start';
           if (m % 12 === 0) return `${m / 12}L`;
@@ -426,19 +440,6 @@ export const StressTestingView = ({
 
     chart.timeScale().fitContent();
 
-    const normalizeDateStr = (time: Time | unknown): string => {
-      if (!time) return '';
-      if (typeof time === 'string') return time;
-      if (typeof time === 'object' && 'year' in time && 'month' in time) {
-        return `${time.year}-${String(time.month).padStart(2, '0')}-01`;
-      }
-      if (typeof time === 'number') {
-        const d = new Date(time * 1000);
-        return `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, '0')}-01`;
-      }
-      return '';
-    };
-
     chart.subscribeCrosshairMove((param) => {
       if (!param.time) {
         setHoveredPt(null);
@@ -471,7 +472,6 @@ export const StressTestingView = ({
   return (
     <div className="space-y-5">
       <div className="bg-[#101115] border border-zinc-800 rounded-lg p-4 space-y-4">
-        {/* Header and Scenario Selector */}
         <div className="flex flex-col md:flex-row md:items-center justify-between gap-3 pb-3 border-b border-zinc-800">
           <div>
             <h2 className="text-base font-semibold text-white tracking-tight flex items-center gap-2">
@@ -507,9 +507,7 @@ export const StressTestingView = ({
           </div>
         </div>
 
-        {/* Reorganized top section: 2 equal cards */}
         <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-          {/* Left card: Scenario description */}
           <div className="bg-zinc-950/70 border border-zinc-800/80 rounded-lg p-3.5 flex items-start gap-3">
             <currentScenario.icon
               className="w-5 h-5 shrink-0 mt-0.5"
@@ -528,7 +526,6 @@ export const StressTestingView = ({
             </div>
           </div>
 
-          {/* Right card: DCA inputs */}
           <div className="bg-zinc-950/70 border border-zinc-800/80 rounded-lg p-3.5 flex flex-col justify-between gap-2.5">
             <div className="text-xs font-semibold text-white">
               Twoje dopłaty DCA w kryzysie
@@ -577,7 +574,6 @@ export const StressTestingView = ({
           </div>
         </div>
 
-        {/* KPI metrics cards */}
         <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
           <div className="bg-zinc-950/80 border border-zinc-800/80 rounded-lg p-3">
             <div className="text-[11px] text-zinc-400 flex items-center justify-between">
@@ -632,7 +628,6 @@ export const StressTestingView = ({
           </div>
         </div>
 
-        {/* Legend */}
         <div className="flex flex-wrap items-center justify-between gap-2 pt-2 border-t border-zinc-800/80 text-xs">
           <div className="flex flex-wrap items-center gap-3 font-mono text-[11px]">
             <span className="flex items-center gap-1.5 text-sky-300">
@@ -657,7 +652,6 @@ export const StressTestingView = ({
           </div>
         </div>
 
-        {/* Main Chart */}
         <div className="relative w-full overflow-hidden bg-[#09090b] rounded-lg border border-zinc-800/80 p-3">
           {hoveredPt && (
             <div className="absolute top-4 right-4 z-20 pointer-events-none bg-zinc-950/95 border border-zinc-700/80 rounded-lg p-2.5 shadow-2xl text-xs font-mono backdrop-blur-md min-w-[240px]">
@@ -688,7 +682,6 @@ export const StressTestingView = ({
           <div ref={chartContainerRef} className="w-full relative" />
         </div>
 
-        {/* Summary card */}
         <div className="bg-zinc-950/50 border border-zinc-800/60 rounded-lg p-3.5 text-xs text-zinc-300">
           <span className="font-semibold text-white">Podsumowanie testu: </span>
           <span>

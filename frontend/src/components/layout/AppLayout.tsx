@@ -34,8 +34,7 @@ export const AppLayout = () => {
 
   return (
     <div className="min-h-screen bg-[#09090b] text-zinc-100 flex flex-col md:flex-row antialiased">
-      {/* Sidebar for Desktop */}
-      <aside className="w-60 border-r border-zinc-800/80 bg-[#0c0d12] p-4 flex flex-col justify-between hidden md:flex shrink-0">
+            <aside className="w-60 border-r border-zinc-800/80 bg-[#0c0d12] p-4 flex flex-col justify-between hidden md:flex shrink-0">
         <div className="space-y-6">
           <div className="flex items-center justify-between px-2">
             <div className="flex items-center gap-2.5">
@@ -72,8 +71,7 @@ export const AppLayout = () => {
           </nav>
         </div>
 
-        {/* User profile & controls */}
-        <div className="pt-3 border-t border-zinc-800/80 space-y-3">
+                <div className="pt-3 border-t border-zinc-800/80 space-y-3">
           <div className="flex items-center justify-between px-1">
             <button
               onClick={toggleLanguage}
@@ -106,8 +104,7 @@ export const AppLayout = () => {
         </div>
       </aside>
 
-      {/* Mobile Header */}
-      <header className="md:hidden border-b border-zinc-800 bg-[#0c0d12] px-4 py-3 flex items-center justify-between">
+            <header className="md:hidden border-b border-zinc-800 bg-[#0c0d12] px-4 py-3 flex items-center justify-between">
         <div className="flex items-center gap-2">
           <div className="w-6 h-6 rounded bg-zinc-100 text-zinc-950 font-bold text-xs flex items-center justify-center">
             IA
@@ -124,8 +121,7 @@ export const AppLayout = () => {
         </div>
       </header>
 
-      {/* Mobile Navigation Bar */}
-      <nav className="md:hidden border-b border-zinc-800 bg-[#0c0d12] px-2 py-1.5 flex items-center justify-around text-xs overflow-x-auto">
+            <nav className="md:hidden border-b border-zinc-800 bg-[#0c0d12] px-2 py-1.5 flex items-center justify-around text-xs overflow-x-auto">
         {navItems.map((item) => {
           const Icon = item.icon;
           return (
@@ -148,8 +144,7 @@ export const AppLayout = () => {
         })}
       </nav>
 
-      {/* Main Content Area */}
-      <main className="flex-1 flex flex-col min-w-0 overflow-y-auto">
+            <main className="flex-1 flex flex-col min-w-0 overflow-y-auto">
         <Outlet />
       </main>
     </div>

@@ -16,7 +16,7 @@ export interface RegisterRequest {
 
 export interface AuthResponse {
   accessToken: string;
-  refreshToken: string;
+
   tokenType: string;
   expiresIn: number;
   user: UserProfileResponse;
@@ -34,7 +34,7 @@ export interface UserProfileResponse {
 
 export interface AuthState {
   user: UserProfileResponse | null;
-  accessToken: string | null;
+
   isAuthenticated: boolean;
   isInitialized: boolean;
   loading: boolean;

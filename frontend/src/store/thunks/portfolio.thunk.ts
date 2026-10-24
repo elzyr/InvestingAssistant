@@ -83,7 +83,7 @@ export const fetchPositions = createAsyncThunk<
         try {
           quotes[inst.symbol] = await marketService.getPrice(inst.symbol);
         } catch {
-          // Quote fallback
+          void 0;
         }
 
         const alreadyHasHistory = !!currentState.historicalPrices[inst.symbol];
@@ -103,7 +103,7 @@ export const fetchPositions = createAsyncThunk<
               historicalSortedDates[inst.symbol] = dates;
             }
           } catch {
-            // History fallback
+            void 0;
           }
         }
       })
@@ -124,7 +124,7 @@ export const fetchPositions = createAsyncThunk<
             rates[curr] = fx.rate;
           }
         } catch {
-          // Exchange rate fallback
+          void 0;
         }
       })
     );
@@ -151,6 +151,19 @@ export const fetchTransactions = createAsyncThunk<
     return await portfolioService.getTransactions(portfolioId);
   } catch (error: unknown) {
     return rejectWithValue(getErrorMessage(error, 'Nie udało się pobrać transakcji'));
+  }
+});
+
+export const fetchInflation = createAsyncThunk<
+  { cpi: number | null },
+  void,
+  { rejectValue: string }
+>('portfolio/fetchInflation', async (_, { rejectWithValue }) => {
+  try {
+    const data = await marketService.getInflation();
+    return { cpi: data.currentCpi };
+  } catch (error: unknown) {
+    return rejectWithValue(getErrorMessage(error, 'Nie udało się pobrać stopy inflacji'));
   }
 });
 
