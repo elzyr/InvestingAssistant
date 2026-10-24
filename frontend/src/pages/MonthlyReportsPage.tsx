@@ -20,7 +20,7 @@ import {
 } from 'lucide-react';
 
 export const MonthlyReportsPage: React.FC = () => {
-  const { t } = useTranslation();
+  const { t, i18n } = useTranslation();
   const [selectedYear, setSelectedYear] = useState<number>(new Date().getFullYear());
   const [viewMode, setViewMode] = useState<ReportViewMode>('ANNUAL');
   const [userSelectedMonthIndex, setUserSelectedMonthIndex] = useState<number | null>(null);
@@ -69,6 +69,8 @@ export const MonthlyReportsPage: React.FC = () => {
       baseCurrency,
       isIkeAccount,
       year: activeYear,
+      t: (k: string, d?: string) => (d !== undefined ? t(k, d) : t(k)),
+      locale: i18n.language,
     });
   }, [
     transactions,
@@ -82,6 +84,8 @@ export const MonthlyReportsPage: React.FC = () => {
     baseCurrency,
     isIkeAccount,
     activeYear,
+    t,
+    i18n.language,
   ]);
 
   const defaultMonthIndex = summary.records.filter((r) => r.status === 'RECORDED').at(-1)?.monthIndex ?? 0;

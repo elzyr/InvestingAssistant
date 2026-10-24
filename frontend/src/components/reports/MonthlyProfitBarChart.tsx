@@ -40,7 +40,7 @@ export const MonthlyProfitBarChart: React.FC<MonthlyProfitBarChartProps> = ({
   onSelectMonth,
   selectedMonthIndex,
 }) => {
-  const { t } = useTranslation();
+  const { t, i18n } = useTranslation();
   const containerRef = useRef<HTMLDivElement | null>(null);
   const chartRef = useRef<IChartApi | null>(null);
   const seriesRef = useRef<ISeriesApi<'Histogram'> | null>(null);
@@ -97,7 +97,7 @@ export const MonthlyProfitBarChart: React.FC<MonthlyProfitBarChartProps> = ({
         autoScale: true,
       },
       localization: {
-        priceFormatter: (val: number) => `${val >= 0 ? '+' : ''}${Math.round(val).toLocaleString('pl-PL')} PLN`,
+        priceFormatter: (val: number) => `${val >= 0 ? '+' : ''}${Math.round(val).toLocaleString(i18n.language)} PLN`,
       },
     });
 
@@ -174,7 +174,7 @@ export const MonthlyProfitBarChart: React.FC<MonthlyProfitBarChartProps> = ({
       };
     });
     seriesRef.current.setData(chartData as HistogramData[]);
-  }, [recordedRecords, selectedMonthIndex]);
+  }, [recordedRecords, selectedMonthIndex, i18n.language]);
 
   if (recordedRecords.length === 0) return null;
 

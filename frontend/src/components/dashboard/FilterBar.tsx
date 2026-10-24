@@ -11,12 +11,7 @@ interface FilterBarProps {
   onSortChange: (sort: SortOption) => void;
 }
 
-const FILTER_LABELS: Array<{ id: AssetFilterType; label: string }> = [
-  { id: 'ALL', label: 'Wszystkie' },
-  { id: 'ETF', label: 'ETF' },
-  { id: 'BOND', label: 'Obligacje' },
-  { id: 'STOCK', label: 'Akcje' },
-];
+
 
 export const FilterBar = ({
   searchQuery,
@@ -27,6 +22,12 @@ export const FilterBar = ({
   onSortChange,
 }: FilterBarProps) => {
   const { t } = useTranslation();
+  const filterLabels: Array<{ id: AssetFilterType; label: string }> = [
+    { id: 'ALL', label: t('dashboard.filterAll', 'Wszystkie') },
+    { id: 'ETF', label: t('dashboard.filterEtf', 'ETF') },
+    { id: 'BOND', label: t('dashboard.filterBond', 'Obligacje') },
+    { id: 'STOCK', label: t('dashboard.filterStock', 'Akcje') },
+  ];
 
   return (
     <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2.5 pt-1">
@@ -37,13 +38,13 @@ export const FilterBar = ({
             type="text"
             value={searchQuery}
             onChange={(e) => onSearchChange(e.target.value)}
-            placeholder="Szukaj pozycji..."
+            placeholder={t('dashboard.searchPlaceholder', 'Szukaj pozycji...')}
             className="bg-[#161922] border border-zinc-800 rounded-lg pl-8 pr-3 py-1.5 text-xs text-zinc-200 placeholder-zinc-400 focus:outline-none focus:border-emerald-400 w-44 transition"
           />
         </div>
 
         <div className="flex items-center gap-1.5 text-xs font-mono">
-          {FILTER_LABELS.map(({ id, label }) => {
+          {filterLabels.map(({ id, label }) => {
             const isActive = activeFilter === id;
             return (
               <button

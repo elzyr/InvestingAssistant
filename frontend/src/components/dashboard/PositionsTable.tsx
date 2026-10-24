@@ -31,8 +31,8 @@ const PositionRow = ({
   onToggle,
   onEditTransaction,
 }: PositionRowProps) => {
-  const { t } = useTranslation();
-  const annualizedUnit = t('dashboard.annualizedReturn', 'r/r');
+  const { t, i18n } = useTranslation();
+  const annualizedUnit = t('dashboard.annualizedReturn', i18n.language.startsWith('pl') ? 'r/r' : 'p.a.');
   const isExpandable = Boolean(
     position.subPositions &&
     (position.subPositionsType === 'bonds_yearly'

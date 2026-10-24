@@ -56,16 +56,16 @@ export const KpiGrid = ({ summary }: KpiGridProps) => {
   return (
     <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5 items-stretch">
       <KpiCard
-        title="Wartość portfela"
+        title={t('dashboard.portfolioValue', 'Wartość portfela')}
         value={summary.portfolioValueFormatted}
         subValue={`${summary.dailyChangeAmountFormatted} (${summary.dailyChangePercentFormatted})`}
         isAccent={true}
       />
 
       <KpiCard
-        title="Wpłacony kapitał"
+        title={t('dashboard.investedCapital', 'Wpłacony kapitał')}
         value={summary.totalCostFormatted}
-        subValue="Wkład własny"
+        subValue={t('dashboard.ownContribution', 'Wkład własny')}
         isAccent={false}
       />
 
