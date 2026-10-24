@@ -205,6 +205,7 @@ export interface UnifiedEngineParams {
   historicalSortedDates?: Record<string, string[]>;
   inflationAdjustMode?: InflationAdjustMode;
   targetGoal?: number | null;
+  locale?: string;
 }
 
 export function getHistoricalPrice(
@@ -262,6 +263,7 @@ export function generateUnifiedPortfolioTimeline({
   historicalSortedDates = {},
   inflationAdjustMode = 'NOMINAL',
   targetGoal = null,
+  locale = 'pl-PL',
 }: UnifiedEngineParams): ChartPoint[] {
   const now = Date.now();
   const preparedTxs = transactions
@@ -562,7 +564,7 @@ export function generateUnifiedPortfolioTimeline({
 
     const returnPct = finalCost > 0 ? (profit / finalCost) * 100 : 0;
     const dateObj = new Date(tMs);
-    const dateLabel = dateObj.toLocaleDateString('pl-PL', {
+    const dateLabel = dateObj.toLocaleDateString(locale, {
       day: 'numeric',
       month: 'short',
       year: 'numeric',
@@ -730,7 +732,7 @@ export function generateUnifiedPortfolioTimeline({
     const futureTimestamp = now + Math.round(s * stepDays * 24 * 3600 * 1000);
     const futureDate = new Date(futureTimestamp);
     const dayNum = futureDate.getDate();
-    const monthName = futureDate.toLocaleDateString('pl-PL', { month: 'short' });
+    const monthName = futureDate.toLocaleDateString(locale, { month: 'short' });
     const yearNum = futureDate.getFullYear();
     const yr = Math.floor(tYears);
     const remM = Math.floor((tYears - yr) * 12);

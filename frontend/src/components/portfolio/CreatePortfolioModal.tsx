@@ -1,4 +1,5 @@
 import React, { useState } from 'react';
+import { useTranslation } from 'react-i18next';
 import { X, Loader2, FolderPlus } from 'lucide-react';
 import { useAppDispatch } from '../../store/hooks.ts';
 import { createPortfolio } from '../../store/thunks/portfolio.thunk.ts';
@@ -15,6 +16,7 @@ export const CreatePortfolioModal: React.FC<CreatePortfolioModalProps> = ({
   onClose,
   defaultCurrency = 'PLN',
 }) => {
+  const { t } = useTranslation();
   const dispatch = useAppDispatch();
   const [name, setName] = useState('');
   const [description, setDescription] = useState('');
@@ -27,7 +29,7 @@ export const CreatePortfolioModal: React.FC<CreatePortfolioModalProps> = ({
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!name.trim()) {
-      setError('Nazwa portfela jest wymagana');
+      setError(t('portfolioModal.nameRequired', 'Nazwa portfela jest wymagana'));
       return;
     }
 
@@ -48,7 +50,7 @@ export const CreatePortfolioModal: React.FC<CreatePortfolioModalProps> = ({
       setBaseCurrency(defaultCurrency);
       onClose();
     } catch (err: unknown) {
-      setError(typeof err === 'string' ? err : 'Błąd tworzenia portfela');
+      setError(typeof err === 'string' ? err : t('portfolioModal.createError', 'Błąd tworzenia portfela'));
     } finally {
       setSubmitting(false);
     }
@@ -63,8 +65,8 @@ export const CreatePortfolioModal: React.FC<CreatePortfolioModalProps> = ({
               <FolderPlus className="w-4 h-4" />
             </div>
             <div>
-              <h2 className="text-sm font-semibold text-zinc-100">Nowy portfel</h2>
-              <p className="text-[11px] text-zinc-400">Utwórz niezależny portfel inwestycyjny</p>
+              <h2 className="text-sm font-semibold text-zinc-100">{t('portfolioModal.createTitle', 'Nowy portfel')}</h2>
+              <p className="text-[11px] text-zinc-400">{t('portfolioModal.createSubtitle', 'Utwórz niezależny portfel inwestycyjny')}</p>
             </div>
           </div>
           <button
@@ -84,13 +86,13 @@ export const CreatePortfolioModal: React.FC<CreatePortfolioModalProps> = ({
 
           <div>
             <label className="block text-xs font-medium text-zinc-300 mb-1">
-              Nazwa portfela <span className="text-rose-400">*</span>
+              {t('portfolioModal.nameLabel', 'Nazwa portfela')} <span className="text-rose-400">*</span>
             </label>
             <input
               type="text"
               value={name}
               onChange={(e) => setName(e.target.value)}
-              placeholder="np. IKE, Portfel Akcyjny, Krypto"
+              placeholder={t('portfolioModal.namePlaceholder', 'np. IKE, Portfel Akcyjny, Krypto')}
               className="w-full px-3 py-2 text-xs bg-zinc-900 border border-zinc-800 rounded-lg text-zinc-200 placeholder-zinc-500 focus:outline-none focus:border-indigo-500 transition"
               autoFocus
             />
@@ -98,20 +100,20 @@ export const CreatePortfolioModal: React.FC<CreatePortfolioModalProps> = ({
 
           <div>
             <label className="block text-xs font-medium text-zinc-300 mb-1">
-              Opis (opcjonalnie)
+              {t('portfolioModal.descLabel', 'Opis (opcjonalnie)')}
             </label>
             <input
               type="text"
               value={description}
               onChange={(e) => setDescription(e.target.value)}
-              placeholder="np. Indywidualne Konto Emerytalne w XTB"
+              placeholder={t('portfolioModal.descPlaceholder', 'np. Indywidualne Konto Emerytalne w XTB')}
               className="w-full px-3 py-2 text-xs bg-zinc-900 border border-zinc-800 rounded-lg text-zinc-200 placeholder-zinc-500 focus:outline-none focus:border-indigo-500 transition"
             />
           </div>
 
           <div>
             <label className="block text-xs font-medium text-zinc-300 mb-1">
-              Waluta bazowa
+              {t('portfolioModal.currencyLabel', 'Waluta bazowa')}
             </label>
             <select
               value={baseCurrency}
@@ -139,7 +141,7 @@ export const CreatePortfolioModal: React.FC<CreatePortfolioModalProps> = ({
               className="flex items-center gap-1.5 px-4 py-1.5 text-xs font-medium text-white bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 disabled:hover:bg-indigo-600 rounded-lg shadow-sm transition"
             >
               {submitting && <Loader2 className="w-3.5 h-3.5 animate-spin" />}
-              <span>Utwórz portfel</span>
+              <span>{t('portfolioModal.submit', 'Utwórz portfel')}</span>
             </button>
           </div>
         </form>

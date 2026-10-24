@@ -82,7 +82,7 @@ export const DashboardHeader = ({
                 : 'text-zinc-400 hover:text-zinc-200'
             }`}
           >
-            Netto
+            {t('dashboard.net', 'Netto')}
           </button>
           <button
             type="button"
@@ -94,7 +94,7 @@ export const DashboardHeader = ({
                 : 'text-zinc-400 hover:text-zinc-200'
             }`}
           >
-            Brutto
+            {t('dashboard.gross', 'Brutto')}
           </button>
         </div>
       </div>

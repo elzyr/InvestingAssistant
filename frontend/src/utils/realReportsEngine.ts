@@ -8,35 +8,7 @@ import type {
 } from '../types/reports.types.ts';
 import { calculateBondCurrentPrice, getHistoricalPrice, isBondItem } from './portfolioUnifiedEngine.ts';
 
-const MONTH_NAMES = [
-  'Styczeń',
-  'Luty',
-  'Marzec',
-  'Kwiecień',
-  'Maj',
-  'Czerwiec',
-  'Lipiec',
-  'Sierpień',
-  'Wrzesień',
-  'Październik',
-  'Listopad',
-  'Grudzień',
-];
 
-const MONTH_SHORT = [
-  'Sty',
-  'Lut',
-  'Mar',
-  'Kwi',
-  'Maj',
-  'Cze',
-  'Lip',
-  'Sie',
-  'Wrz',
-  'Paź',
-  'Lis',
-  'Gru',
-];
 
 export interface RealReportsParams {
   transactions: TransactionResponse[];
@@ -50,6 +22,8 @@ export interface RealReportsParams {
   baseCurrency: string;
   isIkeAccount: boolean;
   year: number;
+  t?: (key: string, options?: any) => string;
+  locale?: string;
 }
 
 interface CategoryInfo {
@@ -59,11 +33,12 @@ interface CategoryInfo {
 
 function resolveCategory(
   tx: TransactionResponse,
-  instruments: Record<string, InstrumentResponse>
+  instruments: Record<string, InstrumentResponse>,
+  t?: (key: string, options?: any) => string
 ): CategoryInfo {
   const inst = instruments[tx.instrumentId];
   if (isBondItem(tx, inst)) {
-    return { name: 'Obligacje Skarbowe', color: '#3b82f6' };
+    return { name: t ? t('reports.catTreasuryBonds', 'Obligacje Skarbowe') : 'Obligacje Skarbowe', color: '#3b82f6' };
   }
 
   const symbol = (inst?.symbol || tx.seriesName || '').toUpperCase();
@@ -79,16 +54,16 @@ function resolveCategory(
     return { name: 'ETF World', color: '#06b6d4' };
   }
   if (symbol.includes('AMEM') || symbol.includes('EIMI') || symbol.includes('EM') || name.includes('EMERGING')) {
-    return { name: 'ETF Rozwijające', color: '#f59e0b' };
+    return { name: t ? t('reports.catEmerging', 'ETF Rozwijające') : 'ETF Rozwijające', color: '#f59e0b' };
   }
   if (symbol.includes('PKO') || inst?.currency === 'PLN') {
-    return { name: 'Akcje PL', color: '#ec4899' };
+    return { name: t ? t('reports.catPlStocks', 'Akcje PL') : 'Akcje PL', color: '#ec4899' };
   }
   if (inst?.currency === 'USD' || symbol.includes('AAPL')) {
-    return { name: 'Akcje US', color: '#6366f1' };
+    return { name: t ? t('reports.catUsStocks', 'Akcje US') : 'Akcje US', color: '#6366f1' };
   }
 
-  return { name: inst?.name || symbol || 'Inne aktywa', color: '#14b8a6' };
+  return { name: inst?.name || symbol || (t ? t('reports.catOther', 'Inne aktywa') : 'Inne aktywa'), color: '#14b8a6' };
 }
 
 export function extractAvailableYears(transactions: TransactionResponse[]): number[] {
@@ -120,6 +95,8 @@ export function generateRealAnnualSummary({
   baseCurrency,
   isIkeAccount,
   year,
+  t,
+  locale = 'pl-PL',
 }: RealReportsParams): AnnualSummaryData {
   const now = Date.now();
   const records: MonthlyReportRecord[] = [];
@@ -136,7 +113,7 @@ export function generateRealAnnualSummary({
       );
       const inst = instruments[tx.instrumentId];
       const isBond = isBondItem(tx, inst);
-      const cat = resolveCategory(tx, instruments);
+      const cat = resolveCategory(tx, instruments, t);
       const symbol = inst?.symbol || tx.seriesName || '';
       const fallbackPrice = quotes[symbol]?.price ?? tx.price;
       return {
@@ -168,8 +145,8 @@ export function generateRealAnnualSummary({
     if (monthStartMs > now) {
       records.push({
         monthIndex: m,
-        monthName: MONTH_NAMES[m],
-        shortName: MONTH_SHORT[m],
+        monthName: new Date(year, m, 1).toLocaleDateString(locale, { month: 'long' }).replace(/^./, (str) => str.toUpperCase()),
+        shortName: new Date(year, m, 1).toLocaleDateString(locale, { month: 'short' }).replace(/^./, (str) => str.toUpperCase()),
         year,
         portfolioValue: 0,
         investedTotal: 0,
@@ -191,8 +168,8 @@ export function generateRealAnnualSummary({
     if (preparedTxs.length === 0 || preparedTxs[0].timeMs > tMs) {
       records.push({
         monthIndex: m,
-        monthName: MONTH_NAMES[m],
-        shortName: MONTH_SHORT[m],
+        monthName: new Date(year, m, 1).toLocaleDateString(locale, { month: 'long' }).replace(/^./, (str) => str.toUpperCase()),
+        shortName: new Date(year, m, 1).toLocaleDateString(locale, { month: 'short' }).replace(/^./, (str) => str.toUpperCase()),
         year,
         portfolioValue: 0,
         investedTotal: 0,
@@ -388,8 +365,8 @@ export function generateRealAnnualSummary({
 
     records.push({
       monthIndex: m,
-      monthName: MONTH_NAMES[m],
-      shortName: MONTH_SHORT[m],
+      monthName: new Date(year, m, 1).toLocaleDateString(locale, { month: 'long' }).replace(/^./, (str) => str.toUpperCase()),
+      shortName: new Date(year, m, 1).toLocaleDateString(locale, { month: 'short' }).replace(/^./, (str) => str.toUpperCase()),
       year,
       portfolioValue: Number(totalValue.toFixed(2)),
       investedTotal: Number(totalInvested.toFixed(2)),
