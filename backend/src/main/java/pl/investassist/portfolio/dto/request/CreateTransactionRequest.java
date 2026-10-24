@@ -27,7 +27,37 @@ public record CreateTransactionRequest(
     @PositiveOrZero @Digits(integer = 6, fraction = 4) BigDecimal bondRate,
     @PositiveOrZero @Digits(integer = 6, fraction = 4) BigDecimal bondMargin,
     @Positive Integer termMonths,
-    @Positive @Digits(integer = 34, fraction = 4) BigDecimal baseAmount) {
+    @Positive @Digits(integer = 34, fraction = 4) BigDecimal baseAmount,
+    @Positive @Digits(integer = 4, fraction = 6) BigDecimal exchangeRateToBase) {
+
+  public CreateTransactionRequest(
+      UUID instrumentId,
+      TransactionType transactionType,
+      BigDecimal price,
+      BigDecimal quantity,
+      BigDecimal commission,
+      Currency currency,
+      LocalDateTime executedAt,
+      String seriesName,
+      BigDecimal bondRate,
+      BigDecimal bondMargin,
+      Integer termMonths,
+      BigDecimal baseAmount) {
+    this(
+        instrumentId,
+        transactionType,
+        price,
+        quantity,
+        commission,
+        currency,
+        executedAt,
+        seriesName,
+        bondRate,
+        bondMargin,
+        termMonths,
+        baseAmount,
+        null);
+  }
 
   public Transaction toEntity(Portfolio portfolio) {
     Transaction transaction = new Transaction();
@@ -44,6 +74,7 @@ public record CreateTransactionRequest(
     transaction.setBondMargin(bondMargin);
     transaction.setTermMonths(termMonths);
     transaction.setBaseAmount(baseAmount);
+    transaction.setExchangeRateToBase(exchangeRateToBase);
     return transaction;
   }
 }

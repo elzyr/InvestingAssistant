@@ -26,7 +26,12 @@ export const MonteCarloPage = () => {
       const inst = instruments[pos.instrumentId];
       const isBond = isBondItem(pos, inst);
       const symbol = pos.seriesName || inst?.symbol || 'UNKNOWN';
-      const fxRate = (pos.currency === baseCurrency ? 1 : rates[pos.currency]) || 1;
+      const isForeign = pos.currency !== baseCurrency;
+      const fallbackFx =
+        pos.totalCostBase != null && pos.quantity * pos.averageBuyPrice > 0
+          ? pos.totalCostBase / (pos.quantity * pos.averageBuyPrice)
+          : undefined;
+      const fxRate = (isForeign ? rates[pos.currency] : 1) || fallbackFx || 1;
 
       const currentPrice = isBond
         ? calculateBondCurrentPrice({

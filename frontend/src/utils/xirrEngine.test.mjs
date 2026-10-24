@@ -638,5 +638,64 @@ describe('xirrEngine', () => {
       assert.strictEqual(typeof sub.xirr, 'number');
       assert.strictEqual(sub.isXirrFallback, false);
     });
+
+    it('uses actual purchase exchange rate instead of 1.0 buy FX for foreign currency positions', () => {
+      const enrichedHoldings = [
+        {
+          id: 'pos-vuaa',
+          isBond: false,
+          ticker: 'VUAA',
+          name: 'Vanguard S&P 500',
+          instrumentId: 'inst-vuaa',
+          quantity: 10,
+          totalValue: 4405,
+          totalCost: 4300,
+          currentPrice: 100,
+          averagePrice: 100,
+          currency: 'EUR',
+          assetType: 'ETF',
+          purchaseDate: '2024-01-10T10:00:00Z',
+          profit: 105,
+        },
+      ];
+
+      const transactions = [
+        {
+          id: 'tx-vuaa-1',
+          instrumentId: 'inst-vuaa',
+          transactionType: 'BUY',
+          quantity: 10,
+          price: 100,
+          currency: 'EUR',
+          exchangeRate: 1.0,
+          exchangeRateToBase: 4.30,
+          baseAmount: 4300,
+          executedAt: '2024-01-10T10:00:00Z',
+        },
+      ];
+
+      const positions = buildDashboardPositions({
+        enrichedHoldings,
+        transactions,
+        baseCurrency: 'PLN',
+        rates: { EUR: 4.405, PLN: 1 },
+        totalPortfolioValue: 4405,
+        shouldApplyTax: false,
+        nowTimestamp: new Date('2025-01-10T10:00:00Z').getTime(),
+      });
+
+      assert.strictEqual(positions.length, 1);
+      const pos = positions[0];
+      assert.ok(pos.fxDecomposition != null);
+      assertCloseTo(pos.fxDecomposition.marketReturnPct, 0.0, 1e-4);
+      assertCloseTo(pos.fxDecomposition.fxReturnPct, 2.44186, 1e-2);
+
+      assert.strictEqual(pos.subPositions.length, 1);
+      const sub = pos.subPositions[0];
+      assert.ok(sub.fxDecomposition != null);
+      assertCloseTo(sub.fxDecomposition.marketReturnPct, 0.0, 1e-4);
+      assertCloseTo(sub.fxDecomposition.fxReturnPct, 2.44186, 1e-2);
+      assert.notStrictEqual(Math.round(sub.fxDecomposition.fxReturnPct), 341);
+    });
   });
 });

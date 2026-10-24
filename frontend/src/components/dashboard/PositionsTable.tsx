@@ -96,8 +96,8 @@ const PositionRow = ({
                 e.stopPropagation();
                 onEditTransaction(position.subPositions![0].transactionId!);
               }}
-              className="p-1 rounded hover:bg-zinc-800 text-zinc-400 hover:text-white transition"
-              title="Edytuj transakcję"
+              className="p-1 rounded hover:bg-zinc-800 text-zinc-400 hover:text-white transition cursor-pointer"
+              title={t('dashboard.editTransaction')}
             >
               <Pencil className="w-3.5 h-3.5" />
             </button>
@@ -116,8 +116,8 @@ const PositionRow = ({
           <div className="text-xs font-normal text-zinc-400 mb-2 flex items-center gap-1.5 font-sans">
             <span>
               {position.subPositionsType === 'bonds_yearly'
-                ? 'Podział na roczniki emisji:'
-                : 'Transakcje zakupu w ramach pozycji:'}
+                ? t('dashboard.bondsYearlySplit')
+                : t('dashboard.equityLotsSplit')}
             </span>
           </div>
 
@@ -185,8 +185,8 @@ const PositionRow = ({
                         e.stopPropagation();
                         onEditTransaction(sub.transactionId!);
                       }}
-                      className="p-1 rounded hover:bg-zinc-800 text-zinc-400 hover:text-white transition"
-                      title="Edytuj transakcję"
+                      className="p-1 rounded hover:bg-zinc-800 text-zinc-400 hover:text-white transition cursor-pointer"
+                      title={t('dashboard.editTransaction')}
                     >
                       <Pencil className="w-3.5 h-3.5" />
                     </button>
@@ -214,6 +214,7 @@ export const PositionsTable = ({
   onAddTransaction,
   onEditTransaction,
 }: PositionsTableProps) => {
+  const { t } = useTranslation();
   const [expandedIds, setExpandedIds] = useState<Set<string>>(new Set(['bond-EDO']));
 
   const handleToggle = (id: string) => {
@@ -231,28 +232,29 @@ export const PositionsTable = ({
   return (
     <div className="bg-[#141720] border border-zinc-800 rounded-xl overflow-hidden shadow-sm">
       <div className="grid grid-cols-[minmax(140px,1.8fr)_80px_100px_110px_140px_32px] gap-x-4 px-4 py-2.5 bg-[#10121a] border-b border-zinc-800 text-[11px] font-bold text-zinc-400 uppercase tracking-wider">
-        <div>Aktywo / Typ</div>
-        <div className="text-right">Udział %</div>
-        <div className="text-right">Kurs / Cena</div>
-        <div className="text-right">Wartość</div>
+        <div>{t('dashboard.assetType')}</div>
+        <div className="text-right">{t('dashboard.sharePct')}</div>
+        <div className="text-right">{t('dashboard.priceRate')}</div>
+        <div className="text-right">{t('dashboard.value')}</div>
         <div className="text-right">
-          Zysk / Zwrot <span className="text-[10px] text-zinc-500 font-mono font-normal">({taxMode.toLowerCase()})</span>
+          {t('dashboard.profitReturn')}{' '}
+          <span className="text-[10px] text-zinc-500 font-mono font-normal">({taxMode.toLowerCase()})</span>
         </div>
         <div className="w-8"></div>
       </div>
 
       {positions.length === 0 ? (
         <div className="py-12 px-4 text-center">
-          <p className="text-sm font-medium text-zinc-300">Brak pozycji spełniających kryteria</p>
+          <p className="text-sm font-medium text-zinc-300">{t('dashboard.noPositionsMatch')}</p>
           <p className="text-xs text-zinc-500 max-w-sm mx-auto mt-1 mb-4">
-            Zmień filtr wyszukiwania lub dodaj nową transakcję do portfela.
+            {t('dashboard.noPositionsHelp')}
           </p>
           {onAddTransaction && (
             <button
               onClick={onAddTransaction}
-              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-emerald-400 hover:bg-emerald-300 text-zinc-950 text-xs font-semibold transition"
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-emerald-400 hover:bg-emerald-300 text-zinc-950 text-xs font-semibold transition cursor-pointer"
             >
-              + Dodaj transakcję
+              {t('dashboard.addTransaction')}
             </button>
           )}
         </div>

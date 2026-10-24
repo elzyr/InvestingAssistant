@@ -1,4 +1,5 @@
 import { useState, useMemo, useEffect, useRef } from 'react';
+import { useTranslation } from 'react-i18next';
 import { AlertTriangle, ShieldCheck, Flame, Zap, ArrowDownRight, CheckCircle2 } from 'lucide-react';
 import {
   createChart,
@@ -59,14 +60,14 @@ const normalizeDateStr = (time: Time | unknown): string => {
   return '';
 };
 
-const formatMonths = (m: number): string => {
-  if (m === 1) return '1 miesiąc';
+const formatMonths = (m: number, t: (k: string, opt?: any) => string): string => {
+  if (m === 1) return t('monteCarlo.month_one', '1 miesiąc');
   const rem10 = m % 10;
   const rem100 = m % 100;
   if (rem10 >= 2 && rem10 <= 4 && (rem100 < 10 || rem100 >= 20)) {
-    return `${m} miesiące`;
+    return t('monteCarlo.month_few', { count: m, defaultValue: `${m} miesiące` });
   }
-  return `${m} miesięcy`;
+  return t('monteCarlo.month_many', { count: m, defaultValue: `${m} miesięcy` });
 };
 
 export const StressTestingView = ({
@@ -80,6 +81,8 @@ export const StressTestingView = ({
   defaultEdoDca = 0,
   defaultEtfDca = 0,
 }: StressTestingViewProps) => {
+  const { t } = useTranslation();
+  
   const [selectedScenarioId, setSelectedScenarioId] = useState<string>('covid-2020');
   const [prevDefaults, setPrevDefaults] = useState({ defaultTosDca, defaultEdoDca, defaultEtfDca });
   const [tosDca, setTosDca] = useState<number>(defaultTosDca);
@@ -476,10 +479,10 @@ export const StressTestingView = ({
           <div>
             <h2 className="text-base font-semibold text-white tracking-tight flex items-center gap-2">
               <AlertTriangle className="w-4 h-4 text-amber-400" />
-              Stress-Testing Portfela: „Wehikuł Czasu”
+              {t('monteCarlo.title')}
             </h2>
             <p className="text-xs text-zinc-400 mt-0.5">
-              Przetestuj odporność swojego obecnego portfela i comiesięcznych dopłat DCA w warunkach autentycznych kryzysów rynkowych.
+              {t('monteCarlo.subtitle')}
             </p>
           </div>
 
@@ -528,7 +531,7 @@ export const StressTestingView = ({
 
           <div className="bg-zinc-950/70 border border-zinc-800/80 rounded-lg p-3.5 flex flex-col justify-between gap-2.5">
             <div className="text-xs font-semibold text-white">
-              Twoje dopłaty DCA w kryzysie
+              {t('monteCarlo.yourDca')}
             </div>
             <div className="flex flex-wrap items-center justify-between gap-1.5 font-mono text-xs bg-zinc-900/60 p-2 rounded-md border border-zinc-800/80">
               <div className="flex items-center gap-1">
@@ -568,7 +571,7 @@ export const StressTestingView = ({
                 <span className="text-zinc-400 text-[11px]">ETF =</span>
               </div>
               <div className="text-white font-bold text-xs whitespace-nowrap pl-1">
-                {totalMonthly.toLocaleString('pl-PL')} <span className="text-zinc-400 font-normal text-[11px]">{baseCurrency}/mc</span>
+                {totalMonthly.toLocaleString('pl-PL')} <span className="text-zinc-400 font-normal text-[11px]">{t('monteCarlo.perMonth', { currency: baseCurrency })}</span>
               </div>
             </div>
           </div>
@@ -577,53 +580,53 @@ export const StressTestingView = ({
         <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
           <div className="bg-zinc-950/80 border border-zinc-800/80 rounded-lg p-3">
             <div className="text-[11px] text-zinc-400 flex items-center justify-between">
-              <span>Max Obsunięcie (Drawdown):</span>
+              <span>{t('monteCarlo.maxDrawdown')}</span>
               <ShieldCheck className="w-3.5 h-3.5 text-sky-400" />
             </div>
             <div className="text-xl font-bold text-rose-400 mt-1.5 font-mono">
               -{simulation.maxDrawdownPct.toFixed(1)}%
             </div>
-            <div className="text-[10px] text-zinc-500 mt-1 truncate" title={`Twój portfel vs 100% Akcje -${simulation.maxStockDrawdownPct.toFixed(1)}% | 100% Obligacje 0.0%`}>
-              Twój portfel vs 100% Akcje -{simulation.maxStockDrawdownPct.toFixed(1)}% | 100% Obligacje 0.0%
+            <div className="text-[10px] text-zinc-500 mt-1 truncate" title={t('monteCarlo.portfolioVsBenchmark', { stockDrawdown: simulation.maxStockDrawdownPct.toFixed(1) })}>
+              {t('monteCarlo.portfolioVsBenchmark', { stockDrawdown: simulation.maxStockDrawdownPct.toFixed(1) })}
             </div>
           </div>
 
           <div className="bg-zinc-950/80 border border-zinc-800/80 rounded-lg p-3">
             <div className="text-[11px] text-zinc-400 flex items-center justify-between">
-              <span>Wycena w Dołku Kryzysu:</span>
+              <span>{t('monteCarlo.troughVal')}</span>
               <ArrowDownRight className="w-3.5 h-3.5 text-amber-400" />
             </div>
             <div className="text-xl font-bold text-amber-300 mt-1.5 font-mono">
               {simulation.troughVal.toLocaleString('pl-PL', { maximumFractionDigits: 0 })} {baseCurrency}
             </div>
             <div className="text-[10px] text-zinc-500 mt-1">
-              Najgorszy moment: miesiąc {simulation.troughMonth}
+              {t('monteCarlo.worstMonth', { month: simulation.troughMonth })}
             </div>
           </div>
 
           <div className="bg-zinc-950/80 border border-zinc-800/80 rounded-lg p-3">
             <div className="text-[11px] text-zinc-400 flex items-center justify-between">
-              <span>Czas Odrobienia Strat:</span>
+              <span>{t('monteCarlo.recoveryTime')}</span>
               <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400" />
             </div>
             <div className="text-xl font-bold text-emerald-400 mt-1.5 font-mono">
-              {formatMonths(simulation.recoveryMonth)}
+              {formatMonths(simulation.recoveryMonth, t)}
             </div>
             <div className="text-[10px] text-zinc-500 mt-1">
-              Powrót do poziomu sprzed krachu (ATH)
+              {t('monteCarlo.athRecovery')}
             </div>
           </div>
 
           <div className="bg-zinc-950/80 border border-zinc-800/80 rounded-lg p-3">
             <div className="text-[11px] text-zinc-400 flex items-center justify-between">
-              <span>Wartość po Zakończeniu:</span>
+              <span>{t('monteCarlo.finalValue')}</span>
               <span className="w-2 h-2 rounded-full bg-indigo-400" />
             </div>
             <div className="text-xl font-bold text-white mt-1.5 font-mono">
               {simulation.finalPt.userVal.toLocaleString('pl-PL', { maximumFractionDigits: 0 })} {baseCurrency}
             </div>
             <div className="text-[10px] text-emerald-400 mt-1">
-              Zysk netto: +{(simulation.finalPt.userVal - simulation.finalPt.userCost).toLocaleString('pl-PL', { maximumFractionDigits: 0 })} {baseCurrency}
+              {t('monteCarlo.netProfit')} +{(simulation.finalPt.userVal - simulation.finalPt.userCost).toLocaleString('pl-PL', { maximumFractionDigits: 0 })} {baseCurrency}
             </div>
           </div>
         </div>
@@ -631,21 +634,21 @@ export const StressTestingView = ({
         <div className="flex flex-wrap items-center justify-between gap-2 pt-2 border-t border-zinc-800/80 text-xs">
           <div className="flex flex-wrap items-center gap-3 font-mono text-[11px]">
             <span className="flex items-center gap-1.5 text-sky-300">
-              <span className="w-2.5 h-2.5 rounded-full bg-sky-400" /> Twój Portfel (Zrównoważony)
+              <span className="w-2.5 h-2.5 rounded-full bg-sky-400" /> {t('monteCarlo.yourPortfolio')}
             </span>
             <span className="flex items-center gap-1.5 text-rose-400">
-              <span className="w-2.5 h-2.5 rounded-full bg-rose-500" /> 100% Akcje (Czysty krach)
+              <span className="w-2.5 h-2.5 rounded-full bg-rose-500" /> {t('monteCarlo.allStock')}
             </span>
             <span className="flex items-center gap-1.5 text-amber-300">
-              <span className="w-2.5 h-2.5 rounded-full bg-amber-400" /> 100% Obligacje Skarbowe
+              <span className="w-2.5 h-2.5 rounded-full bg-amber-400" /> {t('monteCarlo.allBond')}
             </span>
             <span className="flex items-center gap-1.5 text-zinc-500">
-              <span className="w-2.5 h-0.5 bg-zinc-500" /> Wkład własny (DCA)
+              <span className="w-2.5 h-0.5 bg-zinc-500" /> {t('monteCarlo.ownDca')}
             </span>
           </div>
 
           <div className="text-[11px] font-mono text-zinc-400">
-            Kryzys przetestowany na kapitale:{' '}
+            {t('monteCarlo.testedCapital')}{' '}
             <strong className="text-white">
               {(currentBondVal + currentEquityVal).toLocaleString('pl-PL', { maximumFractionDigits: 0 })} {baseCurrency}
             </strong>
@@ -656,24 +659,24 @@ export const StressTestingView = ({
           {hoveredPt && (
             <div className="absolute top-4 right-4 z-20 pointer-events-none bg-zinc-950/95 border border-zinc-700/80 rounded-lg p-2.5 shadow-2xl text-xs font-mono backdrop-blur-md min-w-[240px]">
               <div className="font-semibold text-white border-b border-zinc-800 pb-1 mb-1.5 flex justify-between">
-                <span>Miesiąc {hoveredPt.m} / {currentScenario.durationMonths}</span>
-                <span className="text-zinc-400">Inflacja: {hoveredPt.cpi.toFixed(1)}%</span>
+                <span>{t('monteCarlo.month')} {hoveredPt.m} / {currentScenario.durationMonths}</span>
+                <span className="text-zinc-400">{t('reports.cpi')}: {hoveredPt.cpi.toFixed(1)}%</span>
               </div>
               <div className="space-y-1 text-[11px]">
                 <div className="flex justify-between items-center text-sky-300">
-                  <span>Twój Portfel:</span>
+                  <span>{t('monteCarlo.yourPortfolio')}:</span>
                   <span className="font-bold">{hoveredPt.userVal.toLocaleString('pl-PL', { maximumFractionDigits: 0 })} {baseCurrency}</span>
                 </div>
                 <div className="flex justify-between items-center text-rose-400">
-                  <span>100% Akcje:</span>
+                  <span>{t('monteCarlo.allStock')}:</span>
                   <span className="font-bold">{hoveredPt.allStockVal.toLocaleString('pl-PL', { maximumFractionDigits: 0 })} {baseCurrency}</span>
                 </div>
                 <div className="flex justify-between items-center text-amber-300">
-                  <span>100% Obligacje:</span>
+                  <span>{t('monteCarlo.allBond')}:</span>
                   <span className="font-bold">{hoveredPt.allBondVal.toLocaleString('pl-PL', { maximumFractionDigits: 0 })} {baseCurrency}</span>
                 </div>
                 <div className="flex justify-between items-center text-zinc-400 pt-1 border-t border-zinc-800/60">
-                  <span>Wkład własny (DCA):</span>
+                  <span>{t('monteCarlo.ownDca')}:</span>
                   <span>{hoveredPt.userCost.toLocaleString('pl-PL', { maximumFractionDigits: 0 })} {baseCurrency}</span>
                 </div>
               </div>
@@ -683,9 +686,13 @@ export const StressTestingView = ({
         </div>
 
         <div className="bg-zinc-950/50 border border-zinc-800/60 rounded-lg p-3.5 text-xs text-zinc-300">
-          <span className="font-semibold text-white">Podsumowanie testu: </span>
+          <span className="font-semibold text-white">{t('monteCarlo.summaryTitle')} </span>
           <span>
-            Twój portfel z alokacją w bezpieczne obligacje (TOS/EDO) skutecznie zamortyzował krach giełdowy, obcinając maksymalne obsunięcie z -{simulation.maxStockDrawdownPct.toFixed(1)}% do -{simulation.maxDrawdownPct.toFixed(1)}%. Regularne dopłaty DCA pozwoliły akumulować przecenione aktywa, skracając czas powrotu na nowe szczyty do {formatMonths(simulation.recoveryMonth)}.
+            {t('monteCarlo.summaryText', {
+              stockDrawdown: simulation.maxStockDrawdownPct.toFixed(1),
+              portfolioDrawdown: simulation.maxDrawdownPct.toFixed(1),
+              recoveryMonths: formatMonths(simulation.recoveryMonth, t),
+            })}
           </span>
         </div>
       </div>

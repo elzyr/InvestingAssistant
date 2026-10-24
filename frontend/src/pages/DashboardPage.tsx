@@ -5,6 +5,7 @@ import { marketService } from '../services/market.service.ts';
 import { setActivePortfolioId } from '../store/slices/portfolio.slice.ts';
 import { TransactionModal } from '../components/portfolio/TransactionModal.tsx';
 import { CreatePortfolioModal } from '../components/portfolio/CreatePortfolioModal.tsx';
+import { TransactionHistoryModal } from '../components/portfolio/TransactionHistoryModal.tsx';
 import { DashboardHeader } from '../components/dashboard/DashboardHeader.tsx';
 import { KpiGrid } from '../components/dashboard/KpiGrid.tsx';
 import { PortfolioChart } from '../components/dashboard/PortfolioChart.tsx';
@@ -59,6 +60,7 @@ export const DashboardPage = () => {
 
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [isCreatePortfolioOpen, setIsCreatePortfolioOpen] = useState(false);
+  const [isHistoryOpen, setIsHistoryOpen] = useState(false);
   const [editingTx, setEditingTx] = useState<TransactionResponse | null>(null);
   const [taxMode, setTaxMode] = useState<TaxMode>('NETTO');
   const [timeframe, setTimeframe] = useState<TimeframeOption>('YTD');
@@ -85,7 +87,12 @@ export const DashboardPage = () => {
       const inst = instruments[pos.instrumentId];
       const isBond = isBondItem(pos, inst);
       const symbol = pos.seriesName || inst?.symbol || 'UNKNOWN';
-      const fxRate = (pos.currency === baseCurrency ? 1 : rates[pos.currency]) || 1;
+      const isForeign = pos.currency !== baseCurrency;
+      const fallbackFx =
+        pos.totalCostBase != null && pos.quantity * pos.averageBuyPrice > 0
+          ? pos.totalCostBase / (pos.quantity * pos.averageBuyPrice)
+          : undefined;
+      const fxRate = (isForeign ? rates[pos.currency] : 1) || fallbackFx || 1;
 
       const currentPrice = isBond
         ? calculateBondCurrentPrice({
@@ -393,6 +400,7 @@ export const DashboardPage = () => {
         onCreatePortfolio={() => setIsCreatePortfolioOpen(true)}
         onRefresh={handleRefresh}
         onAddTransaction={() => setIsModalOpen(true)}
+        onOpenTransactionHistory={() => setIsHistoryOpen(true)}
       />
 
       <KpiGrid summary={dashboardSummary} />
@@ -453,6 +461,16 @@ export const DashboardPage = () => {
         defaultCurrency={baseCurrency}
         transaction={editingTx}
         instrument={editingTx ? instruments[editingTx.instrumentId] : undefined}
+      />
+
+      <TransactionHistoryModal
+        isOpen={isHistoryOpen}
+        onClose={() => setIsHistoryOpen(false)}
+        portfolioId={activePortfolioId || ''}
+        transactions={transactions}
+        instruments={instruments}
+        baseCurrency={baseCurrency}
+        onEditTransaction={(tx) => setEditingTx(tx)}
       />
 
       <CreatePortfolioModal

@@ -35,7 +35,13 @@ export function getTransactionCashFlow(
   baseCurrency: string,
   rates: Record<string, number>
 ): { amount: number; isOutflow: boolean } {
-  const fx = (tx.currency === baseCurrency ? 1 : rates[tx.currency]) || 1;
+  const isForeign = tx.currency !== baseCurrency;
+  const txFxFallback =
+    tx.exchangeRateToBase ||
+    (tx.baseAmount && tx.quantity * tx.price > 0
+      ? tx.baseAmount / (tx.quantity * tx.price)
+      : 1);
+  const fx = isForeign ? (rates[tx.currency] || txFxFallback) : 1;
   if (tx.transactionType === 'BUY') {
     const cost = tx.baseAmount ?? (tx.quantity * tx.price + (tx.commission || 0)) * fx;
     return { amount: cost, isOutflow: true };
@@ -91,10 +97,26 @@ export function buildDashboardPositions({
     }
 
     const isForeign = h.currency !== baseCurrency;
-    const currentFx = (isForeign ? rates[h.currency] : 1) || 1;
+    const foreignTotalCost = h.quantity * h.averagePrice;
+    const avgHoldingBuyFx =
+      foreignTotalCost > 0 && h.totalCost > 0
+        ? h.totalCost / foreignTotalCost
+        : undefined;
+
+    const hasCurrentFx = isForeign ? Boolean(rates[h.currency]) : true;
+    const currentFx = isForeign
+      ? (rates[h.currency] || avgHoldingBuyFx || 1)
+      : 1;
 
     const subPositions: SubPosition[] = activeLots.map(({ tx, remainingQty, effectiveCost: txCost }) => {
-      const fx = (tx.currency === baseCurrency ? 1 : rates[tx.currency]) || 1;
+      const txBuyFx =
+        tx.exchangeRateToBase ||
+        (tx.baseAmount && tx.quantity * tx.price > 0
+          ? tx.baseAmount / (tx.quantity * tx.price)
+          : avgHoldingBuyFx || rates[tx.currency] || 1);
+      const isTxForeign = tx.currency !== baseCurrency;
+      const hasLotCurrentFx = isTxForeign ? Boolean(rates[tx.currency]) : true;
+      const fx = isTxForeign ? (rates[tx.currency] || txBuyFx || 1) : 1;
       const txVal = remainingQty * h.currentPrice * fx;
       const txProfitGross = txVal - txCost;
       const txTax = shouldApplyTax && txProfitGross > 0 ? txProfitGross * 0.19 : 0;
@@ -109,13 +131,7 @@ export function buildDashboardPositions({
       );
 
       let subDecomp: { marketReturnPct: number; fxReturnPct: number } | null = null;
-      if (isForeign) {
-        const txBuyFx =
-          tx.exchangeRate ||
-          (tx.baseAmount && tx.quantity * tx.price > 0
-            ? tx.baseAmount / (tx.quantity * tx.price)
-            : rates[tx.currency]) ||
-          1;
+      if (isForeign && hasCurrentFx && hasLotCurrentFx) {
         const decomp = calculateFxDecomposition({
           buyPrice: tx.price,
           currentPrice: h.currentPrice,
@@ -163,12 +179,10 @@ export function buildDashboardPositions({
     const posHoldingResult = calculateHoldingXirr(parentCashFlows, posNetVal, nowTimestamp);
 
     let parentDecomp: { marketReturnPct: number; fxReturnPct: number } | null = null;
-    if (isForeign) {
-      const foreignTotalCost = h.quantity * h.averagePrice;
+    if (isForeign && hasCurrentFx) {
       const avgBuyFx =
-        foreignTotalCost > 0 && h.totalCost > 0
-          ? h.totalCost / foreignTotalCost
-          : rates[h.currency] || 1;
+        avgHoldingBuyFx ||
+        (rates[h.currency] || 1);
       const decomp = calculateFxDecomposition({
         buyPrice: h.averagePrice,
         currentPrice: h.currentPrice,

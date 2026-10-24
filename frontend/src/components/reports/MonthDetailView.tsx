@@ -1,4 +1,5 @@
 import React from 'react';
+import { useTranslation } from 'react-i18next';
 import type { MonthlyReportRecord } from '../../types/reports.types.ts';
 import {
   formatPLN,
@@ -21,15 +22,16 @@ interface MonthDetailViewProps {
 export const MonthDetailView: React.FC<MonthDetailViewProps> = ({
   record,
 }) => {
+  const { t } = useTranslation();
   if (record.status === 'UPCOMING') {
     return (
       <div className="bg-zinc-900/50 border border-zinc-800/80 rounded-xl p-12 text-center">
         <Calendar className="w-12 h-12 text-zinc-600 mx-auto mb-3" />
         <h3 className="text-base font-medium text-zinc-300">
-          Miesiąc {record.monthName} {record.year} oczekuje na zamknięcie
+          {t('reports.monthWaiting', { month: record.monthName, year: record.year })}
         </h3>
         <p className="text-xs text-zinc-500 mt-1 max-w-md mx-auto">
-          Dane dotyczące wyceny, zysków i alokacji będą dostępne po zakończeniu bieżącego okresu rozliczeniowego.
+          {t('reports.monthWaitingDesc')}
         </p>
       </div>
     );
@@ -48,7 +50,7 @@ export const MonthDetailView: React.FC<MonthDetailViewProps> = ({
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
                 <div className="bg-zinc-900/60 border border-zinc-800/80 rounded-xl p-4 flex flex-col justify-between">
           <div className="flex items-center justify-between text-zinc-400">
-            <span className="text-xs font-medium">Wycena portfela</span>
+            <span className="text-xs font-medium">{t('reports.valuation')}</span>
             <Wallet className="w-4 h-4 text-emerald-400" />
           </div>
           <div className="mt-2">
@@ -56,7 +58,7 @@ export const MonthDetailView: React.FC<MonthDetailViewProps> = ({
               {formatPLN(record.portfolioValue, false, currency)}
             </div>
             <div className="text-[11px] text-zinc-400 mt-1 flex items-center gap-1 font-mono">
-              <span>Wpłacone:</span>
+              <span>{t('reports.invested')}</span>
               <span className="text-zinc-300 font-medium">{formatPLN(record.investedTotal, false, currency)}</span>
             </div>
           </div>
@@ -64,7 +66,7 @@ export const MonthDetailView: React.FC<MonthDetailViewProps> = ({
 
                 <div className="bg-zinc-900/60 border border-zinc-800/80 rounded-xl p-4 flex flex-col justify-between">
           <div className="flex items-center justify-between text-zinc-400">
-            <span className="text-xs font-medium">Zysk netto (po Belce)</span>
+            <span className="text-xs font-medium">{t('reports.netProfitBelka')}</span>
             <ShieldCheck className="w-4 h-4 text-emerald-400" />
           </div>
           <div className="mt-2">
@@ -76,7 +78,7 @@ export const MonthDetailView: React.FC<MonthDetailViewProps> = ({
               {formatPLN(record.profitNet, true, currency)}
             </div>
             <div className="text-[11px] text-zinc-400 mt-1 flex items-center gap-1 font-mono">
-              <span>Brutto:</span>
+              <span>{t('reports.gross')}</span>
               <span className="text-zinc-300 font-medium">
                 {formatPLN(record.profitGross, true, currency)}
               </span>
@@ -86,7 +88,7 @@ export const MonthDetailView: React.FC<MonthDetailViewProps> = ({
 
                 <div className="bg-zinc-900/60 border border-zinc-800/80 rounded-xl p-4 flex flex-col justify-between">
           <div className="flex items-center justify-between text-zinc-400">
-            <span className="text-xs font-medium">Stopa zwrotu netto</span>
+            <span className="text-xs font-medium">{t('reports.netReturnRate')}</span>
             <Percent className="w-4 h-4 text-cyan-400" />
           </div>
           <div className="mt-2">
@@ -98,7 +100,7 @@ export const MonthDetailView: React.FC<MonthDetailViewProps> = ({
               {formatPercent(record.returnNetPct, true)}
             </div>
             <div className="text-[11px] text-zinc-400 mt-1 flex items-center gap-1 font-mono">
-              <span>Brutto:</span>
+              <span>{t('reports.gross')}</span>
               <span className="text-zinc-300 font-medium">
                 {formatPercent(record.returnGrossPct, true)}
               </span>
@@ -108,7 +110,7 @@ export const MonthDetailView: React.FC<MonthDetailViewProps> = ({
 
                 <div className="bg-zinc-900/60 border border-zinc-800/80 rounded-xl p-4 flex flex-col justify-between">
           <div className="flex items-center justify-between text-zinc-400">
-            <span className="text-xs font-medium">Zysk miesiąc do miesiąca</span>
+            <span className="text-xs font-medium">{t('reports.momProfit')}</span>
             <TrendingUp className="w-4 h-4 text-amber-400" />
           </div>
           <div className="mt-2">
@@ -120,7 +122,7 @@ export const MonthDetailView: React.FC<MonthDetailViewProps> = ({
               {formatPLN(record.profitNetMom, true, currency)}
             </div>
             <div className="text-[11px] text-zinc-400 mt-1 flex items-center gap-1 font-mono">
-              <span>Zmiana m/m:</span>
+              <span>{t('reports.momChange')}</span>
               <span className={`font-medium ${getValueColorClass(record.returnNetMomPct)}`}>
                 {formatPercent(record.returnNetMomPct, true)}
               </span>
@@ -134,14 +136,14 @@ export const MonthDetailView: React.FC<MonthDetailViewProps> = ({
           <div className="p-4 sm:p-5 border-b border-zinc-800/80 flex items-center justify-between">
             <div>
               <span className="text-xs font-semibold text-zinc-400 uppercase tracking-wider">
-                Rozbicie Kategorii Aktywów
+                {t('reports.breakdownTitle')}
               </span>
               <h3 className="text-sm font-medium text-zinc-200 mt-0.5">
-                Szczegółowy wynik składników majątku w {record.monthName} {record.year}
+                {t('reports.breakdownSubtitle', { month: record.monthName, year: record.year })}
               </h3>
             </div>
             <span className="text-xs font-mono text-zinc-400 bg-zinc-800/40 px-2.5 py-1 rounded border border-zinc-700/40">
-              {record.breakdown.length} pozycji
+              {t('reports.positionsCount', { count: record.breakdown.length })}
             </span>
           </div>
 
@@ -149,13 +151,13 @@ export const MonthDetailView: React.FC<MonthDetailViewProps> = ({
             <table className="w-full table-auto text-xs text-left">
               <thead className="bg-[#0e0f15] text-zinc-400 font-semibold uppercase tracking-wider text-[11px] border-b border-zinc-800/80">
                 <tr>
-                  <th className="py-2.5 px-3 text-left whitespace-nowrap">Kategoria</th>
-                  <th className="py-2.5 px-3 text-right whitespace-nowrap">Wpłacone</th>
-                  <th className="py-2.5 px-3 text-right whitespace-nowrap">Wycena</th>
-                  <th className="py-2.5 px-3 text-right whitespace-nowrap">Zysk brutto</th>
-                  <th className="py-2.5 px-3 text-right whitespace-nowrap">Zysk netto</th>
-                  <th className="py-2.5 px-3 text-right whitespace-nowrap">Zwrot brutto %</th>
-                  <th className="py-2.5 px-3 text-right whitespace-nowrap">Zwrot netto %</th>
+                  <th className="py-2.5 px-3 text-left whitespace-nowrap">{t('reports.category')}</th>
+                  <th className="py-2.5 px-3 text-right whitespace-nowrap">{t('reports.invested')}</th>
+                  <th className="py-2.5 px-3 text-right whitespace-nowrap">{t('reports.valuation')}</th>
+                  <th className="py-2.5 px-3 text-right whitespace-nowrap">{t('reports.grossProfit')}</th>
+                  <th className="py-2.5 px-3 text-right whitespace-nowrap">{t('reports.netProfit')}</th>
+                  <th className="py-2.5 px-3 text-right whitespace-nowrap">{t('reports.grossReturn')}</th>
+                  <th className="py-2.5 px-3 text-right whitespace-nowrap">{t('reports.netReturn')}</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-zinc-800/50 font-mono text-[11px] sm:text-xs">
@@ -211,7 +213,7 @@ export const MonthDetailView: React.FC<MonthDetailViewProps> = ({
                             <tfoot className="bg-[#0b0c10] border-t-2 border-zinc-700/80 font-mono text-xs">
                 <tr className="font-semibold text-zinc-200">
                   <td className="py-3 px-3 font-sans text-xs sm:text-sm text-zinc-100 whitespace-nowrap">
-                    Razem
+                    {t('reports.total')}
                   </td>
                   <td className="py-3 px-3 text-right text-zinc-300 tabular-nums whitespace-nowrap">
                     {formatPLN(totalInvested, false, currency)}

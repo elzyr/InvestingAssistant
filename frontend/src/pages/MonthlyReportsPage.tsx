@@ -1,4 +1,5 @@
 import React, { useState, useMemo } from 'react';
+import { useTranslation } from 'react-i18next';
 import type { ReportViewMode } from '../types/reports.types.ts';
 import {
   extractAvailableYears,
@@ -19,6 +20,7 @@ import {
 } from 'lucide-react';
 
 export const MonthlyReportsPage: React.FC = () => {
+  const { t } = useTranslation();
   const [selectedYear, setSelectedYear] = useState<number>(new Date().getFullYear());
   const [viewMode, setViewMode] = useState<ReportViewMode>('ANNUAL');
   const [userSelectedMonthIndex, setUserSelectedMonthIndex] = useState<number | null>(null);
@@ -103,13 +105,13 @@ export const MonthlyReportsPage: React.FC = () => {
         <div>
           <div className="flex items-center gap-2 text-xs text-zinc-400 mb-1">
             <CalendarDays className="w-4 h-4 text-emerald-400" />
-            <span>Raporty Finansowe &bull; Rzeczywiste Transakcje</span>
+            <span>{t('reports.badge')}</span>
           </div>
           <h1 className="text-xl sm:text-2xl font-bold text-zinc-100 tracking-tight">
-            Miesięczne Karty Portfela
+            {t('reports.title')}
           </h1>
           <p className="text-xs sm:text-sm text-zinc-400 mt-0.5">
-            Zestawienie wyceny, podatku Belki, realnej siły nabywczej i struktury alokacji z historii transakcji
+            {t('reports.subtitle')}
           </p>
         </div>
 
@@ -145,7 +147,7 @@ export const MonthlyReportsPage: React.FC = () => {
             >
               {availableYears.map((y) => (
                 <option key={y} value={y}>
-                  Rok {y}
+                  {t('reports.yearLabel', { year: y })}
                 </option>
               ))}
             </select>
@@ -162,7 +164,7 @@ export const MonthlyReportsPage: React.FC = () => {
               }`}
             >
               <TableProperties className="w-3.5 h-3.5" />
-              <span>Podsumowanie Roczne</span>
+              <span>{t('reports.annualSummaryTab')}</span>
             </button>
             <button
               onClick={() => setViewMode('MONTH_DETAIL')}
@@ -173,7 +175,7 @@ export const MonthlyReportsPage: React.FC = () => {
               }`}
             >
               <PieChart className="w-3.5 h-3.5" />
-              <span>Karta Miesiąca</span>
+              <span>{t('reports.monthCardTab')}</span>
             </button>
           </div>
         </div>
@@ -182,7 +184,7 @@ export const MonthlyReportsPage: React.FC = () => {
       {loading && transactions.length === 0 ? (
         <div className="bg-zinc-900/40 border border-zinc-800/80 rounded-xl p-12 text-center flex flex-col items-center justify-center">
           <Loader2 className="w-8 h-8 text-emerald-400 animate-spin mb-3" />
-          <span className="text-sm text-zinc-300">Wczytywanie historii transakcji i wyceny portfela...</span>
+          <span className="text-sm text-zinc-300">{t('reports.loading')}</span>
         </div>
       ) : (
         <>
@@ -258,7 +260,7 @@ export const MonthlyReportsPage: React.FC = () => {
                       {selectedRecord.monthName} {selectedRecord.year}
                     </h2>
                     <span className="text-xs text-zinc-400">
-                      Szczegółowy arkusz rozliczeniowy portfela &bull; {activePortfolio?.name || 'Główny'}
+                      {t('reports.sheetSubtitle')} &bull; {activePortfolio?.name || 'Główny'}
                     </span>
                   </div>
                 </div>
@@ -268,7 +270,7 @@ export const MonthlyReportsPage: React.FC = () => {
                     onClick={() => setViewMode('ANNUAL')}
                     className="text-xs text-zinc-400 hover:text-zinc-200 bg-zinc-800/60 hover:bg-zinc-800 px-3 py-1.5 rounded-lg border border-zinc-700/60 transition"
                   >
-                    ← Wróć do tabeli rocznej
+                    {t('reports.backToAnnual')}
                   </button>
                 </div>
               </div>

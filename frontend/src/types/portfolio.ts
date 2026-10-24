@@ -30,6 +30,7 @@ export interface CreateTransactionRequest {
   bondMargin?: number;
   termMonths?: number;
   baseAmount?: number;
+  exchangeRateToBase?: number;
 }
 
 export interface TransactionResponse {
@@ -41,6 +42,7 @@ export interface TransactionResponse {
   commission: number;
   currency: Currency;
   exchangeRate: number;
+  exchangeRateToBase?: number;
   executedAt: string;
   seriesName?: string;
   bondRate?: number;

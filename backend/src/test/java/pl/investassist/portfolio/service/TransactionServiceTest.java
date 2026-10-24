@@ -219,7 +219,38 @@ class TransactionServiceTest {
     assertThat(response).isNotNull();
     assertThat(response.baseAmount()).isEqualByComparingTo("2008.0000");
 
+    ArgumentCaptor<Transaction> captor = ArgumentCaptor.forClass(Transaction.class);
+    verify(transactionRepository).save(captor.capture());
+    Transaction saved = captor.getValue();
+    assertThat(saved).extracting("exchangeRateToBase").isEqualTo(new BigDecimal("4.0000"));
+    assertThat(response).extracting("exchangeRateToBase").isEqualTo(new BigDecimal("4.0000"));
+
     verify(positionService).recalculatePosition(portfolio, instrumentId, Currency.USD, null);
+  }
+
+  @Test
+  void getTransactions_whenForeignCurrency_returnsExchangeRateToBase() {
+    UUID txId = UUID.randomUUID();
+    Transaction tx = new Transaction();
+    tx.setId(txId);
+    tx.setPortfolio(portfolio);
+    tx.setInstrumentId(instrumentId);
+    tx.setTransactionType(TransactionType.BUY);
+    tx.setQuantity(new BigDecimal("5"));
+    tx.setPrice(new BigDecimal("100"));
+    tx.setCommission(BigDecimal.ZERO);
+    tx.setCurrency(Currency.USD);
+    tx.setBaseAmount(new BigDecimal("2000.0000"));
+    tx.setExecutedAt(LocalDateTime.of(2025, 1, 15, 10, 0));
+    org.springframework.test.util.ReflectionTestUtils.setField(tx, "exchangeRateToBase", new BigDecimal("4.0000"));
+
+    when(portfolioService.validateAndGetPortfolioEntity(userId, portfolioId)).thenReturn(portfolio);
+    when(transactionRepository.findAllByPortfolioIdOrderByExecutedAtDesc(portfolioId)).thenReturn(java.util.List.of(tx));
+
+    java.util.List<TransactionResponse> responses = transactionService.getTransactions(userId, portfolioId);
+
+    assertThat(responses).hasSize(1);
+    assertThat(responses.get(0)).extracting("exchangeRateToBase").isEqualTo(new BigDecimal("4.0000"));
   }
 
   @Test
