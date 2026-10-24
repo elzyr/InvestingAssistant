@@ -46,3 +46,6 @@ portfolio-service — kopia/
 *.csv
 
 
+
+*.db
+market-data-service/data/

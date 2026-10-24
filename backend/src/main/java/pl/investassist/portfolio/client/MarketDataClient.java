@@ -3,12 +3,16 @@ package pl.investassist.portfolio.client;
 import java.math.BigDecimal;
 import java.time.Duration;
 import java.time.LocalDate;
+import java.util.ArrayList;
+import java.util.List;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.client.SimpleClientHttpRequestFactory;
 import org.springframework.stereotype.Component;
 import org.springframework.web.client.RestClient;
 import pl.investassist.common.enums.Currency;
+import pl.investassist.common.enums.InstrumentType;
 import pl.investassist.common.exception.MarketDataUnavailableException;
+import pl.investassist.instrument.dto.InstrumentResponse;
 import pl.investassist.portfolio.dto.response.ExchangeRateResponse;
 
 @Component
@@ -49,6 +53,33 @@ public class MarketDataClient {
       throw e;
     } catch (Exception e) {
       throw new MarketDataUnavailableException("Market data service is not available", e);
+    }
+  }
+
+  public List<InstrumentResponse> searchInstruments(String query) {
+    try {
+      String uri = "/api/prices/search?query=" + java.net.URLEncoder.encode(query, java.nio.charset.StandardCharsets.UTF_8);
+      ExternalInstrumentDto[] results = restClient.get().uri(uri).retrieve().body(ExternalInstrumentDto[].class);
+      if (results == null) {
+        return List.of();
+      }
+      List<InstrumentResponse> list = new ArrayList<>();
+      for (ExternalInstrumentDto dto : results) {
+        try {
+          Currency currency = Currency.valueOf(dto.currency().toUpperCase());
+          InstrumentType type;
+          try {
+            type = InstrumentType.valueOf(dto.type().toUpperCase());
+          } catch (Exception e) {
+            type = InstrumentType.STOCK;
+          }
+          list.add(new InstrumentResponse(null, dto.symbol(), dto.name(), type, currency));
+        } catch (Exception ignored) {
+        }
+      }
+      return list;
+    } catch (Exception e) {
+      return List.of();
     }
   }
 }

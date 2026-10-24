@@ -1,9 +1,10 @@
-import React, { useState, useEffect, useCallback, useMemo } from 'react';
+import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { useTranslation } from 'react-i18next';
 import { isAxiosError } from 'axios';
-import { X, ArrowDownRight, ArrowUpRight, Loader2, ShieldCheck, Sparkles, Trash2 } from 'lucide-react';
+import { X, ArrowDownRight, ArrowUpRight, Loader2, ShieldCheck, Sparkles, Trash2, Search, ChevronDown, Check } from 'lucide-react';
 import { instrumentService } from '../../services/instrument.service.ts';
 import { marketService } from '../../services/market.service.ts';
+import { partitionInstruments } from '../../utils/instrumentSearch.ts';
 import { useAppDispatch, useAppSelector } from '../../store/hooks.ts';
 import {
   createTransaction,
@@ -40,6 +41,25 @@ export const TransactionModal: React.FC<TransactionModalProps> = ({
   const dispatch = useAppDispatch();
   const reduxInstruments = useAppSelector((state) => state.portfolio.instruments);
   const reduxQuotes = useAppSelector((state) => state.portfolio.quotes);
+  const reduxPositions = useAppSelector((state) => state.portfolio.positions);
+  const reduxTransactions = useAppSelector((state) => state.portfolio.transactions);
+  const [searchQuery, setSearchQuery] = useState('');
+  const [isPickerOpen, setIsPickerOpen] = useState(false);
+  const pickerRef = useRef<HTMLDivElement>(null);
+
+  const { ownedInstrumentIds, ownedSymbols } = useMemo(() => {
+    const ids = new Set<string>();
+    const symbols = new Set<string>();
+    for (const pos of reduxPositions) {
+      if (pos.instrumentId) ids.add(pos.instrumentId);
+      if (pos.seriesName) symbols.add(pos.seriesName);
+    }
+    for (const tx of reduxTransactions) {
+      if (tx.instrumentId) ids.add(tx.instrumentId);
+      if (tx.seriesName) symbols.add(tx.seriesName);
+    }
+    return { ownedInstrumentIds: ids, ownedSymbols: symbols };
+  }, [reduxPositions, reduxTransactions]);
   const cachedInstruments = useMemo(() => {
     return Object.values(reduxInstruments).filter((i) => i.type === 'ETF' || i.type === 'BOND' || i.type === 'STOCK');
   }, [reduxInstruments]);
@@ -49,10 +69,67 @@ export const TransactionModal: React.FC<TransactionModalProps> = ({
       (initialInstrument.type === 'BOND' || initialInstrument.symbol.startsWith('PL_BOND'))
   );
   const initialQuote = initialInstrument ? reduxQuotes[initialInstrument.symbol] : undefined;
-  const [fetchedInstruments, setFetchedInstruments] = useState<InstrumentResponse[]>([]);
-  const instruments = cachedInstruments.length > 0 ? cachedInstruments : fetchedInstruments;
+  const [catalogInstruments, setCatalogInstruments] = useState<InstrumentResponse[]>([]);
+  const [loadingCatalog, setLoadingCatalog] = useState(false);
+  const [selectedInstrumentObj, setSelectedInstrumentObj] = useState<InstrumentResponse | null>(
+    initialInstrument || null
+  );
   const isEdit = Boolean(transaction);
-  const [loadingInstruments, setLoadingInstruments] = useState(false);
+
+  const { yourInstruments, allInstruments } = useMemo(() => {
+    return partitionInstruments({
+      catalogInstruments,
+      ownedInstruments: cachedInstruments,
+      ownedInstrumentIds,
+      ownedSymbols,
+      query: searchQuery,
+    });
+  }, [catalogInstruments, cachedInstruments, ownedInstrumentIds, ownedSymbols, searchQuery]);
+
+  const combinedList = useMemo(
+    () => [...yourInstruments, ...allInstruments],
+    [yourInstruments, allInstruments]
+  );
+  const [highlightedIndex, setHighlightedIndex] = useState<number>(0);
+
+  useEffect(() => {
+    setHighlightedIndex(0);
+  }, [searchQuery, isPickerOpen]);
+
+  const handlePickerKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
+    if (combinedList.length === 0) return;
+    if (e.key === 'ArrowDown') {
+      e.preventDefault();
+      setHighlightedIndex((prev) => (prev + 1) % combinedList.length);
+    } else if (e.key === 'ArrowUp') {
+      e.preventDefault();
+      setHighlightedIndex((prev) => (prev - 1 + combinedList.length) % combinedList.length);
+    } else if (e.key === 'Enter') {
+      e.preventDefault();
+      const targetInst = combinedList[highlightedIndex];
+      if (targetInst) {
+        handleInstrumentSelect(targetInst);
+        setIsPickerOpen(false);
+      }
+    } else if (e.key === 'Escape') {
+      e.preventDefault();
+      setIsPickerOpen(false);
+    }
+  };
+
+  useEffect(() => {
+    const handleClickOutside = (e: MouseEvent) => {
+      if (pickerRef.current && !pickerRef.current.contains(e.target as Node)) {
+        setIsPickerOpen(false);
+      }
+    };
+    if (isPickerOpen) {
+      document.addEventListener('mousedown', handleClickOutside);
+    }
+    return () => {
+      document.removeEventListener('mousedown', handleClickOutside);
+    };
+  }, [isPickerOpen]);
   const [selectedInstrumentId, setSelectedInstrumentId] = useState(initialInstrument?.id || '');
   const [transactionType, setTransactionType] = useState<TransactionType>('BUY');
   const [quantity, setQuantity] = useState<string>('10');
@@ -85,6 +162,11 @@ export const TransactionModal: React.FC<TransactionModalProps> = ({
   if (transaction && transaction.id !== prevTxId) {
     setPrevTxId(transaction.id);
     setSelectedInstrumentId(transaction.instrumentId);
+    setSelectedInstrumentObj(
+      cachedInstruments.find((i) => i.id === transaction.instrumentId) ||
+      catalogInstruments.find((i) => i.id === transaction.instrumentId) ||
+      null
+    );
     setTransactionType(transaction.transactionType);
     setQuantity(transaction.quantity?.toString() || '1');
     setPrice(transaction.price?.toString() || '100');
@@ -107,6 +189,9 @@ export const TransactionModal: React.FC<TransactionModalProps> = ({
   } else if (!transaction && prevTxId !== null) {
     setPrevTxId(null);
     setSelectedInstrumentId(initialInstrument?.id || '');
+    setSelectedInstrumentObj(initialInstrument || null);
+    setSearchQuery('');
+    setIsPickerOpen(false);
     setTransactionType('BUY');
     setQuantity('10');
     setPrice(
@@ -131,8 +216,13 @@ export const TransactionModal: React.FC<TransactionModalProps> = ({
     setError(null);
   }
 
-  const effectiveInstrumentId = selectedInstrumentId || instruments[0]?.id || '';
-  const selectedInstrument = instruments.find((i) => i.id === effectiveInstrumentId) || instrument;
+  const effectiveInstrumentId =
+    selectedInstrumentId || initialInstrument?.id || combinedList[0]?.id || '';
+  const selectedInstrument =
+    selectedInstrumentObj ||
+    catalogInstruments.find((i) => i.id === effectiveInstrumentId) ||
+    cachedInstruments.find((i) => i.id === effectiveInstrumentId) ||
+    instrument;
   const isBond =
     selectedInstrument?.type === 'BOND' ||
     selectedInstrument?.symbol?.startsWith('PL_BOND') ||
@@ -142,6 +232,7 @@ export const TransactionModal: React.FC<TransactionModalProps> = ({
   const handleInstrumentSelect = useCallback(
     (inst: InstrumentResponse) => {
       setSelectedInstrumentId(inst.id);
+      setSelectedInstrumentObj(inst);
       const instrumentIsBond =
         inst.type === 'BOND' || inst.symbol.startsWith('PL_BOND');
 
@@ -229,37 +320,34 @@ export const TransactionModal: React.FC<TransactionModalProps> = ({
   };
 
   useEffect(() => {
-    if (!isOpen || transaction || cachedInstruments.length > 0) return;
-
-    let mounted = true;
-    const loadData = async () => {
-      setLoadingInstruments(true);
-      setError(null);
+    if (!isOpen || transaction) return;
+    let active = true;
+    setLoadingCatalog(true);
+    const timer = setTimeout(async () => {
       try {
-        const data = await instrumentService.getInstruments();
-        if (!mounted) return;
+        const data = await instrumentService.getInstruments(searchQuery.trim() || undefined);
+        if (!active) return;
         const filtered = data.filter((i) => i.type === 'ETF' || i.type === 'BOND' || i.type === 'STOCK');
-        setFetchedInstruments(filtered);
-        if (!transaction && !selectedInstrumentId && filtered.length > 0) {
+        setCatalogInstruments(filtered);
+        if (!selectedInstrumentId && filtered.length > 0 && !initialInstrument) {
           handleInstrumentSelect(filtered[0]);
         }
       } catch (err: unknown) {
-        if (!mounted) return;
+        if (!active) return;
         if (isAxiosError<{ message?: string }>(err)) {
           setError(err.response?.data?.message || t('transactionModal.errorLoadingInstruments'));
         } else {
           setError(t('transactionModal.errorLoadingInstruments'));
         }
       } finally {
-        if (mounted) setLoadingInstruments(false);
+        if (active) setLoadingCatalog(false);
       }
-    };
-
-    void loadData();
+    }, searchQuery.trim() ? 250 : 0);
     return () => {
-      mounted = false;
+      active = false;
+      clearTimeout(timer);
     };
-  }, [isOpen, transaction, cachedInstruments.length, selectedInstrumentId, handleInstrumentSelect]);
+  }, [isOpen, transaction, searchQuery, selectedInstrumentId, initialInstrument, handleInstrumentSelect, t]);
 
   if (!isOpen) return null;
 
@@ -393,27 +481,144 @@ export const TransactionModal: React.FC<TransactionModalProps> = ({
           )}
 
           {!isEdit && (
-            <div>
+            <div className="relative" ref={pickerRef}>
               <label className="block text-xs text-zinc-400 mb-1.5">
                 {t('transactionModal.instrument')}
               </label>
-              {loadingInstruments ? (
+              {loadingCatalog && catalogInstruments.length === 0 && cachedInstruments.length === 0 ? (
                 <div className="text-xs text-zinc-500 py-2">{t('transactionModal.loadingCatalog')}</div>
               ) : (
-                <select
-                  value={effectiveInstrumentId}
-                  onChange={(e) => {
-                    const inst = instruments.find((i) => i.id === e.target.value);
-                    if (inst) handleInstrumentSelect(inst);
-                  }}
-                  className="w-full bg-zinc-900 border border-zinc-800 rounded px-3 py-2 text-xs text-zinc-100 font-sans focus:outline-none focus:border-zinc-600"
-                >
-                  {instruments.map((inst) => (
-                    <option key={inst.id} value={inst.id}>
-                      {inst.symbol} — {inst.name} ({inst.currency})
-                    </option>
-                  ))}
-                </select>
+                <>
+                  <button
+                    type="button"
+                    onClick={() => setIsPickerOpen((prev) => !prev)}
+                    className="w-full flex items-center justify-between bg-zinc-900 border border-zinc-800 rounded px-3 py-2 text-xs text-zinc-100 font-sans focus:outline-none focus:border-zinc-600 transition"
+                  >
+                    <span className="truncate">
+                      {selectedInstrument
+                        ? `${selectedInstrument.symbol} — ${selectedInstrument.name} (${selectedInstrument.currency})`
+                        : t('transactionModal.selectInstrument')}
+                    </span>
+                    <ChevronDown className={`w-3.5 h-3.5 text-zinc-400 transition-transform shrink-0 ml-2 ${isPickerOpen ? 'rotate-180' : ''}`} />
+                  </button>
+
+                  {isPickerOpen && (
+                    <div className="absolute left-0 right-0 top-full mt-1 z-30 bg-[#16181f] border border-zinc-700/80 rounded-lg shadow-2xl overflow-hidden flex flex-col max-h-60">
+                      <div className="p-2 border-b border-zinc-800 flex items-center gap-2 bg-[#121318] shrink-0">
+                        {loadingCatalog ? (
+                          <Loader2 className="w-3.5 h-3.5 text-zinc-400 animate-spin shrink-0" />
+                        ) : (
+                          <Search className="w-3.5 h-3.5 text-zinc-400 shrink-0" />
+                        )}
+                        <input
+                          type="text"
+                          value={searchQuery}
+                          onChange={(e) => setSearchQuery(e.target.value)}
+                          onKeyDown={handlePickerKeyDown}
+                          placeholder={t('transactionModal.searchInstrumentPlaceholder', 'Szukaj instrumentu (ticker, nazwa)...')}
+                          className="w-full bg-transparent text-xs text-zinc-100 placeholder-zinc-500 focus:outline-none font-sans"
+                          autoFocus
+                        />
+                        {searchQuery && (
+                          <button
+                            type="button"
+                            onClick={() => setSearchQuery('')}
+                            className="text-zinc-500 hover:text-zinc-300"
+                          >
+                            <X className="w-3 h-3" />
+                          </button>
+                        )}
+                      </div>
+
+                      <div className="overflow-y-auto flex-1 divide-y divide-zinc-800/40">
+                        {yourInstruments.length === 0 && allInstruments.length === 0 ? (
+                          <div className="p-4 text-center text-xs text-zinc-500">
+                            {loadingCatalog
+                              ? t('transactionModal.loadingCatalog', 'Ładowanie katalogu...')
+                              : t('transactionModal.noInstrumentsFound', 'Nie znaleziono instrumentów')}
+                          </div>
+                        ) : (
+                          <>
+                            {yourInstruments.length > 0 && (
+                              <div>
+                                <div className="px-3 py-1.5 text-[10px] uppercase font-semibold text-zinc-400 bg-zinc-800/40 tracking-wider">
+                                  {t('transactionModal.yourInstruments', 'Twoje instrumenty')}
+                                </div>
+                                {yourInstruments.map((inst, idx) => {
+                                  const isSelected = inst.id === effectiveInstrumentId;
+                                  const isHighlighted = highlightedIndex === idx;
+                                  return (
+                                    <button
+                                      key={inst.id}
+                                      type="button"
+                                      onClick={() => {
+                                        handleInstrumentSelect(inst);
+                                        setIsPickerOpen(false);
+                                      }}
+                                      onMouseEnter={() => setHighlightedIndex(idx)}
+                                      className={`w-full text-left px-3 py-2 text-xs flex items-center justify-between transition ${
+                                        isSelected ? 'text-emerald-400 font-medium' : 'text-zinc-200'
+                                      } ${isHighlighted ? 'bg-zinc-800' : 'hover:bg-zinc-800/60'}`}
+                                    >
+                                      <div className="truncate mr-2">
+                                        <span className="font-mono font-semibold">{inst.symbol}</span>
+                                        <span className="text-zinc-400 ml-2">{inst.name}</span>
+                                      </div>
+                                      <div className="flex items-center gap-2 shrink-0">
+                                        <span className="text-[10px] text-zinc-500 font-mono uppercase">
+                                          {inst.type} · {inst.currency}
+                                        </span>
+                                        {isSelected && <Check className="w-3.5 h-3.5 text-emerald-400" />}
+                                      </div>
+                                    </button>
+                                  );
+                                })}
+                              </div>
+                            )}
+
+                            {allInstruments.length > 0 && (
+                              <div>
+                                <div className="px-3 py-1.5 text-[10px] uppercase font-semibold text-zinc-400 bg-zinc-800/40 tracking-wider">
+                                  {t('transactionModal.allInstruments', 'Wszystkie instrumenty')}
+                                </div>
+                                {allInstruments.map((inst, idx) => {
+                                  const itemIndex = yourInstruments.length + idx;
+                                  const isSelected = inst.id === effectiveInstrumentId;
+                                  const isHighlighted = highlightedIndex === itemIndex;
+                                  return (
+                                    <button
+                                      key={inst.id}
+                                      type="button"
+                                      onClick={() => {
+                                        handleInstrumentSelect(inst);
+                                        setIsPickerOpen(false);
+                                      }}
+                                      onMouseEnter={() => setHighlightedIndex(itemIndex)}
+                                      className={`w-full text-left px-3 py-2 text-xs flex items-center justify-between transition ${
+                                        isSelected ? 'text-emerald-400 font-medium' : 'text-zinc-200'
+                                      } ${isHighlighted ? 'bg-zinc-800' : 'hover:bg-zinc-800/60'}`}
+                                    >
+                                      <div className="truncate mr-2">
+                                        <span className="font-mono font-semibold">{inst.symbol}</span>
+                                        <span className="text-zinc-400 ml-2">{inst.name}</span>
+                                      </div>
+                                      <div className="flex items-center gap-2 shrink-0">
+                                        <span className="text-[10px] text-zinc-500 font-mono uppercase">
+                                          {inst.type} · {inst.currency}
+                                        </span>
+                                        {isSelected && <Check className="w-3.5 h-3.5 text-emerald-400" />}
+                                      </div>
+                                    </button>
+                                  );
+                                })}
+                              </div>
+                            )}
+                          </>
+                        )}
+                      </div>
+                    </div>
+                  )}
+                </>
               )}
             </div>
           )}
