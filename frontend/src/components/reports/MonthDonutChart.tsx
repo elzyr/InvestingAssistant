@@ -1,4 +1,5 @@
 import React, { useState } from 'react';
+import { useTranslation } from 'react-i18next';
 import type { MonthlyCategoryBreakdown } from '../../types/reports.types.ts';
 import { formatPLN, formatPercent } from '../../utils/reportsFormatters.ts';
 
@@ -11,12 +12,13 @@ export const MonthDonutChart: React.FC<MonthDonutChartProps> = ({
   breakdown,
   totalValue,
 }) => {
+  const { t } = useTranslation();
   const [hoveredIdx, setHoveredIdx] = useState<number | null>(null);
 
   if (!breakdown || breakdown.length === 0 || totalValue <= 0) {
     return (
       <div className="bg-zinc-900/50 border border-zinc-800/80 rounded-xl p-6 flex items-center justify-center text-zinc-500 text-sm">
-        Brak danych o strukturze alokacji w tym miesiącu
+        {t('reports.noStructureData')}
       </div>
     );
   }
@@ -38,14 +40,14 @@ export const MonthDonutChart: React.FC<MonthDonutChartProps> = ({
         <div className="flex items-center justify-between mb-4">
           <div>
             <span className="text-xs font-semibold text-zinc-400 uppercase tracking-wider">
-              Struktura Portfela
+              {t('reports.structureTitle')}
             </span>
             <h3 className="text-sm font-medium text-zinc-200 mt-0.5">
-              Alokacja kapitału według aktywów
+              {t('reports.structureSubtitle')}
             </h3>
           </div>
           <div className="text-right font-mono">
-            <span className="text-[11px] text-zinc-500 block">Łącznie</span>
+            <span className="text-[11px] text-zinc-500 block">{t('reports.total')}</span>
             <span className="text-sm font-bold text-white tabular-nums">
               {formatPLN(totalValue)}
             </span>
@@ -84,8 +86,8 @@ export const MonthDonutChart: React.FC<MonthDonutChartProps> = ({
               </>
             ) : (
               <>
-                <span className="text-zinc-500">Najedź na segment, aby sprawdzić wagę</span>
-                <span className="text-zinc-500">100% alokacji</span>
+                <span className="text-zinc-500">{t('reports.hoverSegment')}</span>
+                <span className="text-zinc-500">{t('reports.totalAllocation')}</span>
               </>
             )}
           </div>

@@ -69,7 +69,7 @@ public class TransactionService {
     LocalDate txDate = request.executedAt() != null ? request.executedAt().toLocalDate() : null;
     ResolvedFinancials financials = resolveFinancials(
         foundInstrument, portfolio, request.transactionType(), request.currency(), request.price(),
-        request.quantity(), request.commission(), request.baseAmount(), txDate);
+        request.quantity(), request.commission(), request.baseAmount(), request.exchangeRateToBase(), txDate);
 
     return transactionTemplate.execute(status -> {
       Portfolio lockedPortfolio = portfolio;
@@ -80,6 +80,7 @@ public class TransactionService {
       Transaction transaction = request.toEntity(lockedPortfolio);
       transaction.setExchangeRate(financials.exchangeRate());
       transaction.setBaseAmount(financials.baseAmount());
+      transaction.setExchangeRateToBase(financials.exchangeRateToBase());
 
       Transaction savedTransaction = transactionRepository.save(transaction);
 
@@ -119,7 +120,7 @@ public class TransactionService {
     LocalDate txDate = effectiveExecutedAt != null ? effectiveExecutedAt.toLocalDate() : null;
     ResolvedFinancials financials = resolveFinancials(
         foundInstrument, portfolio, request.transactionType(), request.currency(), request.price(),
-        request.quantity(), request.commission(), request.baseAmount(), txDate);
+        request.quantity(), request.commission(), request.baseAmount(), request.exchangeRateToBase(), txDate);
 
     Currency oldInstrumentCurrency = null;
     if (!sameInstrumentAndSeries) {
@@ -148,6 +149,7 @@ public class TransactionService {
       transaction.setCurrency(request.currency());
       transaction.setExchangeRate(financials.exchangeRate());
       transaction.setBaseAmount(financials.baseAmount());
+      transaction.setExchangeRateToBase(financials.exchangeRateToBase());
       if (request.executedAt() != null) {
         transaction.setExecutedAt(request.executedAt());
       }
@@ -205,7 +207,8 @@ public class TransactionService {
         .toList();
   }
 
-  private record ResolvedFinancials(BigDecimal exchangeRate, BigDecimal baseAmount) {}
+  private record ResolvedFinancials(
+      BigDecimal exchangeRate, BigDecimal baseAmount, BigDecimal exchangeRateToBase) {}
 
   private ResolvedFinancials resolveFinancials(
       InstrumentResponse instrument,
@@ -216,11 +219,21 @@ public class TransactionService {
       BigDecimal quantity,
       BigDecimal commission,
       BigDecimal customBaseAmount,
+      BigDecimal customExchangeRateToBase,
       LocalDate txDate) {
 
     BigDecimal exchangeRate = BigDecimal.ONE;
     if (!instrument.currency().equals(txCurrency)) {
       exchangeRate = marketDataClient.getExchangeRate(instrument.currency(), txCurrency, txDate);
+    }
+
+    BigDecimal exchangeRateToBase = customExchangeRateToBase;
+    if (exchangeRateToBase == null) {
+      if (txCurrency.equals(portfolio.getBaseCurrency())) {
+        exchangeRateToBase = BigDecimal.ONE;
+      } else {
+        exchangeRateToBase = marketDataClient.getExchangeRate(txCurrency, portfolio.getBaseCurrency(), txDate);
+      }
     }
 
     BigDecimal baseAmount = customBaseAmount;
@@ -231,11 +244,10 @@ public class TransactionService {
       if (txCurrency.equals(portfolio.getBaseCurrency())) {
         baseAmount = netTotal;
       } else {
-        BigDecimal fxRateToBase = marketDataClient.getExchangeRate(txCurrency, portfolio.getBaseCurrency(), txDate);
-        baseAmount = netTotal.multiply(fxRateToBase).setScale(4, RoundingMode.HALF_UP);
+        baseAmount = netTotal.multiply(exchangeRateToBase).setScale(4, RoundingMode.HALF_UP);
       }
     }
 
-    return new ResolvedFinancials(exchangeRate, baseAmount);
+    return new ResolvedFinancials(exchangeRate, baseAmount, exchangeRateToBase);
   }
 }

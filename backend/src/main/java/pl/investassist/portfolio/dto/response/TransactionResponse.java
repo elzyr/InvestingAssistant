@@ -21,7 +21,41 @@ public record TransactionResponse(
     BigDecimal bondRate,
     BigDecimal bondMargin,
     Integer termMonths,
-    BigDecimal baseAmount) {
+    BigDecimal baseAmount,
+    BigDecimal exchangeRateToBase) {
+
+  public TransactionResponse(
+      UUID id,
+      UUID instrumentId,
+      TransactionType transactionType,
+      BigDecimal quantity,
+      BigDecimal price,
+      BigDecimal commission,
+      Currency currency,
+      BigDecimal exchangeRate,
+      LocalDateTime executedAt,
+      String seriesName,
+      BigDecimal bondRate,
+      BigDecimal bondMargin,
+      Integer termMonths,
+      BigDecimal baseAmount) {
+    this(
+        id,
+        instrumentId,
+        transactionType,
+        quantity,
+        price,
+        commission,
+        currency,
+        exchangeRate,
+        executedAt,
+        seriesName,
+        bondRate,
+        bondMargin,
+        termMonths,
+        baseAmount,
+        null);
+  }
 
   public static TransactionResponse from(Transaction transaction) {
     if (transaction == null) {
@@ -41,6 +75,7 @@ public record TransactionResponse(
         transaction.getBondRate(),
         transaction.getBondMargin(),
         transaction.getTermMonths(),
-        transaction.getBaseAmount());
+        transaction.getBaseAmount(),
+        transaction.getExchangeRateToBase());
   }
 }

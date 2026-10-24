@@ -1,4 +1,5 @@
-import { Plus, RefreshCw, ChevronDown, FolderPlus } from 'lucide-react';
+import { Plus, RefreshCw, ChevronDown, FolderPlus, History } from 'lucide-react';
+import { useTranslation } from 'react-i18next';
 import type { PortfolioResponse } from '../../types/portfolio.ts';
 import type { TaxMode } from '../../types/dashboard.ts';
 
@@ -14,10 +15,11 @@ interface DashboardHeaderProps {
   onCreatePortfolio: () => void;
   onRefresh: () => void;
   onAddTransaction: () => void;
+  onOpenTransactionHistory?: () => void;
 }
 
 export const DashboardHeader = ({
-  title = 'Pulpit Portfela',
+  title,
   positionCount,
   portfolios,
   activePortfolioId,
@@ -28,11 +30,15 @@ export const DashboardHeader = ({
   onCreatePortfolio,
   onRefresh,
   onAddTransaction,
+  onOpenTransactionHistory,
 }: DashboardHeaderProps) => {
+  const { t } = useTranslation();
+  const displayTitle = title || t('dashboard.title', 'Pulpit Portfela');
+
   return (
     <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-zinc-800/80 pb-3.5">
       <div className="flex flex-wrap items-center gap-2.5">
-        <h1 className="text-base font-bold text-white tracking-tight">{title}</h1>
+        <h1 className="text-base font-bold text-white tracking-tight">{displayTitle}</h1>
 
         {portfolios.length > 0 && (
           <div className="flex items-center gap-1.5">
@@ -53,7 +59,7 @@ export const DashboardHeader = ({
 
             <button
               onClick={onCreatePortfolio}
-              title="Utwórz nowy portfel"
+              title={t('dashboard.createPortfolio')}
               className="p-1 rounded-lg bg-zinc-900 hover:bg-zinc-800 border border-zinc-700/80 text-zinc-400 hover:text-zinc-200 transition cursor-pointer"
             >
               <FolderPlus className="w-3.5 h-3.5" />
@@ -62,14 +68,14 @@ export const DashboardHeader = ({
         )}
 
         <span className="text-xs font-mono font-medium text-zinc-300 bg-zinc-800/90 border border-zinc-700/60 px-2 py-0.5 rounded-md">
-          {positionCount} pozycji
+          {t('dashboard.positionCount', { count: positionCount })}
         </span>
 
         <div className="flex items-center bg-[#161922] border border-zinc-800 rounded-lg p-0.5 text-xs font-mono">
           <button
             type="button"
             onClick={() => onTaxModeChange('NETTO')}
-            title="Zysk netto po uwzględnieniu podatku Belki (19%)"
+            title={t('dashboard.taxNettoTitle')}
             className={`px-2 py-0.5 rounded-md text-[11px] transition cursor-pointer ${
               taxMode === 'NETTO'
                 ? 'bg-emerald-400 text-zinc-950 font-bold shadow-xs'
@@ -81,7 +87,7 @@ export const DashboardHeader = ({
           <button
             type="button"
             onClick={() => onTaxModeChange('BRUTTO')}
-            title="Zysk brutto (przed podatkiem Belki)"
+            title={t('dashboard.taxBruttoTitle')}
             className={`px-2 py-0.5 rounded-md text-[11px] transition cursor-pointer ${
               taxMode === 'BRUTTO'
                 ? 'bg-emerald-400 text-zinc-950 font-bold shadow-xs'
@@ -93,23 +99,33 @@ export const DashboardHeader = ({
         </div>
       </div>
 
-
       <div className="flex items-center gap-2">
         <button
           onClick={onRefresh}
           disabled={loading}
-          title="Odśwież dane i wyceny"
+          title={t('dashboard.refreshTitle')}
           className="p-1.5 rounded-lg bg-zinc-900 hover:bg-zinc-800 border border-zinc-700/80 text-zinc-300 transition cursor-pointer disabled:opacity-50"
         >
           <RefreshCw className={`w-3.5 h-3.5 ${loading ? 'animate-spin text-emerald-400' : ''}`} />
         </button>
+
+        {onOpenTransactionHistory && (
+          <button
+            onClick={onOpenTransactionHistory}
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-zinc-900 hover:bg-zinc-800 border border-zinc-700/80 text-zinc-200 font-semibold text-xs tracking-tight transition cursor-pointer"
+            title={t('dashboard.transactionHistory')}
+          >
+            <History className="w-3.5 h-3.5 text-zinc-400" />
+            <span>{t('dashboard.transactionHistory')}</span>
+          </button>
+        )}
 
         <button
           onClick={onAddTransaction}
           className="flex items-center gap-1.5 px-3.5 py-1.5 rounded-lg bg-emerald-400 hover:bg-emerald-300 text-zinc-950 font-bold text-xs tracking-tight shadow-md hover:shadow-emerald-500/20 transition-all cursor-pointer"
         >
           <Plus className="w-3.5 h-3.5 stroke-[2.5]" />
-          <span>Transakcja</span>
+          <span>{t('dashboard.transactionButton')}</span>
         </button>
       </div>
     </div>

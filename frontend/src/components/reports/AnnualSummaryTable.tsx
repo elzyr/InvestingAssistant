@@ -1,4 +1,5 @@
 import React from 'react';
+import { useTranslation } from 'react-i18next';
 import type { AnnualSummaryData } from '../../types/reports.types.ts';
 import {
   formatPLN,
@@ -18,28 +19,29 @@ export const AnnualSummaryTable: React.FC<AnnualSummaryTableProps> = ({
   onSelectMonth,
   selectedMonthIndex,
 }) => {
+  const { t } = useTranslation();
   const recordedRecords = summary.records.filter((r) => r.status === 'RECORDED');
   const latestRecordedMonth =
     recordedRecords.length > 0
       ? recordedRecords[recordedRecords.length - 1].monthName
       : '';
   const ytdLabel = latestRecordedMonth
-    ? `Podsumowanie YTD (${latestRecordedMonth})`
-    : 'Podsumowanie YTD';
+    ? t('reports.ytdSummaryWithMonth', { month: latestRecordedMonth })
+    : t('reports.ytdSummary');
 
   return (
     <div className="bg-zinc-900/50 border border-zinc-800/80 rounded-xl overflow-hidden">
       <div className="p-4 sm:p-5 border-b border-zinc-800/80 flex flex-col sm:flex-row sm:items-center justify-between gap-2">
         <div>
           <h3 className="text-sm font-semibold text-zinc-100 tracking-tight">
-            Podsumowanie Roczne {summary.year}
+            {t('reports.annualSummaryTitle', { year: summary.year })}
           </h3>
           <p className="text-xs text-zinc-400 mt-0.5">
-            Zestawienie wyceny, rentowności brutto/netto oraz stóp realnych po uwzględnieniu CPI
+            {t('reports.annualSummarySubtitle')}
           </p>
         </div>
         <div className="text-xs font-mono text-zinc-400 bg-zinc-800/40 px-3 py-1.5 rounded-lg border border-zinc-700/40 self-start sm:self-auto">
-          Średnia inflacja CPI: <span className="text-zinc-200 font-semibold">{summary.avgCpi.toFixed(1)}%</span>
+          {t('reports.avgCpi')} <span className="text-zinc-200 font-semibold">{summary.avgCpi.toFixed(1)}%</span>
         </div>
       </div>
 
@@ -47,15 +49,15 @@ export const AnnualSummaryTable: React.FC<AnnualSummaryTableProps> = ({
         <table className="w-full text-xs text-left">
           <thead className="bg-[#0e0f15] text-zinc-400 font-semibold uppercase tracking-wider text-[11px] border-b border-zinc-800/80">
             <tr>
-              <th className="py-2.5 px-3 whitespace-nowrap">Miesiąc</th>
-              <th className="py-2.5 px-3 text-right whitespace-nowrap">Wartość portfela</th>
-              <th className="py-2.5 px-3 text-right whitespace-nowrap">Zysk brutto</th>
-              <th className="py-2.5 px-3 text-right whitespace-nowrap">Zwrot brutto %</th>
-              <th className="py-2.5 px-3 text-right whitespace-nowrap">Zysk netto (Belka)</th>
-              <th className="py-2.5 px-3 text-right whitespace-nowrap">Zwrot netto %</th>
-              <th className="py-2.5 px-3 text-right whitespace-nowrap">Inflacja CPI</th>
-              <th className="py-2.5 px-3 text-right whitespace-nowrap">Zysk realny</th>
-              <th className="py-2.5 px-3 text-right whitespace-nowrap">Akcja</th>
+              <th className="py-2.5 px-3 whitespace-nowrap">{t('reports.month')}</th>
+              <th className="py-2.5 px-3 text-right whitespace-nowrap">{t('reports.portfolioValue')}</th>
+              <th className="py-2.5 px-3 text-right whitespace-nowrap">{t('reports.grossProfit')}</th>
+              <th className="py-2.5 px-3 text-right whitespace-nowrap">{t('reports.grossReturn')}</th>
+              <th className="py-2.5 px-3 text-right whitespace-nowrap">{t('reports.netProfit')}</th>
+              <th className="py-2.5 px-3 text-right whitespace-nowrap">{t('reports.netReturn')}</th>
+              <th className="py-2.5 px-3 text-right whitespace-nowrap">{t('reports.cpi')}</th>
+              <th className="py-2.5 px-3 text-right whitespace-nowrap">{t('reports.realProfit')}</th>
+              <th className="py-2.5 px-3 text-right whitespace-nowrap">{t('reports.action')}</th>
             </tr>
           </thead>
           <tbody className="divide-y divide-zinc-800/50 font-mono">
@@ -83,7 +85,7 @@ export const AnnualSummaryTable: React.FC<AnnualSummaryTableProps> = ({
                     <td className="py-2.5 px-3 text-right tabular-nums whitespace-nowrap">—</td>
                     <td className="py-2.5 px-3 text-right whitespace-nowrap">
                       <span className="inline-flex items-center gap-1 text-[10px] text-zinc-500 bg-zinc-800/30 px-2 py-0.5 rounded font-sans">
-                        <Clock className="w-3 h-3" /> Nadchodzący
+                        <Clock className="w-3 h-3" /> {t('reports.upcoming')}
                       </span>
                     </td>
                   </tr>
@@ -155,7 +157,7 @@ export const AnnualSummaryTable: React.FC<AnnualSummaryTableProps> = ({
                       }}
                       className="text-[11px] text-zinc-400 hover:text-emerald-400 hover:bg-zinc-800 px-2.5 py-1 rounded transition inline-flex items-center gap-1"
                     >
-                      Szczegóły →
+                      {t('reports.details')}
                     </button>
                   </td>
                 </tr>
@@ -212,11 +214,11 @@ export const AnnualSummaryTable: React.FC<AnnualSummaryTableProps> = ({
               <td className="py-3 px-3 text-right font-sans text-emerald-400 text-[11px] whitespace-nowrap">
                 {summary.ytdProfitNet >= 0 ? (
                   <span className="inline-flex items-center gap-0.5 justify-end">
-                    <ArrowUpRight className="w-3.5 h-3.5" /> Na plusie
+                    <ArrowUpRight className="w-3.5 h-3.5" /> {t('reports.inProfit')}
                   </span>
                 ) : (
                   <span className="inline-flex items-center gap-0.5 justify-end text-rose-400">
-                    <ArrowDownRight className="w-3.5 h-3.5" /> Strata
+                    <ArrowDownRight className="w-3.5 h-3.5" /> {t('reports.inLoss')}
                   </span>
                 )}
               </td>

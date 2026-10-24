@@ -52,6 +52,9 @@ public class Transaction {
   @Column(precision = 38, scale = 4, nullable = false)
   private BigDecimal baseAmount;
 
+  @Column(name = "exchange_rate_to_base", precision = 10, scale = 6)
+  private BigDecimal exchangeRateToBase;
+
   @Column(name = "executed_at", nullable = false)
   private LocalDateTime executedAt;
 
@@ -186,5 +189,13 @@ public class Transaction {
 
   public void setBaseAmount(BigDecimal baseAmount) {
     this.baseAmount = baseAmount;
+  }
+
+  public BigDecimal getExchangeRateToBase() {
+    return exchangeRateToBase;
+  }
+
+  public void setExchangeRateToBase(BigDecimal exchangeRateToBase) {
+    this.exchangeRateToBase = exchangeRateToBase;
   }
 }

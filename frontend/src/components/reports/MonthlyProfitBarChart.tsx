@@ -1,4 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
+import { useTranslation } from 'react-i18next';
 import {
   createChart,
   ColorType,
@@ -39,6 +40,7 @@ export const MonthlyProfitBarChart: React.FC<MonthlyProfitBarChartProps> = ({
   onSelectMonth,
   selectedMonthIndex,
 }) => {
+  const { t } = useTranslation();
   const containerRef = useRef<HTMLDivElement | null>(null);
   const chartRef = useRef<IChartApi | null>(null);
   const seriesRef = useRef<ISeriesApi<'Histogram'> | null>(null);
@@ -181,20 +183,20 @@ export const MonthlyProfitBarChart: React.FC<MonthlyProfitBarChartProps> = ({
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 mb-3">
         <div>
           <span className="text-xs font-semibold text-zinc-400 uppercase tracking-wider">
-            Dynamika miesiąc do miesiąca (m/m)
+            {t('reports.momDynamics')}
           </span>
           <h3 className="text-sm font-medium text-zinc-200 mt-0.5">
-            Zysk netto wygenerowany w poszczególnych miesiącach
+            {t('reports.momDynamicsSubtitle')}
           </h3>
         </div>
         <div className="flex items-center gap-4 text-xs font-mono">
           <div className="flex items-center gap-1.5 text-zinc-400">
             <span className="w-2.5 h-2.5 rounded-sm bg-emerald-500 inline-block" />
-            <span>Zysk m/m</span>
+            <span>{t('reports.momGain')}</span>
           </div>
           <div className="flex items-center gap-1.5 text-zinc-400">
             <span className="w-2.5 h-2.5 rounded-sm bg-rose-500 inline-block" />
-            <span>Spadek m/m</span>
+            <span>{t('reports.momLoss')}</span>
           </div>
         </div>
       </div>

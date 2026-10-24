@@ -71,6 +71,7 @@ public class DatabaseSchemaInitializer implements ApplicationRunner {
       jdbcTemplate.execute("ALTER TABLE transaction ALTER COLUMN exchange_rate SET NOT NULL");
       jdbcTemplate.execute("ALTER TABLE transaction ALTER COLUMN base_amount SET NOT NULL");
       jdbcTemplate.execute("ALTER TABLE transaction ALTER COLUMN executed_at SET NOT NULL");
+      jdbcTemplate.execute("ALTER TABLE transaction ADD COLUMN IF NOT EXISTS exchange_rate_to_base NUMERIC(10, 6)");
 
       jdbcTemplate.execute(
           "DO '\n"

@@ -111,11 +111,10 @@ export function buildDashboardPositions({
       let subDecomp: { marketReturnPct: number; fxReturnPct: number } | null = null;
       if (isForeign) {
         const txBuyFx =
-          tx.exchangeRate ||
+          tx.exchangeRateToBase ||
           (tx.baseAmount && tx.quantity * tx.price > 0
             ? tx.baseAmount / (tx.quantity * tx.price)
-            : rates[tx.currency]) ||
-          1;
+            : rates[tx.currency] || 1);
         const decomp = calculateFxDecomposition({
           buyPrice: tx.price,
           currentPrice: h.currentPrice,

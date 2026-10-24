@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useCallback, useMemo } from 'react';
+import { useTranslation } from 'react-i18next';
 import { isAxiosError } from 'axios';
 import { X, ArrowDownRight, ArrowUpRight, Loader2, ShieldCheck, Sparkles, Trash2 } from 'lucide-react';
 import { instrumentService } from '../../services/instrument.service.ts';
@@ -35,6 +36,7 @@ export const TransactionModal: React.FC<TransactionModalProps> = ({
   transaction,
   instrument,
 }) => {
+  const { t } = useTranslation();
   const dispatch = useAppDispatch();
   const reduxInstruments = useAppSelector((state) => state.portfolio.instruments);
   const reduxQuotes = useAppSelector((state) => state.portfolio.quotes);
@@ -244,9 +246,9 @@ export const TransactionModal: React.FC<TransactionModalProps> = ({
       } catch (err: unknown) {
         if (!mounted) return;
         if (isAxiosError<{ message?: string }>(err)) {
-          setError(err.response?.data?.message || 'Błąd ładowania instrumentów');
+          setError(err.response?.data?.message || t('transactionModal.errorLoadingInstruments'));
         } else {
-          setError('Błąd ładowania instrumentów');
+          setError(t('transactionModal.errorLoadingInstruments'));
         }
       } finally {
         if (mounted) setLoadingInstruments(false);
@@ -264,7 +266,7 @@ export const TransactionModal: React.FC<TransactionModalProps> = ({
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!effectiveInstrumentId) {
-      setError('Wybierz instrument');
+      setError(t('transactionModal.errorSelectInstrument'));
       return;
     }
     const q = parseFloat(quantity);
@@ -272,24 +274,24 @@ export const TransactionModal: React.FC<TransactionModalProps> = ({
     const c = parseFloat(commission) || 0;
 
     if (isNaN(q) || q <= 0) {
-      setError('Ilość musi być większa od zera');
+      setError(t('transactionModal.errorQuantityPositive'));
       return;
     }
     if (isNaN(p) || p <= 0) {
-      setError('Cena musi być większa od zera');
+      setError(t('transactionModal.errorPricePositive'));
       return;
     }
 
     if (isBond && transactionType === 'BUY') {
       const parsedRate = parseFloat(bondRate);
       if (isNaN(parsedRate) || parsedRate < 0) {
-        setError('Podaj prawidłowe oprocentowanie w %');
+        setError(t('transactionModal.errorBondRatePositive'));
         return;
       }
       if (interestType === 'INFLATION') {
         const parsedMargin = parseFloat(bondMargin);
         if (isNaN(parsedMargin) || parsedMargin < 0) {
-          setError('Podaj prawidłową marżę w %');
+          setError(t('transactionModal.errorBondMarginPositive'));
           return;
         }
       }
@@ -335,7 +337,7 @@ export const TransactionModal: React.FC<TransactionModalProps> = ({
       if (typeof err === 'string') {
         setError(err);
       } else {
-        setError(isEdit ? 'Nie udało się zaktualizować transakcji' : 'Nie udało się zapisać transakcji');
+        setError(isEdit ? t('transactionModal.errorUpdateFailed') : t('transactionModal.errorCreateFailed'));
       }
     } finally {
       setSubmitting(false);
@@ -343,7 +345,7 @@ export const TransactionModal: React.FC<TransactionModalProps> = ({
   };
 
   const handleDelete = async () => {
-    if (!transaction || !window.confirm('Czy na pewno chcesz usunąć tę transakcję?')) {
+    if (!transaction || !window.confirm(t('transactionModal.confirmDelete', 'Czy na pewno chcesz usunąć tę transakcję?'))) {
       return;
     }
     setDeleting(true);
@@ -357,7 +359,7 @@ export const TransactionModal: React.FC<TransactionModalProps> = ({
       ).unwrap();
       onClose();
     } catch (err: unknown) {
-      setError(typeof err === 'string' ? err : 'Nie udało się usunąć transakcji');
+      setError(typeof err === 'string' ? err : t('transactionModal.errorDeleteFailed'));
     } finally {
       setDeleting(false);
     }
@@ -373,10 +375,10 @@ export const TransactionModal: React.FC<TransactionModalProps> = ({
           <h2 className="text-sm font-semibold uppercase tracking-wider text-white flex items-center gap-2">
             {isBond && <ShieldCheck className={`w-4 h-4 ${isEdit ? 'text-amber-400' : 'text-emerald-400'}`} />}
             {isEdit
-              ? `Edycja transakcji: ${seriesName || selectedInstrument?.symbol || 'Instrument'}`
+              ? `${t('transactionModal.editTitle', 'Edycja transakcji')}: ${seriesName || selectedInstrument?.symbol || 'Instrument'}`
               : isBond
-              ? 'Zakup obligacji skarbowej'
-              : 'Nowa transakcja'}
+              ? t('transactionModal.buyBondTitle')
+              : t('transactionModal.addTitle')}
           </h2>
           <button onClick={onClose} className="text-zinc-400 hover:text-zinc-200 transition">
             <X className="w-4 h-4" />
@@ -393,10 +395,10 @@ export const TransactionModal: React.FC<TransactionModalProps> = ({
           {!isEdit && (
             <div>
               <label className="block text-xs text-zinc-400 mb-1.5">
-                Instrument finansowy
+                {t('transactionModal.instrument')}
               </label>
               {loadingInstruments ? (
-                <div className="text-xs text-zinc-500 py-2">Ładowanie katalogu...</div>
+                <div className="text-xs text-zinc-500 py-2">{t('transactionModal.loadingCatalog')}</div>
               ) : (
                 <select
                   value={effectiveInstrumentId}
@@ -419,9 +421,9 @@ export const TransactionModal: React.FC<TransactionModalProps> = ({
           {isBond && (
             <div>
               <div className="flex justify-between items-center mb-1.5">
-                <label className="text-xs text-zinc-400">Seria obligacji {!isEdit && '(opcjonalnie)'}</label>
+                <label className="text-xs text-zinc-400">{t('transactionModal.seriesName')} {!isEdit && `(${t('transactionModal.optional')})`}</label>
                 <span className="text-[10px] text-amber-400/90 font-mono flex items-center gap-1">
-                  <Sparkles className="w-3 h-3" /> Auto-uzupełnianie
+                  <Sparkles className="w-3 h-3" /> {t('transactionModal.autoFill')}
                 </span>
               </div>
               <input
@@ -429,11 +431,11 @@ export const TransactionModal: React.FC<TransactionModalProps> = ({
                 value={seriesName}
                 onChange={(e) => handleSeriesNameChange(e.target.value)}
                 className="w-full bg-zinc-900 border border-zinc-800 rounded px-3 py-2 text-xs text-zinc-100 font-mono uppercase focus:outline-none focus:border-zinc-600"
-                placeholder="np. TOS0229, EDO1135, COI0428"
+                placeholder={t('transactionModal.seriesPlaceholder')}
               />
               {!isEdit && (
                 <span className="text-[10px] text-zinc-500 block mt-1">
-                  Wpisanie serii automatycznie ustawi typ odsetek, okres oraz datę zakupu.
+                  {t('transactionModal.seriesHint')}
                 </span>
               )}
             </div>
@@ -441,7 +443,7 @@ export const TransactionModal: React.FC<TransactionModalProps> = ({
 
           {isBond && (
             <div>
-              <label className="block text-xs text-zinc-400 mb-1.5">Typ odsetek</label>
+              <label className="block text-xs text-zinc-400 mb-1.5">{t('transactionModal.interestType')}</label>
               <div className="grid grid-cols-2 gap-2">
                 <button
                   type="button"
@@ -452,7 +454,7 @@ export const TransactionModal: React.FC<TransactionModalProps> = ({
                       : 'bg-zinc-900 border-zinc-800 text-zinc-400 hover:border-zinc-700'
                   }`}
                 >
-                  Stałe oprocentowanie
+                  {t('transactionModal.fixed')}
                 </button>
                 <button
                   type="button"
@@ -463,7 +465,7 @@ export const TransactionModal: React.FC<TransactionModalProps> = ({
                       : 'bg-zinc-900 border-zinc-800 text-zinc-400 hover:border-zinc-700'
                   }`}
                 >
-                  Indeksowane inflacją
+                  {t('transactionModal.inflation')}
                 </button>
               </div>
             </div>
@@ -471,8 +473,8 @@ export const TransactionModal: React.FC<TransactionModalProps> = ({
 
           <div>
             <label className="block text-xs text-zinc-400 mb-1.5 flex justify-between">
-              <span>Data zakupu / wykonania</span>
-              {!isEdit && <span className="text-[10px] text-zinc-500 font-mono">Domyślnie: dzisiaj</span>}
+              <span>{t('transactionModal.date')}</span>
+              {!isEdit && <span className="text-[10px] text-zinc-500 font-mono">{t('transactionModal.defaultToday')}</span>}
             </label>
             <input
               type="date"
@@ -484,7 +486,7 @@ export const TransactionModal: React.FC<TransactionModalProps> = ({
           </div>
 
           <div>
-            <label className="block text-xs text-zinc-400 mb-1.5">Typ transakcji</label>
+            <label className="block text-xs text-zinc-400 mb-1.5">{t('transactionModal.typeLabel')}</label>
             <div className="grid grid-cols-2 gap-2">
               <button
                 type="button"
@@ -496,7 +498,7 @@ export const TransactionModal: React.FC<TransactionModalProps> = ({
                 }`}
               >
                 <ArrowDownRight className="w-3.5 h-3.5" />
-                Kupno (BUY)
+                {t('transactionModal.typeBuy')}
               </button>
               <button
                 type="button"
@@ -508,7 +510,7 @@ export const TransactionModal: React.FC<TransactionModalProps> = ({
                 }`}
               >
                 <ArrowUpRight className="w-3.5 h-3.5" />
-                Sprzedaż (SELL)
+                {t('transactionModal.typeSell')}
               </button>
             </div>
           </div>
@@ -518,7 +520,7 @@ export const TransactionModal: React.FC<TransactionModalProps> = ({
               <>
                 <div className="grid grid-cols-2 gap-3">
                   <div>
-                    <label className="block text-xs text-zinc-400 mb-1.5">Liczba sztuk do sprzedaży</label>
+                    <label className="block text-xs text-zinc-400 mb-1.5">{t('transactionModal.sellQuantity')}</label>
                     <input
                       type="number"
                       step="1"
@@ -531,7 +533,7 @@ export const TransactionModal: React.FC<TransactionModalProps> = ({
                     />
                   </div>
                   <div>
-                    <label className="block text-xs text-zinc-400 mb-1.5">Cena sprzedaży / wykupu (PLN)</label>
+                    <label className="block text-xs text-zinc-400 mb-1.5">{t('transactionModal.sellPrice')}</label>
                     <input
                       type="number"
                       step="0.01"
@@ -546,13 +548,13 @@ export const TransactionModal: React.FC<TransactionModalProps> = ({
                 </div>
                 <div className="grid grid-cols-2 gap-3">
                   <div>
-                    <label className="block text-xs text-zinc-400 mb-1.5">Łączna kwota wypłaty</label>
+                    <label className="block text-xs text-zinc-400 mb-1.5">{t('transactionModal.totalPayout')}</label>
                     <div className="w-full bg-zinc-900/60 border border-zinc-800 rounded px-3 py-2 text-xs text-emerald-400 font-mono flex items-center h-[34px]">
                       {((parseFloat(quantity) || 0) * (parseFloat(price) || 0)).toLocaleString('pl-PL', { minimumFractionDigits: 2 })} PLN
                     </div>
                   </div>
                   <div>
-                    <label className="block text-xs text-zinc-400 mb-1.5">Prowizja / opłata (PLN)</label>
+                    <label className="block text-xs text-zinc-400 mb-1.5">{t('transactionModal.commissionFee')}</label>
                     <input
                       type="number"
                       step="0.01"
@@ -569,7 +571,7 @@ export const TransactionModal: React.FC<TransactionModalProps> = ({
               <>
                 <div className="grid grid-cols-2 gap-3">
                 <div>
-                  <label className="block text-xs text-zinc-400 mb-1.5">Liczba sztuk</label>
+                  <label className="block text-xs text-zinc-400 mb-1.5">{t('transactionModal.nominalUnits')}</label>
                   <input
                     type="number"
                     step="1"
@@ -582,18 +584,18 @@ export const TransactionModal: React.FC<TransactionModalProps> = ({
                   />
                   {!isEdit && (
                     <span className="text-[10px] text-zinc-500 font-mono block mt-1">
-                      Cena nom: 100 zł/szt.
+                      {t('transactionModal.nominalPriceNote')}
                     </span>
                   )}
                 </div>
                 <div>
-                  <label className="block text-xs text-zinc-400 mb-1.5">Wartość nominalna</label>
+                  <label className="block text-xs text-zinc-400 mb-1.5">{t('transactionModal.nominalValue')}</label>
                   <div className="w-full bg-zinc-900/60 border border-zinc-800 rounded px-3 py-2 text-xs text-emerald-400 font-mono flex items-center h-[34px]">
                     {bondTotalNominal.toLocaleString('pl-PL', { minimumFractionDigits: 2 })} PLN
                   </div>
                   {!isEdit && (
                     <span className="text-[10px] text-zinc-500 font-mono block mt-1">
-                      Kwota do zapłaty
+                      {t('transactionModal.amountToPay')}
                     </span>
                   )}
                 </div>
@@ -602,7 +604,7 @@ export const TransactionModal: React.FC<TransactionModalProps> = ({
               <div className="grid grid-cols-2 gap-3">
                 <div>
                   <label className="block text-xs text-zinc-400 mb-1.5">
-                    {interestType === 'INFLATION' ? 'Oproc. w 1. roku (%)' : 'Oprocentowanie roczne (%)'}
+                    {interestType === 'INFLATION' ? t('transactionModal.bondRateFirstYear') : t('transactionModal.bondRateAnnual')}
                   </label>
                   <input
                     type="number"
@@ -618,7 +620,7 @@ export const TransactionModal: React.FC<TransactionModalProps> = ({
                 {interestType === 'INFLATION' ? (
                   <div>
                     <label className="block text-xs text-zinc-400 mb-1.5">
-                      Marża od 2. roku (%)
+                      {t('transactionModal.bondMargin')}
                     </label>
                     <input
                       type="number"
@@ -633,27 +635,27 @@ export const TransactionModal: React.FC<TransactionModalProps> = ({
                   </div>
                 ) : (
                   <div>
-                    <label className="block text-xs text-zinc-400 mb-1.5">Typ kuponu</label>
+                    <label className="block text-xs text-zinc-400 mb-1.5">{t('transactionModal.couponType')}</label>
                     <div className="w-full bg-zinc-900/60 border border-zinc-800 rounded px-3 py-2 text-xs text-zinc-400 font-sans flex items-center h-[34px]">
-                      Stała stopa
+                      {t('transactionModal.fixedRate')}
                     </div>
                   </div>
                 )}
               </div>
 
               <div>
-                <label className="block text-xs text-zinc-400 mb-1.5">Okres trwania</label>
+                <label className="block text-xs text-zinc-400 mb-1.5">{t('transactionModal.termMonths')}</label>
                 <select
                   value={termMonths}
                   onChange={(e) => setTermMonths(e.target.value)}
                   className="w-full bg-zinc-900 border border-zinc-800 rounded px-3 py-2 text-xs text-zinc-100 font-sans focus:outline-none focus:border-zinc-600"
                 >
-                  <option value="3">3 miesiące (OTS)</option>
-                  <option value="12">1 rok (12 mies. ROR)</option>
-                  <option value="24">2 lata (24 mies. DOR)</option>
-                  <option value="36">3 lata (36 mies. TOS)</option>
-                  <option value="48">4 lata (48 mies. COI)</option>
-                  <option value="120">10 lat (120 mies. EDO)</option>
+                  <option value="3">{t('transactionModal.termMonthsOptionOTS')}</option>
+                  <option value="12">{t('transactionModal.termMonthsOptionROR')}</option>
+                  <option value="24">{t('transactionModal.termMonthsOptionDOR')}</option>
+                  <option value="36">{t('transactionModal.termMonthsOptionTOS')}</option>
+                  <option value="48">{t('transactionModal.termMonthsOptionCOI')}</option>
+                  <option value="120">{t('transactionModal.termMonthsOptionEDO')}</option>
                 </select>
               </div>
             </>
@@ -663,7 +665,7 @@ export const TransactionModal: React.FC<TransactionModalProps> = ({
 
               <div className="grid grid-cols-2 gap-3">
                 <div>
-                  <label className="block text-xs text-zinc-400 mb-1.5">Ilość</label>
+                  <label className="block text-xs text-zinc-400 mb-1.5">{t('transactionModal.quantity')}</label>
                   <input
                     type="number"
                     step="any"
@@ -677,7 +679,7 @@ export const TransactionModal: React.FC<TransactionModalProps> = ({
                 </div>
                 <div>
                   <label className="block text-xs text-zinc-400 mb-1.5 flex justify-between">
-                    <span>Cena ({currency})</span>
+                    <span>{t('transactionModal.price')} ({currency})</span>
                     {loadingPrice && (
                       <Loader2 className="w-3 h-3 text-zinc-500 animate-spin" />
                     )}
@@ -697,7 +699,7 @@ export const TransactionModal: React.FC<TransactionModalProps> = ({
 
               <div className="grid grid-cols-2 gap-3">
                 <div>
-                  <label className="block text-xs text-zinc-400 mb-1.5">Prowizja ({currency})</label>
+                  <label className="block text-xs text-zinc-400 mb-1.5">{t('transactionModal.commission')} ({currency})</label>
                   <input
                     type="number"
                     step="any"
@@ -709,7 +711,7 @@ export const TransactionModal: React.FC<TransactionModalProps> = ({
                   />
                 </div>
                 <div>
-                  <label className="block text-xs text-zinc-400 mb-1.5">Waluta transakcji</label>
+                  <label className="block text-xs text-zinc-400 mb-1.5">{t('transactionModal.currency')}</label>
                   <select
                     value={currency}
                     onChange={(e) => setCurrency(e.target.value as Currency)}
@@ -733,7 +735,7 @@ export const TransactionModal: React.FC<TransactionModalProps> = ({
                 className="flex items-center gap-1.5 px-3 py-1.5 rounded bg-rose-950/40 hover:bg-rose-900/60 border border-rose-800/60 text-xs font-medium text-rose-300 transition disabled:opacity-50"
               >
                 <Trash2 className="w-3.5 h-3.5" />
-                <span>Usuń</span>
+                <span>{t('transactionHistory.delete', 'Usuń')}</span>
               </button>
             ) : <div />}
 
@@ -743,7 +745,7 @@ export const TransactionModal: React.FC<TransactionModalProps> = ({
                 onClick={onClose}
                 className="px-3.5 py-1.5 rounded bg-zinc-900 hover:bg-zinc-800 border border-zinc-800 text-xs font-medium text-zinc-300 transition"
               >
-                Anuluj
+                {t('common.cancel')}
               </button>
               <button
                 type="submit"
@@ -751,7 +753,7 @@ export const TransactionModal: React.FC<TransactionModalProps> = ({
                 className="flex items-center gap-1.5 px-4 py-1.5 rounded bg-white hover:bg-zinc-200 text-zinc-950 text-xs font-semibold transition disabled:opacity-50"
               >
                 {submitting && <Loader2 className="w-3.5 h-3.5 animate-spin" />}
-                {isEdit ? 'Zapisz zmiany' : isBond ? 'Dodaj obligacje' : 'Zapisz transakcję'}
+                {isEdit ? t('common.save') : isBond ? t('transactionModal.addBond') : t('transactionModal.save')}
               </button>
             </div>
           </div>
