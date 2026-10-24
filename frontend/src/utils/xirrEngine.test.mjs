@@ -76,6 +76,23 @@ describe('xirrEngine', () => {
       assertCloseTo(rate, 0.330267, 1e-4, 'Matches multi-DCA benchmark return (33.03%)');
     });
 
+    it('calculates accurate XIRR with SELL inflows interspersed between BUY outflows and terminal valuation', () => {
+      // 2023-01-01: BUY -1000
+      // 2023-07-02: SELL +360 (182 days)
+      // 2023-10-01: BUY -550 (273 days)
+      // 2024-01-01: Valuation +1560 (365 days)
+      // Known independent benchmark rate: 0.386886 (38.69%)
+      const flowsWithSell = [
+        { amount: -1000, date: '2023-01-01' },
+        { amount: 360, date: '2023-07-02' },
+        { amount: -550, date: '2023-10-01' },
+        { amount: 1560, date: '2024-01-01' },
+      ];
+
+      const rate = calculateXirr(flowsWithSell);
+      assertCloseTo(rate, 0.386886, 1e-4, 'Matches XIRR with interspersed SELL inflows');
+    });
+
     it('returns 0.0 for zero profit cash flows', () => {
       const flatFlows = [
         { amount: -1000, date: '2023-01-01' },
@@ -220,6 +237,28 @@ describe('xirrEngine', () => {
       assert.strictEqual(result.isSimpleFallback, false);
       assertCloseTo(result.xirr, 0.10, 1e-4);
     });
+
+    it('calculates holding XIRR when intermediate cash flows include SELL proceeds', () => {
+      // Position with an intermediate partial sale:
+      // 2023-01-01: BUY -1000
+      // 2023-07-02: SELL +360
+      // 2024-01-01: Terminal value 1000
+      // Known independent benchmark rate: 0.430834 (43.08%)
+      const holdingFlowsWithSell = [
+        { amount: -1000, date: '2023-01-01' },
+        { amount: 360, date: '2023-07-02' },
+      ];
+
+      const result = calculateHoldingXirr({
+        cashFlows: holdingFlowsWithSell,
+        currentValue: 1000,
+        terminalDate: '2024-01-01',
+      });
+
+      assert.strictEqual(result.isSimpleFallback, false);
+      assert.strictEqual(result.daysElapsed, 365);
+      assertCloseTo(result.xirr, 0.430834, 1e-4, 'Annual holding return with intermediate SELL proceeds');
+    });
   });
 
   describe('calculatePortfolioRealMetrics', () => {
@@ -304,6 +343,67 @@ describe('xirrEngine', () => {
       assertCloseTo(metricsWithPercent.inflationHurdle, metricsWithRatio.inflationHurdle, 1e-4);
       assertCloseTo(metricsWithPercent.realProfitAmount, metricsWithRatio.realProfitAmount, 1e-4);
       assertCloseTo(metricsWithPercent.realXirr, metricsWithRatio.realXirr, 1e-4);
+    });
+
+    it('handles low inflation rates (e.g. CPI = 0.8% and 0.5%) without inflating to 80% or 50%', () => {
+      // Deposit 10,000 PLN 1 year ago (365 days)
+      // CPI = 0.8 (meaning 0.8% inflation, rate = 0.008)
+      // Expected hurdle = 10000 * (1 + 0.008)^1 = 10080 PLN (NOT 18000 PLN from 80%)
+      const transactions = [{ cost: 10000, executedAt: '2023-01-01' }];
+
+      const metrics08 = calculatePortfolioRealMetrics({
+        transactions,
+        portfolioValue: 11000,
+        cpi: 0.8,
+        nominalXirr: 0.10,
+        currentDate: '2024-01-01',
+      });
+
+      assertCloseTo(metrics08.inflationHurdle, 10080, 1e-2, 'Hurdle must reflect 0.8% inflation, not 80%');
+      assertCloseTo(metrics08.realProfitAmount, 920, 1e-2, 'Real profit must be 11000 - 10080 = 920 PLN');
+      assertCloseTo(metrics08.realProfitPercent, 9.127, 1e-2, 'Real profit percent must be (920 / 10080) * 100');
+      // Fisher equation: 1.10 / 1.008 - 1 ≈ 0.09127 (9.13%)
+      assertCloseTo(metrics08.realXirr, 0.09127, 1e-4, 'Real XIRR must reflect 0.8% inflation via Fisher equation');
+
+      // CPI = 0.5 (meaning 0.5% inflation, rate = 0.005)
+      // Expected hurdle = 10000 * (1 + 0.005)^1 = 10050 PLN (NOT 15000 PLN from 50%)
+      const metrics05 = calculatePortfolioRealMetrics({
+        transactions,
+        portfolioValue: 11000,
+        cpi: 0.5,
+        nominalXirr: 0.10,
+        currentDate: '2024-01-01',
+      });
+
+      assertCloseTo(metrics05.inflationHurdle, 10050, 1e-2, 'Hurdle must reflect 0.5% inflation, not 50%');
+      assertCloseTo(metrics05.realProfitAmount, 950, 1e-2, 'Real profit must be 11000 - 10050 = 950 PLN');
+      assertCloseTo(metrics05.realProfitPercent, 9.453, 1e-2, 'Real profit percent must be (950 / 10050) * 100');
+      // Fisher equation: 1.10 / 1.005 - 1 ≈ 0.094527
+      assertCloseTo(metrics05.realXirr, 0.094527, 1e-4, 'Real XIRR must reflect 0.5% inflation via Fisher equation');
+    });
+
+    it('handles deflation (e.g. CPI = -0.5%) correctly reducing inflation hurdle', () => {
+      // Deposit 10,000 PLN 1 year ago (365 days)
+      // CPI = -0.5 (meaning -0.5% deflation, rate = -0.005)
+      // Expected hurdle = 10000 * (1 - 0.005)^1 = 9950 PLN
+      // With portfolio value = 10,500 PLN:
+      // Real profit amount = 10500 - 9950 = 550 PLN
+      // Real profit percent = (550 / 9950) * 100 ≈ 5.5276%
+      // Fisher equation: (1 + 0.05) / (1 - 0.005) - 1 = 1.05 / 0.995 - 1 ≈ 0.055276 (5.53%)
+      const transactions = [{ cost: 10000, executedAt: '2023-01-01' }];
+
+      const metricsDeflation = calculatePortfolioRealMetrics({
+        transactions,
+        portfolioValue: 10500,
+        cpi: -0.5,
+        nominalXirr: 0.05,
+        currentDate: '2024-01-01',
+      });
+
+      assertCloseTo(metricsDeflation.inflationHurdle, 9950, 1e-2, 'Deflation reduces inflation hurdle below nominal cost');
+      assertCloseTo(metricsDeflation.realProfitAmount, 550, 1e-2, 'Real profit amount in deflation');
+      assertCloseTo(metricsDeflation.realProfitPercent, 5.5276, 1e-2, 'Real profit percentage in deflation');
+      assertCloseTo(metricsDeflation.realXirr, 0.055276, 1e-4, 'Real XIRR in deflation via Fisher equation');
     });
 
     it('handles empty transaction list without throwing or division by zero', () => {
