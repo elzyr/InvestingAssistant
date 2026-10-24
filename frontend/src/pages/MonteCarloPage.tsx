@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { useAppDispatch, useAppSelector } from '../store/hooks.ts';
 import { fetchPortfolios, fetchPositions, fetchTransactions } from '../store/thunks/portfolio.thunk.ts';
 import { marketService } from '../services/market.service.ts';
-import { calculateBondCurrentPrice } from '../utils/portfolioUnifiedEngine.ts';
+import { calculateBondCurrentPrice, isBondItem } from '../utils/portfolioUnifiedEngine.ts';
 import { StressTestingView } from '../components/analytics/StressTestingView.tsx';
 
 export const MonteCarloPage = () => {
@@ -53,7 +53,7 @@ export const MonteCarloPage = () => {
   const enrichedHoldings = useMemo(() => {
     return positions.map((pos) => {
       const inst = instruments[pos.instrumentId];
-      const isBond = inst?.type === 'BOND' || pos.bondRate != null;
+      const isBond = isBondItem(pos, inst);
       const symbol = pos.seriesName || inst?.symbol || 'UNKNOWN';
       const fxRate = (pos.currency === baseCurrency ? 1 : rates[pos.currency]) || 1;
 
@@ -108,7 +108,6 @@ export const MonteCarloPage = () => {
     return sumRateVal / currentBondVal;
   }, [enrichedHoldings, currentBondVal, cpi]);
 
-  // Compute real historical DCA averages from actual user transactions
   const calculatedDca = useMemo(() => {
     if (transactions.length === 0) return { tos: 0, edo: 0, etf: 0, total: 0 };
 

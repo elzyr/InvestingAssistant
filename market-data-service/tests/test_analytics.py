@@ -1,8 +1,7 @@
 import unittest
-from unittest.mock import patch, MagicMock
+from unittest.mock import patch
 import datetime
 import asyncio
-import numpy as np
 
 class TestPortfolioStatsSeam(unittest.TestCase):
     def test_portfolio_stats_endpoint_returns_expected_metrics(self):
@@ -64,46 +63,6 @@ class TestPortfolioStatsSeam(unittest.TestCase):
 
         self.assertEqual(metrics["ter"], 0.0022)
         self.assertGreater(metrics["trailingPe"], 0)
-
-
-class TestMonteCarloSeam(unittest.TestCase):
-    def test_monte_carlo_endpoint_returns_quantile_timeline_and_fee_drag(self):
-        from app.routers.analytics_router import run_monte_carlo, MonteCarloRequest
-
-        request = MonteCarloRequest(
-            initialAmount=50000.0,
-            monthlyContribution=1500.0,
-            years=10,
-            simulationsCount=1000,
-            equityWeight=0.7,
-            equityReturn=0.09,
-            equityVolatility=0.15,
-            equityTer=0.0022,
-            bondWeight=0.3,
-            bondRate=0.065,
-            isTaxExempt=True,
-            targetGoal=300000.0
-        )
-
-        response = asyncio.run(run_monte_carlo(request))
-        res = response.model_dump() if hasattr(response, "model_dump") else response.dict()
-
-        self.assertIn("summary", res)
-        self.assertIn("timeline", res)
-
-        summary = res["summary"]
-        self.assertGreater(summary["p90Final"], summary["p50Final"])
-        self.assertGreater(summary["p50Final"], summary["p10Final"])
-        self.assertGreater(summary["totalInvested"], 50000.0)
-        self.assertGreater(summary["totalFeeDrag"], 0.0)
-        self.assertGreaterEqual(summary["successRate"], 0.0)
-        self.assertLessEqual(summary["successRate"], 1.0)
-
-        self.assertEqual(len(res["timeline"]), 10)
-        first_year = res["timeline"][0]
-        self.assertIn("year", first_year)
-        self.assertIn("p50", first_year)
-        self.assertIn("feeDrag", first_year)
 
 
 class TestSqliteRepositorySeam(unittest.TestCase):

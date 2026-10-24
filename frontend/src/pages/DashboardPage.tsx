@@ -18,7 +18,9 @@ import { marketService } from '../services/market.service.ts';
 import {
   generateUnifiedPortfolioTimeline,
   calculateBondCurrentPrice,
+  isBondItem,
 } from '../utils/portfolioUnifiedEngine.ts';
+import { formatMoney } from '../utils/reportsFormatters.ts';
 import {
   calculateHoldingXirr,
   calculatePortfolioRealMetrics,
@@ -39,13 +41,6 @@ import type {
 } from '../types/dashboard.ts';
 import type { TransactionResponse } from '../types/portfolio.ts';
 import type { PortfolioStatsResponse } from '../types/analytics.types.ts';
-
-function formatMoney(amount: number, currency: string, showSign = false): string {
-  const rounded = Math.round(amount);
-  const sign = showSign && rounded > 0 ? '+' : rounded < 0 ? '-' : '';
-  const absFormatted = Math.abs(rounded).toString().replace(/\B(?=(\d{3})+(?!\d))/g, ' ');
-  return `${sign}${absFormatted} ${currency}`;
-}
 
 function getTransactionCashFlow(
   tx: TransactionResponse,
@@ -146,7 +141,7 @@ export const DashboardPage = () => {
   const enrichedHoldings = useMemo(() => {
     return positions.map((pos) => {
       const inst = instruments[pos.instrumentId];
-      const isBond = inst?.type === 'BOND' || pos.bondRate != null;
+      const isBond = isBondItem(pos, inst);
       const symbol = pos.seriesName || inst?.symbol || 'UNKNOWN';
       const fxRate = (pos.currency === baseCurrency ? 1 : rates[pos.currency]) || 1;
 

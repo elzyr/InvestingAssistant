@@ -1,7 +1,7 @@
-from typing import List, Optional, Dict, Any
+from typing import List, Optional
 from fastapi import APIRouter
 from fastapi.concurrency import run_in_threadpool
-from pydantic import BaseModel, Field
+from pydantic import BaseModel
 from app.services.analytics_service import AnalyticsService
 
 router = APIRouter()
@@ -36,40 +36,6 @@ class PortfolioStatsResponse(BaseModel):
     portfolioBeta: float
     instruments: List[InstrumentMetricItem] = []
 
-class MonteCarloRequest(BaseModel):
-    initialAmount: float = 50000.0
-    monthlyContribution: float = 0.0
-    years: int = 10
-    simulationsCount: int = 1000
-    equityWeight: float = 1.0
-    equityReturn: float = 0.08
-    equityVolatility: float = 0.15
-    equityTer: float = 0.002
-    bondWeight: float = 0.0
-    bondRate: float = 0.06
-    isTaxExempt: bool = True
-    targetGoal: Optional[float] = None
-
-class QuantileSummary(BaseModel):
-    p10Final: float
-    p50Final: float
-    p90Final: float
-    totalInvested: float
-    totalFeeDrag: float
-    successRate: float
-
-class TimelinePoint(BaseModel):
-    year: int
-    p10: float
-    p50: float
-    p90: float
-    feeDrag: float
-    invested: float
-
-class MonteCarloResponse(BaseModel):
-    summary: QuantileSummary
-    timeline: List[TimelinePoint]
-
 @router.post("/portfolio-stats", response_model=PortfolioStatsResponse)
 async def calculate_portfolio_stats(request: PortfolioStatsRequest) -> PortfolioStatsResponse:
     metrics = await run_in_threadpool(
@@ -78,22 +44,3 @@ async def calculate_portfolio_stats(request: PortfolioStatsRequest) -> Portfolio
         benchmark_symbol=request.benchmarkSymbol or "SPY",
     )
     return PortfolioStatsResponse(**metrics)
-
-@router.post("/monte-carlo", response_model=MonteCarloResponse)
-async def run_monte_carlo(request: MonteCarloRequest) -> MonteCarloResponse:
-    result = await run_in_threadpool(
-        AnalyticsService.simulate_monte_carlo,
-        initial_amount=request.initialAmount,
-        monthly_contribution=request.monthlyContribution,
-        years=request.years,
-        simulations_count=request.simulationsCount,
-        equity_weight=request.equityWeight,
-        equity_return=request.equityReturn,
-        equity_volatility=request.equityVolatility,
-        equity_ter=request.equityTer,
-        bond_weight=request.bondWeight,
-        bond_rate=request.bondRate,
-        is_tax_exempt=request.isTaxExempt,
-        target_goal=request.targetGoal,
-    )
-    return MonteCarloResponse(**result)

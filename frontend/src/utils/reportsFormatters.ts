@@ -15,6 +15,21 @@ const pctFormatter = new Intl.NumberFormat('pl-PL', {
   maximumFractionDigits: 2,
 });
 
+export function formatNumberWithSpaces(val: number): string {
+  return Math.round(val).toString().replace(/\B(?=(\d{3})+(?!\d))/g, ' ');
+}
+
+export function formatSignedNumberWithSpaces(val: number): string {
+  const rounded = Math.round(val);
+  const sign = rounded > 0 ? '+' : rounded < 0 ? '-' : '';
+  const abs = Math.abs(rounded).toString().replace(/\B(?=(\d{3})+(?!\d))/g, ' ');
+  return `${sign}${abs}`;
+}
+
+export function formatMoney(amount: number, currency: string, showSign = false): string {
+  return `${ showSign ? formatSignedNumberWithSpaces(amount) : formatNumberWithSpaces(amount) } ${currency}`;
+}
+
 export function formatPLN(amount: number, forceSign = false, currency = 'PLN'): string {
   const fmt = formatters[currency] || formatters['PLN'];
   const formatted = fmt.format(Math.abs(amount));

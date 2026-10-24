@@ -19,7 +19,7 @@ export interface AuthResponse {
   refreshToken: string;
   tokenType: string;
   expiresIn: number;
-  user?: UserProfileResponse;
+  user: UserProfileResponse;
 }
 
 export interface UserProfileResponse {

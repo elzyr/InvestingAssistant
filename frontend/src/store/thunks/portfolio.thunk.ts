@@ -1,7 +1,9 @@
 import { createAsyncThunk } from '@reduxjs/toolkit';
+import { isAxiosError } from 'axios';
 import { portfolioService } from '../../services/portfolio.service.ts';
 import { instrumentService } from '../../services/instrument.service.ts';
 import { marketService, type PriceQuote } from '../../services/market.service.ts';
+import { isBondItem } from '../../utils/portfolioUnifiedEngine.ts';
 import type {
   PortfolioResponse,
   PositionResponse,
@@ -10,8 +12,14 @@ import type {
 } from '../../types/portfolio.ts';
 import type { InstrumentResponse } from '../../types/instrument.ts';
 import type { Currency } from '../../types/auth.ts';
+import type { RootState, AppDispatch } from '../store.ts';
 
-import { isAxiosError } from 'axios';
+function getErrorMessage(error: unknown, fallback: string): string {
+  if (isAxiosError<{ message?: string }>(error)) {
+    return error.response?.data?.message || error.message || fallback;
+  }
+  return fallback;
+}
 
 export const fetchPortfolios = createAsyncThunk<
   PortfolioResponse[],
@@ -29,16 +37,9 @@ export const fetchPortfolios = createAsyncThunk<
     }
     return portfolios;
   } catch (error: unknown) {
-    if (isAxiosError<{ message?: string }>(error)) {
-      return rejectWithValue(
-        error.response?.data?.message || error.message || 'Nie udało się pobrać portfeli'
-      );
-    }
-    return rejectWithValue('Nie udało się pobrać portfeli');
+    return rejectWithValue(getErrorMessage(error, 'Nie udało się pobrać portfeli'));
   }
 });
-
-import type { RootState, AppDispatch } from '../store.ts';
 
 export const fetchPositions = createAsyncThunk<
   {
@@ -85,10 +86,9 @@ export const fetchPositions = createAsyncThunk<
           // Quote fallback
         }
 
-        const isBond = inst.type === 'BOND';
         const alreadyHasHistory = !!currentState.historicalPrices[inst.symbol];
 
-        if (!isBond && !inst.symbol.startsWith('PL_BOND') && !alreadyHasHistory) {
+        if (!isBondItem({}, inst) && !alreadyHasHistory) {
           try {
             const hist = await marketService.getHistoricalPrices(inst.symbol, '5y', '1d');
             if (hist && Array.isArray(hist.history) && hist.history.length > 0) {
@@ -138,12 +138,7 @@ export const fetchPositions = createAsyncThunk<
       historicalSortedDates,
     };
   } catch (error: unknown) {
-    if (isAxiosError<{ message?: string }>(error)) {
-      return rejectWithValue(
-        error.response?.data?.message || error.message || 'Nie udało się pobrać pozycji'
-      );
-    }
-    return rejectWithValue('Nie udało się pobrać pozycji');
+    return rejectWithValue(getErrorMessage(error, 'Nie udało się pobrać pozycji'));
   }
 });
 
@@ -155,12 +150,7 @@ export const fetchTransactions = createAsyncThunk<
   try {
     return await portfolioService.getTransactions(portfolioId);
   } catch (error: unknown) {
-    if (isAxiosError<{ message?: string }>(error)) {
-      return rejectWithValue(
-        error.response?.data?.message || error.message || 'Nie udało się pobrać transakcji'
-      );
-    }
-    return rejectWithValue('Nie udało się pobrać transakcji');
+    return rejectWithValue(getErrorMessage(error, 'Nie udało się pobrać transakcji'));
   }
 });
 
@@ -177,12 +167,7 @@ export const createTransaction = createAsyncThunk<
       dispatch(fetchTransactions(portfolioId));
       return response;
     } catch (error: unknown) {
-      if (isAxiosError<{ message?: string }>(error)) {
-        return rejectWithValue(
-          error.response?.data?.message || error.message || 'Nie udało się zapisać transakcji'
-        );
-      }
-      return rejectWithValue('Nie udało się zapisać transakcji');
+      return rejectWithValue(getErrorMessage(error, 'Nie udało się zapisać transakcji'));
     }
   }
 );
@@ -200,12 +185,7 @@ export const updateTransaction = createAsyncThunk<
       dispatch(fetchTransactions(portfolioId));
       return response;
     } catch (error: unknown) {
-      if (isAxiosError<{ message?: string }>(error)) {
-        return rejectWithValue(
-          error.response?.data?.message || error.message || 'Nie udało się zaktualizować transakcji'
-        );
-      }
-      return rejectWithValue('Nie udało się zaktualizować transakcji');
+      return rejectWithValue(getErrorMessage(error, 'Nie udało się zaktualizować transakcji'));
     }
   }
 );
@@ -222,12 +202,7 @@ export const deleteTransaction = createAsyncThunk<
       dispatch(fetchPositions(portfolioId));
       dispatch(fetchTransactions(portfolioId));
     } catch (error: unknown) {
-      if (isAxiosError<{ message?: string }>(error)) {
-        return rejectWithValue(
-          error.response?.data?.message || error.message || 'Nie udało się usunąć transakcji'
-        );
-      }
-      return rejectWithValue('Nie udało się usunąć transakcji');
+      return rejectWithValue(getErrorMessage(error, 'Nie udało się usunąć transakcji'));
     }
   }
 );
@@ -238,15 +213,8 @@ export const createPortfolio = createAsyncThunk<
   { rejectValue: string }
 >('portfolio/createPortfolio', async (request, { rejectWithValue }) => {
   try {
-    const response = await portfolioService.createPortfolio(request);
-    return response;
+    return await portfolioService.createPortfolio(request);
   } catch (error: unknown) {
-    if (isAxiosError<{ message?: string }>(error)) {
-      return rejectWithValue(
-        error.response?.data?.message || error.message || 'Nie udało się utworzyć portfela'
-      );
-    }
-    return rejectWithValue('Nie udało się utworzyć portfela');
+    return rejectWithValue(getErrorMessage(error, 'Nie udało się utworzyć portfela'));
   }
 });
-
