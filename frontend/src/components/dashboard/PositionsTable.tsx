@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { useTranslation } from 'react-i18next';
 import { ChevronDown, Pencil } from 'lucide-react';
 import type { Position, TaxMode } from '../../types/dashboard.ts';
 
@@ -9,12 +10,28 @@ interface PositionRowProps {
   onEditTransaction?: (transactionId: string) => void;
 }
 
+const formatReturnWithXirr = (
+  profitPercentFormatted: string,
+  xirr?: number | null,
+  isXirrFallback?: boolean,
+  unit = 'r/r'
+): string => {
+  const base = profitPercentFormatted.replace(/\s*\(.*?\)/, '').trim();
+  if (xirr != null && !isXirrFallback) {
+    const xirrVal = (xirr * 100).toFixed(1);
+    return `${base} (${xirrVal}% ${unit})`;
+  }
+  return base;
+};
+
 const PositionRow = ({
   position,
   isExpanded,
   onToggle,
   onEditTransaction,
 }: PositionRowProps) => {
+  const { t } = useTranslation();
+  const annualizedUnit = t('dashboard.annualizedReturn', 'r/r');
   const isExpandable = Boolean(
     position.subPositions &&
     (position.subPositionsType === 'bonds_yearly'
@@ -37,6 +54,16 @@ const PositionRow = ({
           <span className="text-xs text-zinc-400">
             {position.quantityFormatted} • {position.name}
           </span>
+          {position.fxDecomposition && (
+            <div className="mt-1 flex items-center gap-1 font-mono text-[10px] text-zinc-400">
+              <span className="bg-zinc-800/80 px-1.5 py-0.5 rounded border border-zinc-700/50">
+                {t('dashboard.market', 'Rynek')}: {position.fxDecomposition.marketReturnPct >= 0 ? '+' : ''}
+                {position.fxDecomposition.marketReturnPct.toFixed(1)}% · {t('dashboard.fx', 'FX')}:{' '}
+                {position.fxDecomposition.fxReturnPct >= 0 ? '+' : ''}
+                {position.fxDecomposition.fxReturnPct.toFixed(1)}%
+              </span>
+            </div>
+          )}
         </div>
 
         <div className="text-right font-mono font-medium text-xs text-zinc-300">
@@ -56,7 +83,7 @@ const PositionRow = ({
             {position.profitFormatted}
           </span>
           <span className={`font-mono text-[11px] font-medium ${position.isProfit ? 'text-emerald-400/90' : 'text-rose-400/90'}`}>
-            {position.profitPercentFormatted}
+            {formatReturnWithXirr(position.profitPercentFormatted, position.xirr, position.isXirrFallback, annualizedUnit)}
           </span>
         </div>
 
@@ -105,6 +132,16 @@ const PositionRow = ({
                   {sub.subName && (
                     <span className="text-zinc-400 text-[11px] block">{sub.subName}</span>
                   )}
+                  {sub.fxDecomposition && (
+                    <div className="mt-0.5 flex items-center gap-1 font-mono text-[10px] text-zinc-400">
+                      <span className="bg-zinc-800/60 px-1.5 py-0.2 rounded border border-zinc-700/40">
+                        {t('dashboard.market', 'Rynek')}: {sub.fxDecomposition.marketReturnPct >= 0 ? '+' : ''}
+                        {sub.fxDecomposition.marketReturnPct.toFixed(1)}% · {t('dashboard.fx', 'FX')}:{' '}
+                        {sub.fxDecomposition.fxReturnPct >= 0 ? '+' : ''}
+                        {sub.fxDecomposition.fxReturnPct.toFixed(1)}%
+                      </span>
+                    </div>
+                  )}
                 </div>
 
                 <div className="text-right font-mono">
@@ -135,7 +172,7 @@ const PositionRow = ({
                     {sub.profitFormatted}
                   </span>
                   <span className={`text-[11px] font-medium block ${isSubProfit ? 'text-emerald-400/90' : 'text-rose-400/90'}`}>
-                    {sub.profitPercentFormatted}
+                    {formatReturnWithXirr(sub.profitPercentFormatted, sub.xirr, sub.isXirrFallback, annualizedUnit)}
                   </span>
                 </div>
 

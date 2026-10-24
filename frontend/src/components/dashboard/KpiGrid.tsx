@@ -1,3 +1,4 @@
+import { useTranslation } from 'react-i18next';
 import type { PortfolioSummary } from '../../types/dashboard.ts';
 
 interface KpiCardProps {
@@ -50,6 +51,8 @@ interface KpiGridProps {
 }
 
 export const KpiGrid = ({ summary }: KpiGridProps) => {
+  const { t } = useTranslation();
+
   return (
     <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5 items-stretch">
       <KpiCard
@@ -75,7 +78,7 @@ export const KpiGrid = ({ summary }: KpiGridProps) => {
       />
 
       <KpiCard
-        title="Zysk realny (vs CPI)"
+        title={t('dashboard.realProfitVsCpi', 'Zysk realny (vs CPI)')}
         value={summary.realProfitAmountFormatted}
         subValue={summary.realProfitPercentFormatted}
         isAccent={true}
