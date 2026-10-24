@@ -61,7 +61,19 @@
     "assetStructure": "Struktura Aktywów",
     "holdingsTitle": "Pozycje w Portfelu i Trendy 7D",
     "holdingsSubtitle": "Automatyczny przelicznik zysków z uwzględnieniem kursu walutowego transakcji",
-    "searchPlaceholder": "Szukaj tickera..."
+    "searchPlaceholder": "Szukaj tickera...",
+    "annualizedReturn": "r/r",
+    "aboveCpi": "ponad CPI",
+    "market": "Rynek",
+    "fx": "FX",
+    "sortByValue": "Sortuj po: Wartości",
+    "sortByProfit": "Sortuj po: Zysku",
+    "sortByShare": "Sortuj po: Udziału",
+    "sortByName": "Sortuj po: Nazwy",
+    "sortByXirr": "Sortuj po: XIRR",
+    "afterTax": "po podatku",
+    "return": "zwrotu",
+    "realProfitVsCpi": "Zysk realny (vs CPI)"
   },
   "monteCarlo": {
     "title": "Symulacje Przyszłości Portfela — Monte Carlo",

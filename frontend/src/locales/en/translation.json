@@ -61,7 +61,19 @@
     "assetStructure": "Asset Structure",
     "holdingsTitle": "Portfolio Holdings & 7D Trends",
     "holdingsSubtitle": "Automatic multi-currency profit calculation including historical FX rates",
-    "searchPlaceholder": "Search ticker..."
+    "searchPlaceholder": "Search ticker...",
+    "annualizedReturn": "p.a.",
+    "aboveCpi": "above CPI",
+    "market": "Market",
+    "fx": "FX",
+    "sortByValue": "Sort by: Value",
+    "sortByProfit": "Sort by: Profit",
+    "sortByShare": "Sort by: Share",
+    "sortByName": "Sort by: Name",
+    "sortByXirr": "Sort by: XIRR",
+    "afterTax": "after tax",
+    "return": "return",
+    "realProfitVsCpi": "Real profit (vs CPI)"
   },
   "monteCarlo": {
     "title": "Portfolio Future Simulations — Monte Carlo",

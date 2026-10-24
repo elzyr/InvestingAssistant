@@ -1,4 +1,5 @@
 import { useState, useEffect, useMemo, useRef } from 'react';
+import { useTranslation } from 'react-i18next';
 import { useAppDispatch, useAppSelector } from '../store/hooks.ts';
 import {
   fetchPortfolios,
@@ -18,6 +19,12 @@ import {
   generateUnifiedPortfolioTimeline,
   calculateBondCurrentPrice,
 } from '../utils/portfolioUnifiedEngine.ts';
+import {
+  calculateHoldingXirr,
+  calculatePortfolioRealMetrics,
+  calculateFxDecomposition,
+  type CashFlow,
+} from '../utils/xirrEngine.ts';
 import type {
   PortfolioSummary,
   Position,
@@ -40,8 +47,24 @@ function formatMoney(amount: number, currency: string, showSign = false): string
   return `${sign}${absFormatted} ${currency}`;
 }
 
+function getTransactionCashFlow(
+  tx: TransactionResponse,
+  baseCurrency: string,
+  rates: Record<string, number>
+): { amount: number; isOutflow: boolean } {
+  const fx = (tx.currency === baseCurrency ? 1 : rates[tx.currency]) || 1;
+  if (tx.transactionType === 'BUY') {
+    const cost = tx.baseAmount ?? (tx.quantity * tx.price + (tx.commission || 0)) * fx;
+    return { amount: cost, isOutflow: true };
+  } else {
+    const proceeds = tx.baseAmount ?? (tx.quantity * tx.price - (tx.commission || 0)) * fx;
+    return { amount: proceeds, isOutflow: false };
+  }
+}
+
 export const DashboardPage = () => {
   const dispatch = useAppDispatch();
+  const { t } = useTranslation();
   const { user } = useAppSelector((state) => state.auth);
 
   const {
@@ -285,18 +308,52 @@ export const DashboardPage = () => {
 
     const nonBonds = enrichedHoldings.filter((h) => !h.isBond);
     for (const h of nonBonds) {
-      const holdingTransactions = transactions
-        .filter((t) => t.instrumentId === h.instrumentId && t.transactionType === 'BUY')
+      const allHoldingTransactions = transactions
+        .filter((t) => t.instrumentId === h.instrumentId)
         .sort((a, b) => new Date(a.executedAt).getTime() - new Date(b.executedAt).getTime());
 
-      const subPositions: SubPosition[] = holdingTransactions.map((tx) => {
+      const buyTransactions = allHoldingTransactions.filter((t) => t.transactionType === 'BUY');
+
+      const isForeign = h.currency !== baseCurrency;
+      const currentFx = (isForeign ? rates[h.currency] : 1) || 1;
+
+      const subPositions: SubPosition[] = buyTransactions.map((tx) => {
+        const { amount: txCost } = getTransactionCashFlow(tx, baseCurrency, rates);
         const fx = (tx.currency === baseCurrency ? 1 : rates[tx.currency]) || 1;
-        const txCost = tx.baseAmount ?? (tx.quantity * tx.price + (tx.commission || 0)) * fx;
         const txVal = tx.quantity * h.currentPrice * fx;
         const txProfitGross = txVal - txCost;
         const txTax = shouldApplyTax && txProfitGross > 0 ? txProfitGross * 0.19 : 0;
         const txProfit = txProfitGross - txTax;
         const txProfitPct = txCost > 0 ? (txProfit / txCost) * 100 : 0;
+        const txNetVal = txVal - txTax;
+
+        const subXirrResult = calculateHoldingXirr(
+          [{ amount: -txCost, date: tx.executedAt }],
+          txNetVal,
+          nowTimestamp
+        );
+
+        let subDecomp: { marketReturnPct: number; fxReturnPct: number } | null = null;
+        if (isForeign) {
+          const txBuyFx =
+            tx.exchangeRate ||
+            (tx.baseAmount && tx.quantity * tx.price > 0
+              ? tx.baseAmount / (tx.quantity * tx.price)
+              : rates[tx.currency]) ||
+            1;
+          const decomp = calculateFxDecomposition({
+            buyPrice: tx.price,
+            currentPrice: h.currentPrice,
+            buyExchangeRate: txBuyFx,
+            currentExchangeRate: currentFx,
+          });
+          if (decomp) {
+            subDecomp = {
+              marketReturnPct: decomp.marketReturnPct,
+              fxReturnPct: decomp.fxReturnPct,
+            };
+          }
+        }
 
         return {
           id: tx.id,
@@ -308,6 +365,9 @@ export const DashboardPage = () => {
           profitFormatted: `${txProfit >= 0 ? '+' : ''}${txProfit.toLocaleString('pl-PL', { maximumFractionDigits: 0 })} ${baseCurrency}`,
           profitPercentFormatted: `${txProfitPct >= 0 ? '+' : ''}${txProfitPct.toFixed(1)}%`,
           transactionId: tx.id,
+          xirr: subXirrResult.xirr,
+          isXirrFallback: subXirrResult.isSimpleFallback,
+          fxDecomposition: subDecomp,
         };
       });
 
@@ -315,6 +375,38 @@ export const DashboardPage = () => {
       const posTax = shouldApplyTax && posProfitGross > 0 ? posProfitGross * 0.19 : 0;
       const posProfit = posProfitGross - posTax;
       const posProfitPct = h.totalCost > 0 ? (posProfit / h.totalCost) * 100 : 0;
+      const posNetVal = h.totalValue - posTax;
+
+      const parentCashFlows: CashFlow[] = allHoldingTransactions.map((tx) => {
+        const { amount, isOutflow } = getTransactionCashFlow(tx, baseCurrency, rates);
+        return { amount: isOutflow ? -amount : amount, date: tx.executedAt };
+      });
+      if (parentCashFlows.length === 0 && h.totalCost > 0) {
+        parentCashFlows.push({ amount: -h.totalCost, date: h.purchaseDate || nowTimestamp });
+      }
+
+      const posHoldingResult = calculateHoldingXirr(parentCashFlows, posNetVal, nowTimestamp);
+
+      let parentDecomp: { marketReturnPct: number; fxReturnPct: number } | null = null;
+      if (isForeign) {
+        const foreignTotalCost = h.quantity * h.averagePrice;
+        const avgBuyFx =
+          foreignTotalCost > 0 && h.totalCost > 0
+            ? h.totalCost / foreignTotalCost
+            : rates[h.currency] || 1;
+        const decomp = calculateFxDecomposition({
+          buyPrice: h.averagePrice,
+          currentPrice: h.currentPrice,
+          buyExchangeRate: avgBuyFx,
+          currentExchangeRate: currentFx,
+        });
+        if (decomp) {
+          parentDecomp = {
+            marketReturnPct: decomp.marketReturnPct,
+            fxReturnPct: decomp.fxReturnPct,
+          };
+        }
+      }
 
       list.push({
         id: h.id,
@@ -330,6 +422,9 @@ export const DashboardPage = () => {
         isProfit: posProfit >= 0,
         subPositionsType: 'purchases',
         subPositions,
+        xirr: posHoldingResult.xirr,
+        isXirrFallback: posHoldingResult.isSimpleFallback,
+        fxDecomposition: parentDecomp,
       });
     }
 
@@ -398,6 +493,7 @@ export const DashboardPage = () => {
         yearlyGroups[year].push(item);
       });
 
+      const yearlyCashFlows: CashFlow[] = [];
       const subPositions: SubPosition[] = Object.entries(yearlyGroups)
         .sort(([yA], [yB]) => Number(yB) - Number(yA))
         .map(([year, yearItems]) => {
@@ -408,6 +504,7 @@ export const DashboardPage = () => {
           const yTax = shouldApplyTax && yProfitGross > 0 ? yProfitGross * 0.19 : 0;
           const yProfit = yProfitGross - yTax;
           const yProfitPct = yCost > 0 ? (yProfit / yCost) * 100 : 0;
+          const yNetVal = yVal - yTax;
           const yPrice = yQty > 0 ? yVal / yQty : 100;
           const yShare = totalPortfolioValue > 0 ? (yVal / totalPortfolioValue) * 100 : 0;
           const purchaseYear = Number(year);
@@ -424,6 +521,25 @@ export const DashboardPage = () => {
               ? yearTransactions[0]
               : undefined;
 
+          const yearFlows: CashFlow[] = [];
+          if (yearTransactions.length > 0) {
+            yearTransactions.forEach((tx) => {
+              const { amount } = getTransactionCashFlow(tx, baseCurrency, rates);
+              yearFlows.push({ amount: -amount, date: tx.executedAt });
+            });
+          } else {
+            yearItems.forEach((item) => {
+              yearFlows.push({
+                amount: -item.totalCost,
+                date: item.purchaseDate || `${year}-01-01`,
+              });
+            });
+          }
+
+          yearlyCashFlows.push(...yearFlows);
+
+          const yHoldingResult = calculateHoldingXirr(yearFlows, yNetVal, nowTimestamp);
+
           return {
             id: `${family}-${year}`,
             name: `Rocznik ${year}`,
@@ -435,8 +551,17 @@ export const DashboardPage = () => {
             profitFormatted: formatMoney(yProfit, baseCurrency, true),
             profitPercentFormatted: `+${yProfitPct.toFixed(1)}%`,
             transactionId: yearTx?.id,
+            xirr: yHoldingResult.xirr,
+            isXirrFallback: yHoldingResult.isSimpleFallback,
+            fxDecomposition: null,
           };
         });
+
+      const familyHoldingResult = calculateHoldingXirr(
+        yearlyCashFlows,
+        sumVal - bondTax,
+        nowTimestamp
+      );
 
       list.push({
         id: `bond-${family}`,
@@ -452,11 +577,14 @@ export const DashboardPage = () => {
         isProfit: true,
         subPositionsType: 'bonds_yearly',
         subPositions,
+        xirr: familyHoldingResult.xirr,
+        isXirrFallback: familyHoldingResult.isSimpleFallback,
+        fxDecomposition: null,
       });
     });
 
     return list;
-  }, [enrichedHoldings, transactions, totalPortfolioValue, baseCurrency, rates, shouldApplyTax]);
+  }, [enrichedHoldings, transactions, totalPortfolioValue, baseCurrency, rates, shouldApplyTax, nowTimestamp]);
 
   const dashboardSummary = useMemo((): PortfolioSummary => {
     const grossProfit = totalPortfolioValue - totalPortfolioCost;
@@ -472,19 +600,62 @@ export const DashboardPage = () => {
 
     const profit = grossProfit - totalBelkaTax;
     const profitPct = totalPortfolioCost > 0 ? (profit / totalPortfolioCost) * 100 : 0;
+    const netPortfolioVal = totalPortfolioValue - totalBelkaTax;
 
-    const earliestDate = enrichedHoldings.reduce((min, h) => {
-      if (!h.purchaseDate) return min;
-      const t = new Date(h.purchaseDate).getTime();
-      return t < min ? t : min;
-    }, nowTimestamp);
+    const portfolioFlows: CashFlow[] = [];
+    const hurdleTransactions: { cost: number; executedAt: string | Date | number }[] = [];
 
-    const yearsElapsed = Math.max(0.08, (nowTimestamp - earliestDate) / (1000 * 60 * 60 * 24 * 365));
-    const inflationMultiplier = Math.pow(1 + (cpi ?? 3.6) / 100, yearsElapsed);
-    const inflationThreshold = totalPortfolioCost * inflationMultiplier;
-    const inflationImpact = inflationThreshold - totalPortfolioCost;
-    const realProfit = profit - inflationImpact;
-    const realProfitPct = profitPct - (cpi ?? 3.6) * yearsElapsed;
+    const txInstrumentIds = new Set(transactions.map((t) => t.instrumentId));
+
+    transactions.forEach((tx) => {
+      const { amount, isOutflow } = getTransactionCashFlow(tx, baseCurrency, rates);
+      portfolioFlows.push({ amount: isOutflow ? -amount : amount, date: tx.executedAt });
+    });
+
+    enrichedHoldings.forEach((h) => {
+      if (!txInstrumentIds.has(h.instrumentId) && h.totalCost > 0) {
+        const execDate = h.purchaseDate || nowTimestamp;
+        portfolioFlows.push({ amount: -h.totalCost, date: execDate });
+      }
+    });
+
+    const activeHoldings = enrichedHoldings.filter((h) => h.quantity > 0 && h.totalCost > 0);
+    for (const h of activeHoldings) {
+      const holdingBuyTxs = transactions.filter(
+        (t) => t.instrumentId === h.instrumentId && t.transactionType === 'BUY'
+      );
+      if (holdingBuyTxs.length > 0) {
+        const totalBuyCost = holdingBuyTxs.reduce((sum, tx) => {
+          const { amount } = getTransactionCashFlow(tx, baseCurrency, rates);
+          return sum + amount;
+        }, 0);
+        const scale = totalBuyCost > 0 ? Math.min(1, h.totalCost / totalBuyCost) : 1;
+        holdingBuyTxs.forEach((tx) => {
+          const { amount } = getTransactionCashFlow(tx, baseCurrency, rates);
+          hurdleTransactions.push({ cost: amount * scale, executedAt: tx.executedAt });
+        });
+      } else {
+        hurdleTransactions.push({
+          cost: h.totalCost,
+          executedAt: h.purchaseDate || nowTimestamp,
+        });
+      }
+    }
+
+    const portfolioHoldingRes = calculateHoldingXirr(
+      portfolioFlows,
+      netPortfolioVal,
+      nowTimestamp
+    );
+    const nominalXirr = portfolioHoldingRes.xirr;
+
+    const realMetrics = calculatePortfolioRealMetrics({
+      transactions: hurdleTransactions,
+      portfolioValue: netPortfolioVal,
+      cpi: cpi ?? 3.6,
+      nominalXirr,
+      currentDate: nowTimestamp,
+    });
 
     const taxNoteFormatted = shouldApplyTax
       ? `Belka: -${formatMoney(totalBelkaTax, baseCurrency)}`
@@ -496,21 +667,57 @@ export const DashboardPage = () => {
     const prevPortfolioVal = totalPortfolioValue - totalDailyChange;
     const dailyChangePct = prevPortfolioVal > 0 ? (totalDailyChange / prevPortfolioVal) * 100 : 0;
 
+    const annualizedUnit = t('dashboard.annualizedReturn', 'r/r');
+    const aboveCpiUnit = t('dashboard.aboveCpi', 'ponad CPI');
+    const taxNoteSuffix = shouldApplyTax ? t('dashboard.afterTax', 'po podatku') : t('dashboard.return', 'zwrotu');
+
+    let totalProfitPercentFormatted: string;
+    if (nominalXirr != null && !portfolioHoldingRes.isSimpleFallback) {
+      const xirrPct = (nominalXirr * 100).toFixed(1);
+      totalProfitPercentFormatted = `${profitPct >= 0 ? '+' : ''}${profitPct.toFixed(1)}% · ${xirrPct}% ${annualizedUnit}`;
+    } else {
+      totalProfitPercentFormatted = `${profitPct >= 0 ? '+' : ''}${profitPct.toFixed(1)}% ${taxNoteSuffix}`;
+    }
+
+    let realProfitPercentFormatted: string;
+    if (realMetrics.realXirr != null && !portfolioHoldingRes.isSimpleFallback) {
+      const realXirrPct = (realMetrics.realXirr * 100).toFixed(1);
+      realProfitPercentFormatted = `${realMetrics.realProfitPercent >= 0 ? '+' : ''}${realMetrics.realProfitPercent.toFixed(1)}% ${aboveCpiUnit} · ${realXirrPct}% ${annualizedUnit}`;
+    } else {
+      realProfitPercentFormatted = `${realMetrics.realProfitPercent >= 0 ? '+' : ''}${realMetrics.realProfitPercent.toFixed(1)}% ${aboveCpiUnit}`;
+    }
+
     return {
       portfolioValueFormatted: formatMoney(totalPortfolioValue, baseCurrency),
       dailyChangeAmountFormatted: formatMoney(totalDailyChange, baseCurrency, true),
       dailyChangePercentFormatted: `${totalDailyChange >= 0 ? '+' : ''}${dailyChangePct.toFixed(2)}% dzisiaj`,
       totalCostFormatted: formatMoney(totalPortfolioCost, baseCurrency),
       totalProfitAmountFormatted: formatMoney(profit, baseCurrency, true),
-      totalProfitPercentFormatted: `${profitPct >= 0 ? '+' : ''}${profitPct.toFixed(1)}% ${shouldApplyTax ? 'po podatku' : 'zwrotu'}`,
-      realProfitAmountFormatted: formatMoney(realProfit, baseCurrency, true),
-      realProfitPercentFormatted: `${realProfitPct >= 0 ? '+' : ''}${realProfitPct.toFixed(1)}% ponad inflację`,
+      totalProfitPercentFormatted,
+      realProfitAmountFormatted: formatMoney(realMetrics.realProfitAmount, baseCurrency, true),
+      realProfitPercentFormatted,
       positionCount: positions.length,
       taxMode,
       profitLabel: shouldApplyTax ? 'Zysk netto' : 'Zysk brutto',
       taxNoteFormatted,
+      nominalXirr,
+      realXirr: realMetrics.realXirr,
     };
-  }, [totalPortfolioValue, totalPortfolioCost, enrichedHoldings, baseCurrency, cpi, positions.length, taxMode, shouldApplyTax, isIkeAccount, nowTimestamp]);
+  }, [
+    totalPortfolioValue,
+    totalPortfolioCost,
+    enrichedHoldings,
+    transactions,
+    baseCurrency,
+    rates,
+    cpi,
+    positions.length,
+    taxMode,
+    shouldApplyTax,
+    isIkeAccount,
+    nowTimestamp,
+    t,
+  ]);
 
   const chartData = useMemo(() => {
     const instrumentPrices: Record<string, number> = {};
@@ -588,6 +795,14 @@ export const DashboardPage = () => {
           return profitB - profitA;
         }
         if (sortBy === 'name') return a.ticker.localeCompare(b.ticker);
+        if (sortBy === 'xirr') {
+          const hasA = a.xirr != null && !a.isXirrFallback;
+          const hasB = b.xirr != null && !b.isXirrFallback;
+          if (!hasA && !hasB) return b.sharePercent - a.sharePercent;
+          if (!hasA) return 1;
+          if (!hasB) return -1;
+          return b.xirr! - a.xirr!;
+        }
         return b.sharePercent - a.sharePercent;
       });
   }, [dashboardPositions, searchQuery, activeFilter, sortBy]);

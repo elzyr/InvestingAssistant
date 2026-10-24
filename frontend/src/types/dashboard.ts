@@ -1,5 +1,5 @@
 export type AssetFilterType = 'ALL' | 'ETF' | 'BOND' | 'STOCK';
-export type SortOption = 'value' | 'profit' | 'share' | 'name';
+export type SortOption = 'value' | 'profit' | 'share' | 'name' | 'xirr';
 export type TaxMode = 'NETTO' | 'BRUTTO';
 export type TimeframeOption = '1M' | '3M' | '6M' | 'YTD' | '1R' | 'MAX';
 export type ChartMetricMode = 'PLN' | 'PERCENT';
@@ -38,6 +38,9 @@ export interface SubPosition {
   profitFormatted: string;
   profitPercentFormatted: string;
   transactionId?: string;
+  xirr?: number | null;
+  isXirrFallback?: boolean;
+  fxDecomposition?: { marketReturnPct: number; fxReturnPct: number } | null;
 }
 
 export interface Position {
@@ -54,6 +57,9 @@ export interface Position {
   isProfit: boolean;
   subPositionsType?: 'bonds_yearly' | 'purchases';
   subPositions?: SubPosition[];
+  xirr?: number | null;
+  isXirrFallback?: boolean;
+  fxDecomposition?: { marketReturnPct: number; fxReturnPct: number } | null;
 }
 
 export interface PortfolioSummary {
@@ -69,5 +75,6 @@ export interface PortfolioSummary {
   taxMode: TaxMode;
   profitLabel: string;
   taxNoteFormatted?: string;
+  nominalXirr?: number | null;
+  realXirr?: number | null;
 }
-
