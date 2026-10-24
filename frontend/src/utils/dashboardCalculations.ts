@@ -519,7 +519,7 @@ export function buildDashboardSummary({
   const taxNoteFormatted = shouldApplyTax
     ? `Belka: -${formatMoney(totalBelkaTax, baseCurrency)}`
     : isIkeAccount
-    ? 'IKE (zwolnione z Belki)'
+    ? (t ? t('dashboard.ikeTaxFree', 'IKE (zwolnione z Belki)') : 'IKE (zwolnione z Belki)')
     : undefined;
 
   const totalDailyChange = enrichedHoldings.reduce((sum, h) => sum + (h.dailyChange || 0), 0);
