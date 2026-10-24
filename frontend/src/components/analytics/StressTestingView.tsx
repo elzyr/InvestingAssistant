@@ -81,7 +81,7 @@ export const StressTestingView = ({
   defaultEdoDca = 0,
   defaultEtfDca = 0,
 }: StressTestingViewProps) => {
-  const { t } = useTranslation();
+  const { t, i18n } = useTranslation();
   
   const [selectedScenarioId, setSelectedScenarioId] = useState<string>('covid-2020');
   const [prevDefaults, setPrevDefaults] = useState({ defaultTosDca, defaultEdoDca, defaultEtfDca });
@@ -104,15 +104,17 @@ export const StressTestingView = ({
   const chartContainerRef = useRef<HTMLDivElement | null>(null);
   const chartRef = useRef<IChartApi | null>(null);
 
-  const scenarios: CrisisScenario[] = [
+  const scenarios: CrisisScenario[] = useMemo(() => [
     {
       id: 'covid-2020',
-      title: 'Flash-Crash COVID-19 (Marzec 2020)',
-      shortTitle: 'COVID-19 (2020)',
-      period: '24 miesiące (2 lata)',
+      title: t('monteCarlo.scenarios.covid2020.title', 'Flash-Crash COVID-19 (Marzec 2020)'),
+      shortTitle: t('monteCarlo.scenarios.covid2020.shortTitle', 'COVID-19 (2020)'),
+      period: t('monteCarlo.scenarios.covid2020.period', '24 miesiące (2 lata)'),
       durationMonths: 24,
-      description:
-        'Błyskawiczna panika pandemiczna: rynki akcji zanurkowały o -34% w 33 dni, po czym nastąpiło spektakularne odbicie w kształcie litery V.',
+      description: t(
+        'monteCarlo.scenarios.covid2020.desc',
+        'Błyskawiczna panika pandemiczna: rynki akcji zanurkowały o -34% w 33 dni, po czym nastąpiło spektakularne odbicie w kształcie litery V.'
+      ),
       icon: Zap,
       color: '#38bdf8',
       getMarketMultiplier: (m: number) => {
@@ -130,12 +132,14 @@ export const StressTestingView = ({
     },
     {
       id: 'gfc-2008',
-      title: 'Globalny Kryzys Finansowy (2007–2009)',
-      shortTitle: 'GFC (2008)',
-      period: '48 miesięcy (4 lata)',
+      title: t('monteCarlo.scenarios.gfc2008.title', 'Globalny Kryzys Finansowy (2007–2009)'),
+      shortTitle: t('monteCarlo.scenarios.gfc2008.shortTitle', 'GFC (2008)'),
+      period: t('monteCarlo.scenarios.gfc2008.period', '48 miesięcy (4 lata)'),
       durationMonths: 48,
-      description:
-        'Najgłębsza bessa nowoczesnej giełdy. Globalne akcje tąpnęły o -55% w ciągu 17 miesięcy, a powrót do szczytów zajął 4 lata. Obligacje skarbowe stabilizowały portfel.',
+      description: t(
+        'monteCarlo.scenarios.gfc2008.desc',
+        'Najgłębsza bessa nowoczesnej giełdy. Globalne akcje tąpnęły o -55% w ciągu 17 miesięcy, a powrót do szczytów zajął 4 lata. Obligacje skarbowe stabilizowały portfel.'
+      ),
       icon: Flame,
       color: '#fb7185',
       getMarketMultiplier: (m: number) => {
@@ -154,12 +158,14 @@ export const StressTestingView = ({
     },
     {
       id: 'stagflation-2022',
-      title: 'Szok Stagflacyjny & Wojna (2021–2023)',
-      shortTitle: 'Stagflacja (2022)',
-      period: '36 miesięcy (3 lata)',
+      title: t('monteCarlo.scenarios.stagflation2022.title', 'Szok Stagflacyjny & Wojna (2021–2023)'),
+      shortTitle: t('monteCarlo.scenarios.stagflation2022.shortTitle', 'Stagflacja (2022)'),
+      period: t('monteCarlo.scenarios.stagflation2022.period', '36 miesięcy (3 lata)'),
       durationMonths: 36,
-      description:
-        'Gwałtowny skok inflacji w Polsce do 18.4% połączony z bessą technologiczną i spadkiem akcji o -28%. EDO indeksowane inflacją osiągały rekordowe stopy zwrotu.',
+      description: t(
+        'monteCarlo.scenarios.stagflation2022.desc',
+        'Gwałtowny skok inflacji w Polsce do 18.4% połączony z bessą technologiczną i spadkiem akcji o -28%. EDO indeksowane inflacją osiągały rekordowe stopy zwrotu.'
+      ),
       icon: AlertTriangle,
       color: '#fbbf24',
       getMarketMultiplier: (m: number) => {
@@ -177,7 +183,7 @@ export const StressTestingView = ({
         return 10.4 - ((m - 27) / 9) * 4.0;
       },
     },
-  ];
+  ], [t]);
 
   const currentScenario = scenarios.find((s) => s.id === selectedScenarioId) || scenarios[0];
 
@@ -274,7 +280,8 @@ export const StressTestingView = ({
 
       const yr = Math.floor(m / 12);
       const remM = m % 12;
-      const label = yr === 0 ? (m === 0 ? 'Start' : `${m}m`) : remM === 0 ? `${yr}L` : `${yr}L ${remM}m`;
+      const yrUnit = i18n.language.startsWith('en') ? 'Y' : 'L';
+      const label = yr === 0 ? (m === 0 ? 'Start' : `${m}m`) : remM === 0 ? `${yr}${yrUnit}` : `${yr}${yrUnit} ${remM}m`;
 
       timeline.push({
         m,
@@ -357,7 +364,7 @@ export const StressTestingView = ({
           const d = new Date(normalizeDateStr(time));
           const m = (d.getFullYear() - 2026) * 12 + d.getMonth();
           if (m === 0) return 'Start';
-          if (m % 12 === 0) return `${m / 12}L`;
+          if (m % 12 === 0) return `${m / 12}${i18n.language.startsWith('en') ? 'Y' : 'L'}`;
           return `${m}m`;
         },
       },
@@ -379,7 +386,7 @@ export const StressTestingView = ({
       lineStyle: LineStyle.Dashed,
       lastValueVisible: false,
       priceLineVisible: false,
-      title: 'Wkład własny',
+      title: t('monteCarlo.ownDca', 'Wkład własny'),
     });
     costSeries.setData(
       simulation.timeline.map((pt) => ({
@@ -393,7 +400,7 @@ export const StressTestingView = ({
       lineWidth: 2,
       lastValueVisible: true,
       priceLineVisible: false,
-      title: '100% Akcje',
+      title: t('monteCarlo.allStockLabel', '100% Akcje'),
     });
     stockSeries.setData(
       simulation.timeline.map((pt) => ({
@@ -407,7 +414,7 @@ export const StressTestingView = ({
       lineWidth: 2,
       lastValueVisible: true,
       priceLineVisible: false,
-      title: '100% Obligacje',
+      title: t('monteCarlo.allBondLabel', '100% Obligacje'),
     });
     bondSeries.setData(
       simulation.timeline.map((pt) => ({
@@ -421,7 +428,7 @@ export const StressTestingView = ({
       lineWidth: 2,
       lastValueVisible: true,
       priceLineVisible: false,
-      title: 'Twój Portfel',
+      title: t('monteCarlo.yourPortfolioLabel', 'Twój Portfel'),
     });
     userSeries.setData(
       simulation.timeline.map((pt) => ({
@@ -437,7 +444,7 @@ export const StressTestingView = ({
         lineWidth: 1,
         lineStyle: LineStyle.Dashed,
         axisLabelVisible: true,
-        title: `Dołek (M${simulation.troughMonth}) | ${Math.round(simulation.troughVal).toLocaleString('pl-PL')} ${baseCurrency}`,
+        title: `${t('monteCarlo.trough', 'Dołek')} (M${simulation.troughMonth}) | ${Math.round(simulation.troughVal).toLocaleString(i18n.language.startsWith('pl') ? 'pl-PL' : 'en-US')} ${baseCurrency}`,
       });
     }
 

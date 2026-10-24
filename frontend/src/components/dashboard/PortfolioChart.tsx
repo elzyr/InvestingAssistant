@@ -54,6 +54,7 @@ const TIMEFRAMES: TimeframeOption[] = ['1M', '3M', 'YTD', '1R', 'MAX'];
 const PROJECTIONS: ProjectionHorizonOption[] = ['3Y', '5Y', '10Y', '20Y'];
 
 const POLISH_MONTHS = ['sty', 'lut', 'mar', 'kwi', 'maj', 'cze', 'lip', 'sie', 'wrz', 'paź', 'lis', 'gru'];
+const ENGLISH_MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 
 export const PortfolioChart: React.FC<PortfolioChartProps> = ({
   data,
@@ -189,12 +190,14 @@ export const PortfolioChart: React.FC<PortfolioChartProps> = ({
             if (d.getMonth() === 0) {
               return `${d.getFullYear()}`;
             }
-            return POLISH_MONTHS[d.getMonth()] || '';
+            const months = i18n.language.startsWith('pl') ? POLISH_MONTHS : ENGLISH_MONTHS;
+            return months[d.getMonth()] || '';
           }
           if (tickMarkType === 2) {
             return '';
           }
-          return d.getMonth() === 0 ? `${d.getFullYear()}` : POLISH_MONTHS[d.getMonth()] || null;
+          const months = i18n.language.startsWith('pl') ? POLISH_MONTHS : ENGLISH_MONTHS;
+          return d.getMonth() === 0 ? `${d.getFullYear()}` : months[d.getMonth()] || null;
         },
       },
       rightPriceScale: {
@@ -272,7 +275,7 @@ export const PortfolioChart: React.FC<PortfolioChartProps> = ({
         priceLineVisible: true,
         priceLineColor: '#38bdf8',
         priceLineStyle: LineStyle.Dashed,
-        title: 'Mediana P50',
+        title: t('chart.medianP50', 'Mediana P50'),
       });
       medianSeries.setData(
         futureData.map((d) => ({
@@ -318,7 +321,7 @@ export const PortfolioChart: React.FC<PortfolioChartProps> = ({
           lineWidth: 1,
           lineStyle: LineStyle.Dashed,
           axisLabelVisible: true,
-          title: 'Cel',
+          title: t('chart.goal', 'Cel'),
         });
       }
     } else if (targetGoal && targetGoal > 0 && metricMode === 'PLN') {
@@ -328,7 +331,7 @@ export const PortfolioChart: React.FC<PortfolioChartProps> = ({
         lineWidth: 1,
         lineStyle: LineStyle.Dashed,
         axisLabelVisible: true,
-        title: 'Cel',
+        title: t('chart.goal', 'Cel'),
       });
     }
 
@@ -543,7 +546,7 @@ export const PortfolioChart: React.FC<PortfolioChartProps> = ({
                   : 'text-zinc-400 hover:text-zinc-200'
               }`}
             >
-              % Zwrot
+              {t('chart.metricReturn', '% Zwrot')}
             </button>
           </div>
 
@@ -558,7 +561,7 @@ export const PortfolioChart: React.FC<PortfolioChartProps> = ({
                     : 'text-zinc-400 hover:text-zinc-200'
                 }`}
               >
-                Nominalnie
+                {t('chart.nominalMode', 'Nominalnie')}
               </button>
               <button
                 type="button"
@@ -570,7 +573,7 @@ export const PortfolioChart: React.FC<PortfolioChartProps> = ({
                 }`}
                 title={t('chart.realModeTitle', 'Wartości przyszłe zdyskontowane o inflację (siła nabywcza)')}
               >
-                Po inflacji
+                {t('chart.realMode', 'Po inflacji')}
               </button>
             </div>
           )}
@@ -589,7 +592,7 @@ export const PortfolioChart: React.FC<PortfolioChartProps> = ({
                       : 'text-zinc-400 hover:text-zinc-200'
                   }`}
                 >
-                  {tf}
+                  {tf === '1R' ? (i18n.language.startsWith('en') ? '1Y' : '1R') : tf}
                 </button>
               );
             })}
@@ -787,7 +790,7 @@ export const PortfolioChart: React.FC<PortfolioChartProps> = ({
             {showAdvanced && (
               <div className="absolute right-0 top-full mt-1.5 z-40 bg-zinc-900 border border-zinc-750 rounded-lg p-3 shadow-2xl text-xs font-mono min-w-[260px]">
                 <span className="text-[10px] text-zinc-400 font-semibold uppercase tracking-wider block mb-2">
-                  Opcje zaawansowane
+                  {t('chart.advancedOptions', 'Opcje zaawansowane')}
                 </span>
                 <label className="flex items-center gap-2 cursor-pointer select-none">
                   <input
@@ -822,7 +825,7 @@ export const PortfolioChart: React.FC<PortfolioChartProps> = ({
             <div className="absolute top-4 left-4 z-30 pointer-events-none bg-zinc-950/95 border border-zinc-750/90 rounded-lg p-2.5 shadow-2xl text-xs font-mono backdrop-blur-md min-w-[230px]">
               <div className="flex items-center justify-between border-b border-zinc-800 pb-1 mb-1.5 text-zinc-300">
                 <span className="font-semibold text-sky-400">
-                  {hoveredPoint.isFuture ? 'Prognoza: ' : ''}{hoveredPoint.dateLabel}
+                  {hoveredPoint.isFuture ? `${t('chart.projection', 'Prognoza:')} ` : ''}{hoveredPoint.dateLabel}
                 </span>
                 {hoveredPoint.isFuture && (
                   <span className="text-[10px] text-zinc-500 uppercase">Monte Carlo</span>
@@ -899,7 +902,7 @@ export const PortfolioChart: React.FC<PortfolioChartProps> = ({
                   style={{ left: `${todayXCoord}px` }}
                 >
                   <span className="text-[9px] font-mono font-bold text-sky-300 bg-[#0c1e30] px-1 py-0.5 rounded border border-sky-500/70 shadow-xs">
-                    Dziś
+                    {t('chart.today', 'Dziś')}
                   </span>
                 </div>
               </div>
