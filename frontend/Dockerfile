@@ -1,4 +1,3 @@
-# Stage 1: Build production assets
 FROM node:22-alpine AS builder
 
 WORKDIR /app
@@ -9,7 +8,6 @@ RUN npm ci
 COPY . .
 RUN npm run build
 
-# Stage 2: Serve with Nginx
 FROM nginx:alpine
 
 COPY --from=builder /app/dist /usr/share/nginx/html

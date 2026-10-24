@@ -52,8 +52,7 @@ export const MonthDonutChart: React.FC<MonthDonutChartProps> = ({
           </div>
         </div>
 
-        {/* Modern Segmented Asset Allocation Bar */}
-        <div className="space-y-1.5 my-3">
+                <div className="space-y-1.5 my-3">
           <div className="h-4 w-full bg-zinc-950 rounded-md overflow-hidden flex p-0.5 gap-0.5 border border-zinc-800">
             {items.map((item) => {
               const isHovered = hoveredIdx === item.idx;
@@ -93,8 +92,7 @@ export const MonthDonutChart: React.FC<MonthDonutChartProps> = ({
         </div>
       </div>
 
-      {/* Structured Category Breakdown Cards */}
-      <div className="mt-3 pt-3 border-t border-zinc-800/80 space-y-2">
+            <div className="mt-3 pt-3 border-t border-zinc-800/80 space-y-2">
         {items.map((item) => {
           const isHovered = hoveredIdx === item.idx;
           return (
@@ -126,8 +124,7 @@ export const MonthDonutChart: React.FC<MonthDonutChartProps> = ({
                 </div>
               </div>
 
-              {/* Progress bar per item */}
-              <div className="w-full h-1 bg-zinc-800/60 rounded-full overflow-hidden">
+                            <div className="w-full h-1 bg-zinc-800/60 rounded-full overflow-hidden">
                 <div
                   className="h-full rounded-full transition-all duration-300"
                   style={{

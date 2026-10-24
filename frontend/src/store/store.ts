@@ -7,7 +7,8 @@ export const store = configureStore({
     reducer: {
         auth: authReducer,
         portfolio: portfolioReducer,
-    }
+    },
+    devTools: import.meta.env.DEV,
 });
 
 setOnAuthExpired(() => {

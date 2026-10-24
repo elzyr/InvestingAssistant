@@ -7,6 +7,11 @@ import {
   calculatePortfolioRealMetrics,
   calculateFxDecomposition,
 } from './xirrEngine.ts';
+import {
+  calculateBondCurrentPrice,
+  generateUnifiedPortfolioTimeline,
+} from './portfolioUnifiedEngine.ts';
+import { buildDashboardPositions } from './dashboardCalculations.ts';
 
 const assertCloseTo = (actual, expected, tolerance = 1e-4, message) => {
   assert.ok(
@@ -39,18 +44,10 @@ describe('xirrEngine', () => {
       ];
 
       const rate = calculateXirr(cashFlows);
-      // (1 + r)^(366/365) = 1.1 => r = 1.1^(365/366) - 1 ≈ 0.099709
       assertCloseTo(rate, 0.099709, 1e-4, 'Expected Act/365 leap year return');
     });
 
     it('matches Microsoft Excel official XIRR benchmark test vector', () => {
-      // Official MS Excel XIRR documentation example:
-      // 2008-01-01: -10,000
-      // 2008-03-01: 2,750
-      // 2008-10-30: 4,250
-      // 2009-02-15: 3,250
-      // 2009-04-01: 2,750
-      // Documented Excel result: 0.373363 (37.34%)
       const excelBenchmarkFlows = [
         { amount: -10000, date: '2008-01-01' },
         { amount: 2750, date: '2008-03-01' },
@@ -64,7 +61,6 @@ describe('xirrEngine', () => {
     });
 
     it('calculates accurate XIRR for multi-transaction DCA streams with terminal valuation', () => {
-      // Monthly DCA: 1000 on Jan 1, Feb 1, Mar 1; valuation 3300 on Jun 1
       const dcaFlows = [
         { amount: -1000, date: '2024-01-01' },
         { amount: -1000, date: '2024-02-01' },
@@ -77,11 +73,6 @@ describe('xirrEngine', () => {
     });
 
     it('calculates accurate XIRR with SELL inflows interspersed between BUY outflows and terminal valuation', () => {
-      // 2023-01-01: BUY -1000
-      // 2023-07-02: SELL +360 (182 days)
-      // 2023-10-01: BUY -550 (273 days)
-      // 2024-01-01: Valuation +1560 (365 days)
-      // Known independent benchmark rate: 0.386886 (38.69%)
       const flowsWithSell = [
         { amount: -1000, date: '2023-01-01' },
         { amount: 360, date: '2023-07-02' },
@@ -173,7 +164,7 @@ describe('xirrEngine', () => {
         { amount: -1000, date: '2024-01-01' },
       ];
       const terminalValue = 1050;
-      const terminalDate = '2024-01-15'; // 14 days elapsed
+      const terminalDate = '2024-01-15';
 
       const result = calculateHoldingXirr({
         cashFlows: recentHoldingFlows,
@@ -189,21 +180,19 @@ describe('xirrEngine', () => {
     it('enforces exact 29 vs 30 day boundary condition', () => {
       const baseFlows = [{ amount: -1000, date: '2024-01-01' }];
 
-      // Day 29: guardrail active
       const day29 = calculateHoldingXirr({
         cashFlows: baseFlows,
         currentValue: 1020,
-        terminalDate: '2024-01-30', // 29 days
+        terminalDate: '2024-01-30',
       });
       assert.strictEqual(day29.xirr, null);
       assert.strictEqual(day29.isSimpleFallback, true);
       assert.strictEqual(day29.daysElapsed, 29);
 
-      // Day 30: guardrail lifted
       const day30 = calculateHoldingXirr({
         cashFlows: baseFlows,
         currentValue: 1020,
-        terminalDate: '2024-01-31', // 30 days
+        terminalDate: '2024-01-31',
       });
       assert.strictEqual(day30.isSimpleFallback, false);
       assert.strictEqual(day30.daysElapsed, 30);
@@ -215,7 +204,7 @@ describe('xirrEngine', () => {
         { amount: -1000, date: '2023-01-01' },
       ];
       const terminalValue = 1100;
-      const terminalDate = '2024-01-01'; // 365 days
+      const terminalDate = '2024-01-01';
 
       const result = calculateHoldingXirr({
         cashFlows: holdingFlows,
@@ -239,11 +228,6 @@ describe('xirrEngine', () => {
     });
 
     it('calculates holding XIRR when intermediate cash flows include SELL proceeds', () => {
-      // Position with an intermediate partial sale:
-      // 2023-01-01: BUY -1000
-      // 2023-07-02: SELL +360
-      // 2024-01-01: Terminal value 1000
-      // Known independent benchmark rate: 0.430834 (43.08%)
       const holdingFlowsWithSell = [
         { amount: -1000, date: '2023-01-01' },
         { amount: 360, date: '2023-07-02' },
@@ -263,25 +247,15 @@ describe('xirrEngine', () => {
 
   describe('calculatePortfolioRealMetrics', () => {
     it('calculates fair compounded per-transaction inflation hurdle and real profit', () => {
-      // Transaction 1: 10,000 PLN executed exactly 1 year ago (365 days)
-      // Transaction 2: 5,000 PLN executed 182 days ago
-      // Current valuation: 18,000 PLN
-      // CPI: 5% (0.05)
-      //
-      // Hurdle 1 = 10000 * (1 + 0.05)^1 = 10500.00 PLN
-      // Hurdle 2 = 5000 * (1 + 0.05)^(182/365) = 5123.13 PLN
-      // Total hurdle = 15623.13 PLN
-      // Real profit amount = 18000 - 15623.13 = 2376.87 PLN
-      // Real profit percent = 2376.87 / 15623.13 * 100 = 15.21%
       const transactions = [
         { cost: 10000, executedAt: '2023-01-01' },
-        { cost: 5000, executedAt: '2023-07-03' }, // 182 days to 2024-01-01
+        { cost: 5000, executedAt: '2023-07-03' },
       ];
 
       const metrics = calculatePortfolioRealMetrics({
         transactions,
         portfolioValue: 18000,
-        cpi: 0.05,
+        cpi: 5.0,
         nominalXirr: 0.20,
         currentDate: '2024-01-01',
       });
@@ -292,14 +266,12 @@ describe('xirrEngine', () => {
     });
 
     it('calculates real XIRR via the Fisher equation r_real = (1 + r_nominal)/(1 + CPI) - 1', () => {
-      // Nominal XIRR: 20% (0.20), CPI: 5% (0.05)
-      // r_real = 1.20 / 1.05 - 1 = 0.142857 (14.29%)
       const transactions = [{ cost: 10000, executedAt: '2023-01-01' }];
 
       const metrics = calculatePortfolioRealMetrics({
         transactions,
         portfolioValue: 12000,
-        cpi: 0.05,
+        cpi: 5.0,
         nominalXirr: 0.20,
         currentDate: '2024-01-01',
       });
@@ -321,34 +293,35 @@ describe('xirrEngine', () => {
       assert.strictEqual(metrics.realXirr, null, 'Null nominal XIRR must yield null real XIRR');
     });
 
-    it('handles CPI passed as percentage (e.g. 5.0) or ratio (e.g. 0.05) consistently', () => {
+    it('handles uniform percentage CPI consistently without 100x spike on low inflation', () => {
       const transactions = [{ cost: 10000, executedAt: '2023-01-01' }];
 
-      const metricsWithPercent = calculatePortfolioRealMetrics({
+      const metrics50 = calculatePortfolioRealMetrics({
         transactions,
         portfolioValue: 12000,
-        cpi: 5.0, // 5.0%
+        cpi: 5.0,
         nominalXirr: 0.20,
         currentDate: '2024-01-01',
       });
 
-      const metricsWithRatio = calculatePortfolioRealMetrics({
+      assertCloseTo(metrics50.inflationHurdle, 10500, 1e-2);
+      assertCloseTo(metrics50.realProfitAmount, 1500, 1e-2);
+      assertCloseTo(metrics50.realXirr, 0.142857, 1e-4);
+
+      const metrics015 = calculatePortfolioRealMetrics({
         transactions,
-        portfolioValue: 12000,
-        cpi: 0.05, // 0.05
-        nominalXirr: 0.20,
+        portfolioValue: 10500,
+        cpi: 0.15,
+        nominalXirr: 0.05,
         currentDate: '2024-01-01',
       });
 
-      assertCloseTo(metricsWithPercent.inflationHurdle, metricsWithRatio.inflationHurdle, 1e-4);
-      assertCloseTo(metricsWithPercent.realProfitAmount, metricsWithRatio.realProfitAmount, 1e-4);
-      assertCloseTo(metricsWithPercent.realXirr, metricsWithRatio.realXirr, 1e-4);
+      assertCloseTo(metrics015.inflationHurdle, 10015, 1e-2);
+      assertCloseTo(metrics015.realProfitAmount, 485, 1e-2);
+      assertCloseTo(metrics015.realXirr, 0.048427, 1e-4);
     });
 
     it('handles low inflation rates (e.g. CPI = 0.8% and 0.5%) without inflating to 80% or 50%', () => {
-      // Deposit 10,000 PLN 1 year ago (365 days)
-      // CPI = 0.8 (meaning 0.8% inflation, rate = 0.008)
-      // Expected hurdle = 10000 * (1 + 0.008)^1 = 10080 PLN (NOT 18000 PLN from 80%)
       const transactions = [{ cost: 10000, executedAt: '2023-01-01' }];
 
       const metrics08 = calculatePortfolioRealMetrics({
@@ -362,11 +335,8 @@ describe('xirrEngine', () => {
       assertCloseTo(metrics08.inflationHurdle, 10080, 1e-2, 'Hurdle must reflect 0.8% inflation, not 80%');
       assertCloseTo(metrics08.realProfitAmount, 920, 1e-2, 'Real profit must be 11000 - 10080 = 920 PLN');
       assertCloseTo(metrics08.realProfitPercent, 9.127, 1e-2, 'Real profit percent must be (920 / 10080) * 100');
-      // Fisher equation: 1.10 / 1.008 - 1 ≈ 0.09127 (9.13%)
       assertCloseTo(metrics08.realXirr, 0.09127, 1e-4, 'Real XIRR must reflect 0.8% inflation via Fisher equation');
 
-      // CPI = 0.5 (meaning 0.5% inflation, rate = 0.005)
-      // Expected hurdle = 10000 * (1 + 0.005)^1 = 10050 PLN (NOT 15000 PLN from 50%)
       const metrics05 = calculatePortfolioRealMetrics({
         transactions,
         portfolioValue: 11000,
@@ -378,18 +348,10 @@ describe('xirrEngine', () => {
       assertCloseTo(metrics05.inflationHurdle, 10050, 1e-2, 'Hurdle must reflect 0.5% inflation, not 50%');
       assertCloseTo(metrics05.realProfitAmount, 950, 1e-2, 'Real profit must be 11000 - 10050 = 950 PLN');
       assertCloseTo(metrics05.realProfitPercent, 9.453, 1e-2, 'Real profit percent must be (950 / 10050) * 100');
-      // Fisher equation: 1.10 / 1.005 - 1 ≈ 0.094527
       assertCloseTo(metrics05.realXirr, 0.094527, 1e-4, 'Real XIRR must reflect 0.5% inflation via Fisher equation');
     });
 
     it('handles deflation (e.g. CPI = -0.5%) correctly reducing inflation hurdle', () => {
-      // Deposit 10,000 PLN 1 year ago (365 days)
-      // CPI = -0.5 (meaning -0.5% deflation, rate = -0.005)
-      // Expected hurdle = 10000 * (1 - 0.005)^1 = 9950 PLN
-      // With portfolio value = 10,500 PLN:
-      // Real profit amount = 10500 - 9950 = 550 PLN
-      // Real profit percent = (550 / 9950) * 100 ≈ 5.5276%
-      // Fisher equation: (1 + 0.05) / (1 - 0.005) - 1 = 1.05 / 0.995 - 1 ≈ 0.055276 (5.53%)
       const transactions = [{ cost: 10000, executedAt: '2023-01-01' }];
 
       const metricsDeflation = calculatePortfolioRealMetrics({
@@ -423,10 +385,6 @@ describe('xirrEngine', () => {
 
   describe('calculateFxDecomposition', () => {
     it('decomposes foreign asset gains and currency appreciation matching (1+R_total) = (1+R_asset)(1+R_fx)', () => {
-      // Buy price: 100 EUR, Current price: 110 EUR (+10.0% asset return)
-      // Buy FX: 4.00 PLN/EUR, Current FX: 4.20 PLN/EUR (+5.0% currency appreciation)
-      // Total cost PLN: 400 PLN, Total current PLN: 462 PLN (+15.5% total return)
-      // (1 + 0.10) * (1 + 0.05) = 1.155 => +15.5%
       const decomp = calculateFxDecomposition({
         buyPrice: 100,
         currentPrice: 110,
@@ -438,7 +396,6 @@ describe('xirrEngine', () => {
       assertCloseTo(decomp.marketReturnPct, 10.0, 1e-4, 'Market return pct');
       assertCloseTo(decomp.fxReturnPct, 5.0, 1e-4, 'FX return pct');
 
-      // Verify exact multiplicative equivalence
       const rAsset = decomp.marketReturnPct / 100;
       const rFx = decomp.fxReturnPct / 100;
       const compoundTotal = (1 + rAsset) * (1 + rFx) - 1;
@@ -446,9 +403,6 @@ describe('xirrEngine', () => {
     });
 
     it('decomposes asset gain with currency drag (depreciation)', () => {
-      // Buy price: 100 EUR, Current price: 120 EUR (+20.0% asset return)
-      // Buy FX: 4.50 PLN/EUR, Current FX: 4.05 PLN/EUR (-10.0% currency drag)
-      // Total compound return = 1.20 * 0.90 - 1 = +8.0%
       const decomp = calculateFxDecomposition({
         buyPrice: 100,
         currentPrice: 120,
@@ -462,9 +416,6 @@ describe('xirrEngine', () => {
     });
 
     it('decomposes asset decline with currency buffer (appreciation)', () => {
-      // Buy price: 100 EUR, Current price: 90 EUR (-10.0% asset return)
-      // Buy FX: 4.00 PLN/EUR, Current FX: 4.40 PLN/EUR (+10.0% currency buffer)
-      // Total compound return = 0.90 * 1.10 - 1 = -1.0%
       const decomp = calculateFxDecomposition({
         buyPrice: 100,
         currentPrice: 90,
@@ -488,6 +439,204 @@ describe('xirrEngine', () => {
     it('returns null or zero fx for invalid or non-positive price/rate inputs', () => {
       assert.strictEqual(calculateFxDecomposition({ buyPrice: 0, currentPrice: 100, buyExchangeRate: 4, currentExchangeRate: 4 }), null);
       assert.strictEqual(calculateFxDecomposition({ buyPrice: 100, currentPrice: 100, buyExchangeRate: 0, currentExchangeRate: 4 }), null);
+    });
+  });
+
+  describe('calculateBondCurrentPrice and portfolioUnifiedEngine', () => {
+    it('applies termMonths maturity cap so bond stops accumulating past maturity', () => {
+      const priceAtMaturity = calculateBondCurrentPrice({
+        purchaseDate: '2020-01-01',
+        bondRate: 6.0,
+        targetDate: '2023-01-01',
+        termMonths: 36,
+        seriesName: 'TOS0123',
+      });
+      const pricePastMaturity = calculateBondCurrentPrice({
+        purchaseDate: '2020-01-01',
+        bondRate: 6.0,
+        targetDate: '2025-01-01',
+        termMonths: 36,
+        seriesName: 'TOS0123',
+      });
+      assertCloseTo(pricePastMaturity, priceAtMaturity, 1e-2);
+    });
+
+    it('calculates simple non-compounded interest for COI bond', () => {
+      const price = calculateBondCurrentPrice({
+        purchaseDate: '2022-01-01',
+        bondRate: 7.0,
+        bondMargin: 1.5,
+        cpi: 3.0,
+        targetDate: '2024-01-01',
+        seriesName: 'COI0126',
+      });
+      assertCloseTo(price, 111.5, 1e-2);
+    });
+
+    it('reduces weighted-average cost basis proportionally on SELL rather than subtracting proceeds', () => {
+      const pts = generateUnifiedPortfolioTimeline({
+        transactions: [
+          {
+            id: '1',
+            instrumentId: 'inst-etf',
+            transactionType: 'BUY',
+            quantity: 10,
+            price: 150,
+            currency: 'PLN',
+            executedAt: '2024-01-01T00:00:00.000Z',
+            baseAmount: 1500,
+          },
+          {
+            id: '2',
+            instrumentId: 'inst-etf',
+            transactionType: 'SELL',
+            quantity: 5,
+            price: 300,
+            currency: 'PLN',
+            executedAt: '2024-06-01T00:00:00.000Z',
+            baseAmount: 1500,
+          },
+        ],
+        positions: [],
+        instruments: {
+          'inst-etf': { id: 'inst-etf', symbol: 'VWCE', type: 'ETF', currency: 'PLN' },
+        },
+        totalPortfolioValue: 0,
+        totalPortfolioCost: 0,
+        taxMode: 'STANDARD',
+        timeframe: 'ALL',
+        projectionHorizon: 'OFF',
+        cpi: 3.6,
+        rates: { PLN: 1 },
+        baseCurrency: 'PLN',
+      });
+      const sellTs = new Date('2024-06-01T00:00:00.000Z').getTime();
+      const ptAfterSell = pts.find((p) => p.timestamp >= sellTs);
+      assert.ok(ptAfterSell, 'Timeline point after sell must exist');
+      assertCloseTo(ptAfterSell.cost, 750, 1e-2);
+    });
+  });
+
+  describe('buildDashboardPositions cohort and lot deductions', () => {
+    it('applies FIFO lot reduction to equity positions after partial sell', () => {
+      const enrichedHoldings = [
+        {
+          id: 'pos-eq',
+          isBond: false,
+          ticker: 'VWCE',
+          name: 'Vanguard FTSE All-World',
+          instrumentId: 'inst-etf',
+          quantity: 5,
+          totalValue: 1000,
+          totalCost: 500,
+          currentPrice: 200,
+          averagePrice: 100,
+          currency: 'PLN',
+          assetType: 'ETF',
+          purchaseDate: '2024-01-10T10:00:00Z',
+        },
+      ];
+
+      const transactions = [
+        {
+          id: 'tx-buy-1',
+          instrumentId: 'inst-etf',
+          transactionType: 'BUY',
+          quantity: 10,
+          price: 100,
+          currency: 'PLN',
+          executedAt: '2024-01-10T10:00:00Z',
+          baseAmount: 1000,
+        },
+        {
+          id: 'tx-sell-1',
+          instrumentId: 'inst-etf',
+          transactionType: 'SELL',
+          quantity: 5,
+          price: 200,
+          currency: 'PLN',
+          executedAt: '2024-06-10T10:00:00Z',
+          baseAmount: 1000,
+        },
+      ];
+
+      const positions = buildDashboardPositions({
+        enrichedHoldings,
+        transactions,
+        baseCurrency: 'PLN',
+        rates: { PLN: 1 },
+        totalPortfolioValue: 1000,
+        shouldApplyTax: false,
+        nowTimestamp: new Date('2025-01-10T10:00:00Z').getTime(),
+      });
+
+      assert.strictEqual(positions.length, 1);
+      const sub = positions[0].subPositions;
+      assert.strictEqual(sub.length, 1);
+      assert.strictEqual(sub[0].id, 'tx-buy-1');
+      assert.ok(sub[0].subName.includes('5 szt.'));
+      assert.strictEqual(sub[0].priceFormatted, '500 PLN');
+      assert.strictEqual(sub[0].valueFormatted, '1000 PLN');
+    });
+
+    it('includes SELL transactions for matching bond series in cohort grouping', () => {
+      const enrichedHoldings = [
+        {
+          isBond: true,
+          ticker: 'EDO0134',
+          instrumentId: 'inst-bond',
+          quantity: 5,
+          totalValue: 525,
+          totalCost: 500,
+          currentPrice: 105,
+          currency: 'PLN',
+          purchaseDate: '2024-01-10T10:00:00Z',
+          bondRate: 6.5,
+        },
+      ];
+
+      const transactions = [
+        {
+          id: 'tx-1',
+          instrumentId: 'inst-bond',
+          transactionType: 'BUY',
+          quantity: 10,
+          price: 100,
+          currency: 'PLN',
+          executedAt: '2024-01-10T10:00:00Z',
+          seriesName: 'EDO0134',
+          baseAmount: 1000,
+        },
+        {
+          id: 'tx-2',
+          instrumentId: 'inst-bond',
+          transactionType: 'SELL',
+          quantity: 5,
+          price: 102,
+          currency: 'PLN',
+          executedAt: '2024-06-10T10:00:00Z',
+          seriesName: 'EDO0134',
+          baseAmount: 510,
+        },
+      ];
+
+      const res = buildDashboardPositions({
+        enrichedHoldings,
+        transactions,
+        baseCurrency: 'PLN',
+        rates: { PLN: 1 },
+        totalPortfolioValue: 525,
+        shouldApplyTax: false,
+        nowTimestamp: new Date('2025-01-10T10:00:00Z').getTime(),
+      });
+
+      assert.strictEqual(res.length, 1);
+      const edo = res[0];
+      assert.strictEqual(edo.subPositions.length, 1);
+      const sub = edo.subPositions[0];
+      assert.strictEqual(sub.id, 'EDO-2024');
+      assert.strictEqual(typeof sub.xirr, 'number');
+      assert.strictEqual(sub.isXirrFallback, false);
     });
   });
 });

@@ -2,14 +2,17 @@ FROM python:3.12-slim
 
 WORKDIR /app
 
-# Zapobiega zapisywaniu plików .pyc na dysku i buforowaniu wyjścia logów
 ENV PYTHONDONTWRITEBYTECODE=1
 ENV PYTHONUNBUFFERED=1
+
+RUN useradd -m -u 1000 appuser && mkdir -p /app/data && chown -R appuser:appuser /app
 
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
 COPY app /app/app
+
+USER appuser
 
 EXPOSE 8083
 

@@ -22,6 +22,11 @@ export interface TransactionModalProps {
   instrument?: InstrumentResponse;
 }
 
+const getTodayLocalDateStr = () => {
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+};
+
 export const TransactionModal: React.FC<TransactionModalProps> = ({
   isOpen,
   onClose,
@@ -34,7 +39,7 @@ export const TransactionModal: React.FC<TransactionModalProps> = ({
   const reduxInstruments = useAppSelector((state) => state.portfolio.instruments);
   const reduxQuotes = useAppSelector((state) => state.portfolio.quotes);
   const cachedInstruments = useMemo(() => {
-    return Object.values(reduxInstruments).filter((i) => i.type === 'ETF' || i.type === 'BOND');
+    return Object.values(reduxInstruments).filter((i) => i.type === 'ETF' || i.type === 'BOND' || i.type === 'STOCK');
   }, [reduxInstruments]);
   const initialInstrument = instrument || cachedInstruments[0];
   const initialInstrumentIsBond = Boolean(
@@ -60,7 +65,7 @@ export const TransactionModal: React.FC<TransactionModalProps> = ({
     return (initialInstrument?.currency as Currency) || defaultCurrency;
   });
   const [transactionDate, setTransactionDate] = useState<string>(
-    () => new Date().toISOString().split('T')[0]
+    () => { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`; }
   );
 
   const [seriesName, setSeriesName] = useState<string>('');
@@ -99,6 +104,29 @@ export const TransactionModal: React.FC<TransactionModalProps> = ({
     }
   } else if (!transaction && prevTxId !== null) {
     setPrevTxId(null);
+    setSelectedInstrumentId(initialInstrument?.id || '');
+    setTransactionType('BUY');
+    setQuantity('10');
+    setPrice(
+      initialInstrumentIsBond
+        ? '100.00'
+        : initialQuote?.price
+        ? initialQuote.price.toFixed(2)
+        : '100.00'
+    );
+    setCommission('0');
+    setCurrency(
+      initialInstrumentIsBond
+        ? 'PLN'
+        : ((initialInstrument?.currency as Currency) || defaultCurrency)
+    );
+    setTransactionDate(getTodayLocalDateStr());
+    setSeriesName('');
+    setInterestType('FIXED');
+    setBondRate('6.50');
+    setBondMargin('2.00');
+    setTermMonths('36');
+    setError(null);
   }
 
   const effectiveInstrumentId = selectedInstrumentId || instruments[0]?.id || '';
@@ -208,7 +236,7 @@ export const TransactionModal: React.FC<TransactionModalProps> = ({
       try {
         const data = await instrumentService.getInstruments();
         if (!mounted) return;
-        const filtered = data.filter((i) => i.type === 'ETF' || i.type === 'BOND');
+        const filtered = data.filter((i) => i.type === 'ETF' || i.type === 'BOND' || i.type === 'STOCK');
         setFetchedInstruments(filtered);
         if (!transaction && !selectedInstrumentId && filtered.length > 0) {
           handleInstrumentSelect(filtered[0]);
@@ -240,7 +268,7 @@ export const TransactionModal: React.FC<TransactionModalProps> = ({
       return;
     }
     const q = parseFloat(quantity);
-    const p = isBond ? 100.0 : parseFloat(price);
+    const p = isBond && transactionType === 'BUY' ? 100.0 : parseFloat(price);
     const c = parseFloat(commission) || 0;
 
     if (isNaN(q) || q <= 0) {
@@ -252,7 +280,7 @@ export const TransactionModal: React.FC<TransactionModalProps> = ({
       return;
     }
 
-    if (isBond) {
+    if (isBond && transactionType === 'BUY') {
       const parsedRate = parseFloat(bondRate);
       if (isNaN(parsedRate) || parsedRate < 0) {
         setError('Podaj prawidłowe oprocentowanie w %');
@@ -448,16 +476,98 @@ export const TransactionModal: React.FC<TransactionModalProps> = ({
             </label>
             <input
               type="date"
-              max={new Date().toISOString().split('T')[0]}
+              max={getTodayLocalDateStr()}
               value={transactionDate}
               onChange={(e) => setTransactionDate(e.target.value)}
               className="w-full bg-zinc-900 border border-zinc-800 rounded px-3 py-2 text-xs text-zinc-100 font-mono focus:outline-none focus:border-zinc-600 cursor-pointer"
             />
           </div>
 
+          <div>
+            <label className="block text-xs text-zinc-400 mb-1.5">Typ transakcji</label>
+            <div className="grid grid-cols-2 gap-2">
+              <button
+                type="button"
+                onClick={() => setTransactionType('BUY')}
+                className={`flex items-center justify-center gap-1.5 py-2 px-3 rounded text-xs font-semibold border transition ${
+                  transactionType === 'BUY'
+                    ? 'bg-emerald-950/60 border-emerald-600 text-emerald-300'
+                    : 'bg-zinc-900 border-zinc-800 text-zinc-400 hover:border-zinc-700'
+                }`}
+              >
+                <ArrowDownRight className="w-3.5 h-3.5" />
+                Kupno (BUY)
+              </button>
+              <button
+                type="button"
+                onClick={() => setTransactionType('SELL')}
+                className={`flex items-center justify-center gap-1.5 py-2 px-3 rounded text-xs font-semibold border transition ${
+                  transactionType === 'SELL'
+                    ? 'bg-rose-950/60 border-rose-600 text-rose-300'
+                    : 'bg-zinc-900 border-zinc-800 text-zinc-400 hover:border-zinc-700'
+                }`}
+              >
+                <ArrowUpRight className="w-3.5 h-3.5" />
+                Sprzedaż (SELL)
+              </button>
+            </div>
+          </div>
+
           {isBond ? (
-            <>
-              <div className="grid grid-cols-2 gap-3">
+            transactionType === 'SELL' ? (
+              <>
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <label className="block text-xs text-zinc-400 mb-1.5">Liczba sztuk do sprzedaży</label>
+                    <input
+                      type="number"
+                      step="1"
+                      min="1"
+                      required
+                      value={quantity}
+                      onChange={(e) => setQuantity(e.target.value)}
+                      className="w-full bg-zinc-900 border border-zinc-800 rounded px-3 py-2 text-xs text-zinc-100 font-mono focus:outline-none focus:border-zinc-600"
+                      placeholder="10"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-xs text-zinc-400 mb-1.5">Cena sprzedaży / wykupu (PLN)</label>
+                    <input
+                      type="number"
+                      step="0.01"
+                      min="0"
+                      required
+                      value={price}
+                      onChange={(e) => setPrice(e.target.value)}
+                      className="w-full bg-zinc-900 border border-zinc-800 rounded px-3 py-2 text-xs text-zinc-100 font-mono focus:outline-none focus:border-zinc-600"
+                      placeholder="100.00"
+                    />
+                  </div>
+                </div>
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <label className="block text-xs text-zinc-400 mb-1.5">Łączna kwota wypłaty</label>
+                    <div className="w-full bg-zinc-900/60 border border-zinc-800 rounded px-3 py-2 text-xs text-emerald-400 font-mono flex items-center h-[34px]">
+                      {((parseFloat(quantity) || 0) * (parseFloat(price) || 0)).toLocaleString('pl-PL', { minimumFractionDigits: 2 })} PLN
+                    </div>
+                  </div>
+                  <div>
+                    <label className="block text-xs text-zinc-400 mb-1.5">Prowizja / opłata (PLN)</label>
+                    <input
+                      type="number"
+                      step="0.01"
+                      min="0"
+                      value={commission}
+                      onChange={(e) => setCommission(e.target.value)}
+                      className="w-full bg-zinc-900 border border-zinc-800 rounded px-3 py-2 text-xs text-zinc-100 font-mono focus:outline-none focus:border-zinc-600"
+                      placeholder="0.00"
+                    />
+                  </div>
+                </div>
+              </>
+            ) : (
+              <>
+                <div className="grid grid-cols-2 gap-3">
                 <div>
                   <label className="block text-xs text-zinc-400 mb-1.5">Liczba sztuk</label>
                   <input
@@ -547,37 +657,9 @@ export const TransactionModal: React.FC<TransactionModalProps> = ({
                 </select>
               </div>
             </>
+            )
           ) : (
             <>
-              <div>
-                <label className="block text-xs text-zinc-400 mb-1.5">Typ transakcji</label>
-                <div className="grid grid-cols-2 gap-2">
-                  <button
-                    type="button"
-                    onClick={() => setTransactionType('BUY')}
-                    className={`flex items-center justify-center gap-1.5 py-2 px-3 rounded text-xs font-semibold border transition ${
-                      transactionType === 'BUY'
-                        ? 'bg-emerald-950/60 border-emerald-600 text-emerald-300'
-                        : 'bg-zinc-900 border-zinc-800 text-zinc-400 hover:border-zinc-700'
-                    }`}
-                  >
-                    <ArrowDownRight className="w-3.5 h-3.5" />
-                    Kupno (BUY)
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setTransactionType('SELL')}
-                    className={`flex items-center justify-center gap-1.5 py-2 px-3 rounded text-xs font-semibold border transition ${
-                      transactionType === 'SELL'
-                        ? 'bg-rose-950/60 border-rose-600 text-rose-300'
-                        : 'bg-zinc-900 border-zinc-800 text-zinc-400 hover:border-zinc-700'
-                    }`}
-                  >
-                    <ArrowUpRight className="w-3.5 h-3.5" />
-                    Sprzedaż (SELL)
-                  </button>
-                </div>
-              </div>
 
               <div className="grid grid-cols-2 gap-3">
                 <div>

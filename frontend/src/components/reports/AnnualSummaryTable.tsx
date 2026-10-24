@@ -163,8 +163,7 @@ export const AnnualSummaryTable: React.FC<AnnualSummaryTableProps> = ({
             })}
           </tbody>
 
-          {/* Summary footer row (YTD / Year End) */}
-          <tfoot className="bg-[#0b0c10] border-t-2 border-zinc-700/80 font-mono text-xs">
+                    <tfoot className="bg-[#0b0c10] border-t-2 border-zinc-700/80 font-mono text-xs">
             <tr className="font-semibold text-zinc-200">
               <td className="py-3 px-3 font-sans text-xs sm:text-sm text-zinc-100 whitespace-nowrap">
                 {ytdLabel}

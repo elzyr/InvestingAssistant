@@ -1,9 +1,11 @@
 package pl.investassist.portfolio.dto.request;
 
+import jakarta.validation.constraints.Digits;
 import jakarta.validation.constraints.NotNull;
 import jakarta.validation.constraints.PastOrPresent;
 import jakarta.validation.constraints.Positive;
 import jakarta.validation.constraints.PositiveOrZero;
+import jakarta.validation.constraints.Size;
 import java.math.BigDecimal;
 import java.time.LocalDateTime;
 import java.util.UUID;
@@ -15,17 +17,17 @@ import pl.investassist.portfolio.enums.TransactionType;
 public record CreateTransactionRequest(
     @NotNull UUID instrumentId,
     @NotNull TransactionType transactionType,
-    @NotNull @Positive BigDecimal price,
-    @NotNull @Positive BigDecimal quantity,
-    @NotNull @PositiveOrZero BigDecimal commission,
+    @NotNull @Positive @Digits(integer = 30, fraction = 6) BigDecimal price,
+    @NotNull @Positive @Digits(integer = 30, fraction = 8) BigDecimal quantity,
+    @NotNull @PositiveOrZero @Digits(integer = 30, fraction = 6) BigDecimal commission,
     @NotNull Currency currency,
     @PastOrPresent(message = "Transaction date cannot be in the future")
     LocalDateTime executedAt,
-    String seriesName,
-    BigDecimal bondRate,
-    BigDecimal bondMargin,
-    Integer termMonths,
-    BigDecimal baseAmount) {
+    @Size(max = 50) String seriesName,
+    @PositiveOrZero @Digits(integer = 6, fraction = 4) BigDecimal bondRate,
+    @PositiveOrZero @Digits(integer = 6, fraction = 4) BigDecimal bondMargin,
+    @Positive Integer termMonths,
+    @Positive @Digits(integer = 34, fraction = 4) BigDecimal baseAmount) {
 
   public Transaction toEntity(Portfolio portfolio) {
     Transaction transaction = new Transaction();

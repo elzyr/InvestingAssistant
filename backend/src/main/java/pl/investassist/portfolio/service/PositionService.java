@@ -51,12 +51,42 @@ public class PositionService {
       String seriesName) {
     String cleanSeries = (seriesName != null && !seriesName.trim().isBlank()) ? seriesName.trim() : null;
 
-    List<Transaction> transactions = transactionRepository
-        .findAllByPortfolioIdAndInstrumentIdOrderByExecutedAtAsc(portfolio.getId(), instrumentId)
-        .stream()
+    List<Transaction> transactions = null;
+    if (cleanSeries != null) {
+      try {
+        transactions = transactionRepository.findAllByPortfolioIdAndInstrumentIdAndSeriesNameOrderByExecutedAtAsc(
+            portfolio.getId(), instrumentId, cleanSeries);
+      } catch (Exception ignored) {
+      }
+    }
+    if (transactions == null || transactions.isEmpty()) {
+      transactions = transactionRepository.findAllByPortfolioIdAndInstrumentIdOrderByExecutedAtAsc(
+          portfolio.getId(), instrumentId);
+    }
+
+    transactions = transactions.stream()
         .filter(t -> {
           String s = (t.getSeriesName() != null && !t.getSeriesName().trim().isBlank()) ? t.getSeriesName().trim() : null;
           return Objects.equals(s, cleanSeries);
+        })
+        .sorted((a, b) -> {
+          LocalDateTime timeA = a.getExecutedAt();
+          LocalDateTime timeB = b.getExecutedAt();
+          if (timeA != null && timeB != null) {
+            int cmp = timeA.compareTo(timeB);
+            if (cmp != 0) return cmp;
+          } else if (timeA != null) {
+            return 1;
+          } else if (timeB != null) {
+            return -1;
+          }
+          int typeA = a.getTransactionType() == TransactionType.BUY ? 0 : 1;
+          int typeB = b.getTransactionType() == TransactionType.BUY ? 0 : 1;
+          if (typeA != typeB) return Integer.compare(typeA, typeB);
+          if (a.getId() != null && b.getId() != null) {
+            return a.getId().compareTo(b.getId());
+          }
+          return 0;
         })
         .toList();
 
@@ -86,10 +116,14 @@ public class PositionService {
       if (tx.getTransactionType() == TransactionType.BUY) {
         BigDecimal qty = tx.getQuantity();
         BigDecimal resolvedPrice = tx.getPrice();
-        if (tx.getExchangeRate() != null && tx.getExchangeRate().compareTo(BigDecimal.ZERO) > 0) {
+        BigDecimal comm = tx.getCommission() != null ? tx.getCommission() : BigDecimal.ZERO;
+        if (tx.getExchangeRate() != null
+            && tx.getExchangeRate().compareTo(BigDecimal.ONE) != 0
+            && tx.getExchangeRate().compareTo(BigDecimal.ZERO) > 0) {
           resolvedPrice = tx.getPrice().divide(tx.getExchangeRate(), 6, RoundingMode.HALF_UP);
+          comm = comm.divide(tx.getExchangeRate(), 6, RoundingMode.HALF_UP);
         }
-        BigDecimal costNative = resolvedPrice.multiply(qty);
+        BigDecimal costNative = resolvedPrice.multiply(qty).add(comm);
         BigDecimal costBase = tx.getBaseAmount() != null ? tx.getBaseAmount() : costNative;
 
         totalQuantity = totalQuantity.add(qty);
@@ -110,12 +144,7 @@ public class PositionService {
               "Insufficient quantity: transaction on " + tx.getExecutedAt() + " causes negative balance (" + remaining + ")");
         }
         if (totalQuantity.compareTo(BigDecimal.ZERO) > 0) {
-          BigDecimal fraction = sellQty.divide(totalQuantity, 10, RoundingMode.HALF_UP);
-          totalCostNative = totalCostNative.subtract(totalCostNative.multiply(fraction));
-          totalCostBase = totalCostBase.subtract(totalCostBase.multiply(fraction));
-          totalQuantity = remaining;
-
-          if (totalQuantity.compareTo(BigDecimal.ZERO) <= 0) {
+          if (remaining.compareTo(BigDecimal.ZERO) == 0) {
             totalQuantity = BigDecimal.ZERO;
             totalCostNative = BigDecimal.ZERO;
             totalCostBase = BigDecimal.ZERO;
@@ -123,6 +152,10 @@ public class PositionService {
             bondRate = null;
             bondMargin = null;
             termMonths = null;
+          } else {
+            totalCostNative = totalCostNative.multiply(remaining).divide(totalQuantity, 10, RoundingMode.HALF_UP);
+            totalCostBase = totalCostBase.multiply(remaining).divide(totalQuantity, 10, RoundingMode.HALF_UP);
+            totalQuantity = remaining;
           }
         }
       }

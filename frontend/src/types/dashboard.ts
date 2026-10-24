@@ -19,8 +19,8 @@ export interface ChartPoint {
   netMedian?: number;
   netP90?: number;
   netP10?: number;
-  floorNet?: number;
-  realP50?: number;
+
+
   goalProbability?: number;
   weightedTer?: number;
   weightedWhtDrag?: number;

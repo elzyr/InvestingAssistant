@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
   createChart,
   ColorType,
@@ -20,6 +20,20 @@ interface MonthlyProfitBarChartProps {
 
 const POLISH_MONTHS = ['Sty', 'Lut', 'Mar', 'Kwi', 'Maj', 'Cze', 'Lip', 'Sie', 'Wrz', 'Paź', 'Lis', 'Gru'];
 
+const normalizeDateStr = (time: Time | unknown): string => {
+  if (!time) return '';
+  if (typeof time === 'string') return time;
+  if (typeof time === 'object' && time !== null && 'year' in time && 'month' in time) {
+    const obj = time as { year: number; month: number; day?: number };
+    return `${obj.year}-${String(obj.month).padStart(2, '0')}-01`;
+  }
+  if (typeof time === 'number') {
+    const d = new Date(time * 1000);
+    return `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, '0')}-01`;
+  }
+  return '';
+};
+
 export const MonthlyProfitBarChart: React.FC<MonthlyProfitBarChartProps> = ({
   records,
   onSelectMonth,
@@ -30,7 +44,14 @@ export const MonthlyProfitBarChart: React.FC<MonthlyProfitBarChartProps> = ({
   const seriesRef = useRef<ISeriesApi<'Histogram'> | null>(null);
   const [hoveredRecord, setHoveredRecord] = useState<MonthlyReportRecord | null>(null);
 
-  const recordedRecords = records.filter((r) => r.status === 'RECORDED');
+  const recordedRecords = useMemo(
+    () => records.filter((r) => r.status === 'RECORDED'),
+    [records]
+  );
+  const onSelectMonthRef = useRef(onSelectMonth);
+  useEffect(() => {
+    onSelectMonthRef.current = onSelectMonth;
+  }, [onSelectMonth]);
 
   useEffect(() => {
     if (!containerRef.current || recordedRecords.length === 0) return;
@@ -64,7 +85,8 @@ export const MonthlyProfitBarChart: React.FC<MonthlyProfitBarChartProps> = ({
         barSpacing: 36,
         minBarSpacing: 16,
         tickMarkFormatter: (time: Time) => {
-          const d = new Date(String(time));
+          const dateStr = normalizeDateStr(time);
+          const d = new Date(dateStr);
           return POLISH_MONTHS[d.getMonth()] || '';
         },
       },
@@ -88,36 +110,7 @@ export const MonthlyProfitBarChart: React.FC<MonthlyProfitBarChartProps> = ({
     });
     seriesRef.current = series;
 
-    const chartData = recordedRecords.map((r) => {
-      const year = r.year;
-      const monthStr = String(r.monthIndex + 1).padStart(2, '0');
-      const timeStr = `${year}-${monthStr}-01`;
-      const isPositive = r.profitNetMom >= 0;
-      const isSelected = selectedMonthIndex !== undefined && r.monthIndex === selectedMonthIndex;
-      return {
-        time: timeStr,
-        value: r.profitNetMom,
-        color: isSelected
-          ? (isPositive ? '#38bdf8' : '#fb7185')
-          : (isPositive ? '#10b981' : '#f43f5e'),
-      };
-    });
-
-    series.setData(chartData as HistogramData[]);
     chart.timeScale().fitContent();
-
-    const normalizeDateStr = (time: Time | unknown): string => {
-      if (!time) return '';
-      if (typeof time === 'string') return time;
-      if (typeof time === 'object' && 'year' in time && 'month' in time) {
-        return `${time.year}-${String(time.month).padStart(2, '0')}-01`;
-      }
-      if (typeof time === 'number') {
-        const d = new Date(time * 1000);
-        return `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, '0')}-01`;
-      }
-      return '';
-    };
 
     chart.subscribeCrosshairMove((param) => {
       if (!param.time) {
@@ -125,7 +118,7 @@ export const MonthlyProfitBarChart: React.FC<MonthlyProfitBarChartProps> = ({
         return;
       }
       const timeStr = normalizeDateStr(param.time);
-      const match = recordedRecords.find((r) => {
+      const match = recordedRecords.find((r: MonthlyReportRecord) => {
         const expected = `${r.year}-${String(r.monthIndex + 1).padStart(2, '0')}-01`;
         return expected === timeStr;
       });
@@ -133,14 +126,14 @@ export const MonthlyProfitBarChart: React.FC<MonthlyProfitBarChartProps> = ({
     });
 
     chart.subscribeClick((param) => {
-      if (!param.time || !onSelectMonth) return;
+      if (!param.time || !onSelectMonthRef.current) return;
       const timeStr = normalizeDateStr(param.time);
-      const match = recordedRecords.find((r) => {
+      const match = recordedRecords.find((r: MonthlyReportRecord) => {
         const expected = `${r.year}-${String(r.monthIndex + 1).padStart(2, '0')}-01`;
         return expected === timeStr;
       });
       if (match) {
-        onSelectMonth(match.monthIndex);
+        onSelectMonthRef.current(match.monthIndex);
       }
     });
 
@@ -158,8 +151,28 @@ export const MonthlyProfitBarChart: React.FC<MonthlyProfitBarChartProps> = ({
       window.removeEventListener('resize', handleResize);
       chart.remove();
       chartRef.current = null;
+      seriesRef.current = null;
     };
-  }, [recordedRecords, onSelectMonth, selectedMonthIndex]);
+  }, [recordedRecords]);
+
+  useEffect(() => {
+    if (!seriesRef.current || recordedRecords.length === 0) return;
+    const chartData = recordedRecords.map((r: MonthlyReportRecord) => {
+      const year = r.year;
+      const monthStr = String(r.monthIndex + 1).padStart(2, '0');
+      const timeStr = `${year}-${monthStr}-01`;
+      const isPositive = r.profitNetMom >= 0;
+      const isSelected = selectedMonthIndex !== undefined && r.monthIndex === selectedMonthIndex;
+      return {
+        time: timeStr,
+        value: r.profitNetMom,
+        color: isSelected
+          ? (isPositive ? '#38bdf8' : '#fb7185')
+          : (isPositive ? '#10b981' : '#f43f5e'),
+      };
+    });
+    seriesRef.current.setData(chartData as HistogramData[]);
+  }, [recordedRecords, selectedMonthIndex]);
 
   if (recordedRecords.length === 0) return null;
 

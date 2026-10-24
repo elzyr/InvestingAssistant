@@ -110,6 +110,8 @@ export interface BondPriceParams {
   bondMargin?: number | null;
   cpi?: number | null;
   targetDate?: string | Date | number;
+  seriesName?: string | null;
+  termMonths?: number | null;
 }
 
 export function calculateBondCurrentPrice({
@@ -118,28 +120,61 @@ export function calculateBondCurrentPrice({
   bondMargin,
   cpi = 3.6,
   targetDate,
+  seriesName,
+  termMonths,
 }: BondPriceParams): number {
   if (!purchaseDate) return 100;
   const purchaseMs = new Date(purchaseDate).getTime();
   const currentMs = targetDate !== undefined ? new Date(targetDate).getTime() : Date.now();
-  const days = Math.max(0, Math.floor((currentMs - purchaseMs) / (1000 * 60 * 60 * 24)));
+
+  let effectiveMs = currentMs;
+  if (termMonths != null && termMonths > 0) {
+    const d = new Date(purchaseDate);
+    const matDate = new Date(d);
+    matDate.setMonth(matDate.getMonth() + termMonths);
+    if (effectiveMs > matDate.getTime()) {
+      effectiveMs = matDate.getTime();
+    }
+  }
+
+  const days = Math.max(0, Math.floor((effectiveMs - purchaseMs) / (1000 * 60 * 60 * 24)));
+  const prefix = seriesName ? seriesName.trim().toUpperCase() : '';
+  const isNonCompounding =
+    prefix.startsWith('COI') ||
+    prefix.startsWith('ROR') ||
+    prefix.startsWith('DOR') ||
+    prefix.startsWith('OTS');
+
   const isInflation = bondMargin != null && bondMargin > 0;
 
   if (isInflation) {
     const r1 = (bondRate ?? 6.75) / 100;
     const m = (bondMargin ?? 2.0) / 100;
     const cpiRate = (cpi ?? 3.6) / 100;
+    const laterRate = Math.max(0, cpiRate) + m;
     const k = Math.floor(days / 365);
     const curDays = days % 365;
+
+    if (isNonCompounding) {
+      if (k === 0) {
+        return 100 * (1 + r1 * (curDays / 365));
+      }
+      const totalCoupons = 100 * r1 + 100 * (k - 1) * laterRate + 100 * laterRate * (curDays / 365);
+      return 100 + totalCoupons;
+    }
+
     if (k === 0) {
       return 100 * (1 + r1 * (curDays / 365));
     }
-    const laterRate = Math.max(0, cpiRate) + m;
     const fullYearsCompounded = 100 * (1 + r1) * Math.pow(1 + laterRate, k - 1);
     return fullYearsCompounded * (1 + laterRate * (curDays / 365));
   }
 
   const r = (bondRate ?? 6.5) / 100;
+  if (isNonCompounding) {
+    return 100 * (1 + r * (days / 365));
+  }
+
   const k = Math.floor(days / 365);
   const curDays = days % 365;
   return 100 * Math.pow(1 + r, k) * (1 + r * (curDays / 365));
@@ -171,8 +206,6 @@ export interface UnifiedEngineParams {
   inflationAdjustMode?: InflationAdjustMode;
   targetGoal?: number | null;
 }
-
-export type UnifiedTimelineParams = UnifiedEngineParams;
 
 export function getHistoricalPrice(
   symbolPrices: Record<string, number> | undefined,
@@ -235,7 +268,12 @@ export function generateUnifiedPortfolioTimeline({
     .map((tx) => {
       const timeMs = new Date(tx.executedAt).getTime();
       const fx = (tx.currency === baseCurrency ? 1 : rates[tx.currency]) || 1;
-      const txCost = tx.baseAmount ?? (tx.quantity * tx.price + (tx.commission || 0)) * fx;
+      const commission = tx.commission || 0;
+      const txCost = tx.baseAmount ?? (
+        tx.transactionType === 'SELL'
+          ? (tx.quantity * tx.price - commission) * fx
+          : (tx.quantity * tx.price + commission) * fx
+      );
       const inst = instruments[tx.instrumentId];
       const isBond = isBondItem(tx, inst);
       const symbol = inst?.symbol || tx.seriesName || '';
@@ -250,8 +288,11 @@ export function generateUnifiedPortfolioTimeline({
         isBond,
         bondRate: tx.bondRate,
         bondMargin: tx.bondMargin,
+        seriesName: tx.seriesName,
+        termMonths: tx.termMonths,
         symbol,
         fallbackPrice,
+        instrumentId: tx.instrumentId,
       };
     })
     .sort((a, b) => a.timeMs - b.timeMs);
@@ -276,6 +317,8 @@ export function generateUnifiedPortfolioTimeline({
           bondRate: pos.bondRate,
           bondMargin: pos.bondMargin,
           cpi,
+          seriesName: pos.seriesName,
+          termMonths: pos.termMonths,
         })
       : (instrumentPrices[pos.instrumentId] ?? pos.averageBuyPrice);
     const val = pos.quantity * currentPrice * fx;
@@ -364,44 +407,120 @@ export function generateUnifiedPortfolioTimeline({
   for (let i = 0; i <= totalHistorySteps; i++) {
     const isToday = i === totalHistorySteps;
     const tMs = isToday ? now : Math.min(now - 1000, startMs + Math.round(i * stepMs));
-    const dayDateStr = new Date(tMs).toISOString().slice(0, 10);
+    const dDay = new Date(tMs);
+    const dayDateStr = `${dDay.getFullYear()}-${String(dDay.getMonth() + 1).padStart(2, '0')}-${String(dDay.getDate()).padStart(2, '0')}`;
+
+    const holdings = new Map<string, {
+      currentQty: number;
+      costBasis: number;
+      isBond: boolean;
+      symbol: string;
+      fallbackPrice: number;
+      fx: number;
+      lots: {
+        quantity: number;
+        executedAt: string | Date | number;
+        bondRate?: number | null;
+        bondMargin?: number | null;
+        seriesName?: string | null;
+        termMonths?: number | null;
+        fx: number;
+      }[];
+    }>();
+
+    for (let k = 0; k < preparedTxs.length; k++) {
+      const tx = preparedTxs[k];
+      if (tx.timeMs > tMs) break;
+
+      const key = tx.isBond
+        ? `${tx.instrumentId}_${tx.seriesName || ''}`
+        : tx.instrumentId;
+
+      let h = holdings.get(key);
+      if (!h) {
+        h = {
+          currentQty: 0,
+          costBasis: 0,
+          isBond: tx.isBond,
+          symbol: tx.symbol,
+          fallbackPrice: tx.fallbackPrice,
+          fx: tx.fx,
+          lots: [],
+        };
+        holdings.set(key, h);
+      }
+
+      if (tx.transactionType === 'BUY') {
+        h.currentQty += tx.quantity;
+        h.costBasis += tx.txCost;
+        if (tx.isBond) {
+          h.lots.push({
+            quantity: tx.quantity,
+            executedAt: tx.executedAt,
+            bondRate: tx.bondRate,
+            bondMargin: tx.bondMargin,
+            seriesName: tx.seriesName,
+            termMonths: tx.termMonths,
+            fx: tx.fx,
+          });
+        }
+      } else if (tx.transactionType === 'SELL') {
+        if (h.currentQty > 0) {
+          const sellQty = Math.min(tx.quantity, h.currentQty);
+          h.costBasis -= h.costBasis * (sellQty / h.currentQty);
+          h.currentQty -= sellQty;
+          if (h.currentQty <= 0) {
+            h.costBasis = 0;
+            h.currentQty = 0;
+            h.lots = [];
+          } else if (tx.isBond) {
+            let toReduce = sellQty;
+            while (toReduce > 0 && h.lots.length > 0) {
+              if (h.lots[0].quantity <= toReduce) {
+                toReduce -= h.lots[0].quantity;
+                h.lots.shift();
+              } else {
+                h.lots[0].quantity -= toReduce;
+                toReduce = 0;
+              }
+            }
+          }
+        }
+      }
+    }
 
     let bondCostAtT = 0;
     let bondValAtT = 0;
     let nonBondCostAtT = 0;
     let nonBondValAtT = 0;
 
-    for (let k = 0; k < preparedTxs.length; k++) {
-      const tx = preparedTxs[k];
-      if (tx.timeMs > tMs) break;
-      const sign = tx.transactionType === 'SELL' ? -1 : 1;
-
-      if (tx.isBond) {
-        bondCostAtT += sign * tx.txCost;
-        const unitPrice = calculateBondCurrentPrice({
-          purchaseDate: tx.executedAt,
-          bondRate: tx.bondRate,
-          bondMargin: tx.bondMargin,
-          cpi,
-          targetDate: tMs,
-        });
-        bondValAtT += sign * tx.quantity * unitPrice * tx.fx;
+    for (const h of holdings.values()) {
+      if (h.currentQty <= 0) continue;
+      if (h.isBond) {
+        bondCostAtT += h.costBasis;
+        for (const lot of h.lots) {
+          const unitPrice = calculateBondCurrentPrice({
+            purchaseDate: lot.executedAt,
+            bondRate: lot.bondRate,
+            bondMargin: lot.bondMargin,
+            cpi,
+            targetDate: tMs,
+            seriesName: lot.seriesName,
+            termMonths: lot.termMonths,
+          });
+          bondValAtT += lot.quantity * unitPrice * lot.fx;
+        }
       } else {
-        nonBondCostAtT += sign * tx.txCost;
+        nonBondCostAtT += h.costBasis;
         const realClose = getHistoricalPrice(
-          historicalPrices[tx.symbol],
-          historicalSortedDates[tx.symbol],
+          historicalPrices[h.symbol],
+          historicalSortedDates[h.symbol],
           dayDateStr,
-          tx.fallbackPrice
+          h.fallbackPrice
         );
-        nonBondValAtT += sign * tx.quantity * realClose * tx.fx;
+        nonBondValAtT += h.currentQty * realClose * h.fx;
       }
     }
-
-    bondCostAtT = Math.max(0, bondCostAtT);
-    bondValAtT = Math.max(0, bondValAtT);
-    nonBondCostAtT = Math.max(0, nonBondCostAtT);
-    nonBondValAtT = Math.max(0, nonBondValAtT);
 
     let finalCost = bondCostAtT + nonBondCostAtT;
     let rawValuation = bondValAtT + nonBondValAtT;
@@ -449,8 +568,6 @@ export function generateUnifiedPortfolioTimeline({
       year: 'numeric',
     });
 
-    const floorValueAtT = isToday ? currentBondCapital : bondValAtT;
-
     points.push({
       timestamp: tMs,
       dateLabel,
@@ -462,7 +579,6 @@ export function generateUnifiedPortfolioTimeline({
       netMedian: Math.round(valuation),
       netP90: Math.round(valuation),
       netP10: Math.round(valuation),
-      floorNet: Math.round(floorValueAtT),
     });
   }
 
@@ -643,7 +759,6 @@ export function generateUnifiedPortfolioTimeline({
       netMedian: Math.round(adjNetMedian),
       netP90: Math.round(adjNetP90),
       netP10: Math.round(adjNetP10),
-      realP50: Math.round(netMedian / infDeflator),
       goalProbability,
       weightedTer: Number(weightedTer.toFixed(2)),
       weightedWhtDrag: Number(weightedWhtDrag.toFixed(2)),

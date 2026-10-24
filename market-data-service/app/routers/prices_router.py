@@ -1,12 +1,16 @@
 import logging
-from fastapi import APIRouter, HTTPException
+from typing import Optional
+from fastapi import APIRouter, HTTPException, Path, Query
 from app.services.cache_service import cache_service
 from app.services.yahoo_service import YahooService
 
 router = APIRouter(prefix="/api/prices", tags=["Prices"])
 
 @router.get("/{symbol}")
-def get_price(symbol: str, currency: str = None):
+def get_price(
+    symbol: str = Path(..., pattern=r"^[A-Za-z0-9.\-^=_]+$", max_length=20),
+    currency: Optional[str] = Query(None, pattern=r"^[A-Za-z]{3}$"),
+):
     symbol = symbol.upper()
     target_currency = currency.upper() if currency else None
 
@@ -32,10 +36,10 @@ def get_price(symbol: str, currency: str = None):
 
 @router.get("/{symbol}/history")
 def get_history(
-    symbol: str,
+    symbol: str = Path(..., pattern=r"^[A-Za-z0-9.\-^=_]+$", max_length=20),
     period: str = "1mo",
     interval: str = "1d",
-    currency: str = None
+    currency: Optional[str] = Query(None, pattern=r"^[A-Za-z]{3}$"),
 ):
     symbol = symbol.upper()
     target_currency = currency.upper() if currency else None

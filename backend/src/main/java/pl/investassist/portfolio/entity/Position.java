@@ -9,6 +9,11 @@ import pl.investassist.common.enums.Currency;
 @Entity
 @Table(
     name = "position",
+    uniqueConstraints = {
+      @UniqueConstraint(
+          name = "uk_position_port_inst_series",
+          columnNames = {"portfolio_id", "instrument_id", "series_name"})
+    },
     indexes = {
       @Index(name = "idx_position_portfolio_id", columnList = "portfolio_id"),
       @Index(
@@ -21,21 +26,27 @@ public class Position {
   @GeneratedValue(strategy = GenerationType.UUID)
   private UUID id;
 
-  @ManyToOne(fetch = FetchType.LAZY)
+  @Version
+  private Long version;
+
+  @ManyToOne(fetch = FetchType.LAZY, optional = false)
+  @JoinColumn(name = "portfolio_id", nullable = false)
   private Portfolio portfolio;
 
+  @Column(name = "instrument_id", nullable = false)
   private UUID instrumentId;
 
-  @Column(precision = 38, scale = 8)
+  @Column(precision = 38, scale = 8, nullable = false)
   private BigDecimal quantity = BigDecimal.ZERO;
 
-  @Column(precision = 38, scale = 6)
+  @Column(precision = 38, scale = 6, nullable = false)
   private BigDecimal averageBuyPrice = BigDecimal.ZERO;
 
-  @Column(precision = 38, scale = 4)
+  @Column(precision = 38, scale = 4, nullable = false)
   private BigDecimal totalCostBase = BigDecimal.ZERO;
 
   @Enumerated(EnumType.STRING)
+  @Column(name = "currency", nullable = false)
   private Currency currency;
 
   @Column(length = 50)
@@ -59,6 +70,14 @@ public class Position {
 
   public void setId(UUID id) {
     this.id = id;
+  }
+
+  public Long getVersion() {
+    return version;
+  }
+
+  public void setVersion(Long version) {
+    this.version = version;
   }
 
   public Portfolio getPortfolio() {

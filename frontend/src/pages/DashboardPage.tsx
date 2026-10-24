@@ -1,11 +1,7 @@
 import { useState, useEffect, useMemo, useRef } from 'react';
 import { useTranslation } from 'react-i18next';
-import { useAppDispatch, useAppSelector } from '../store/hooks.ts';
-import {
-  fetchPortfolios,
-  fetchPositions,
-  fetchTransactions,
-} from '../store/thunks/portfolio.thunk.ts';
+import { useActivePortfolioData } from '../hooks/useActivePortfolioData.ts';
+import { marketService } from '../services/market.service.ts';
 import { setActivePortfolioId } from '../store/slices/portfolio.slice.ts';
 import { TransactionModal } from '../components/portfolio/TransactionModal.tsx';
 import { CreatePortfolioModal } from '../components/portfolio/CreatePortfolioModal.tsx';
@@ -14,23 +10,21 @@ import { KpiGrid } from '../components/dashboard/KpiGrid.tsx';
 import { PortfolioChart } from '../components/dashboard/PortfolioChart.tsx';
 import { FilterBar } from '../components/dashboard/FilterBar.tsx';
 import { PositionsTable } from '../components/dashboard/PositionsTable.tsx';
-import { marketService } from '../services/market.service.ts';
 import {
   generateUnifiedPortfolioTimeline,
   calculateBondCurrentPrice,
   isBondItem,
 } from '../utils/portfolioUnifiedEngine.ts';
-import { formatMoney } from '../utils/reportsFormatters.ts';
+
 import {
-  calculateHoldingXirr,
-  calculatePortfolioRealMetrics,
-  calculateFxDecomposition,
-  type CashFlow,
-} from '../utils/xirrEngine.ts';
+  buildDashboardPositions,
+  buildDashboardSummary,
+
+} from '../utils/dashboardCalculations.ts';
 import type {
-  PortfolioSummary,
-  Position,
-  SubPosition,
+
+
+
   TaxMode,
   TimeframeOption,
   ChartMetricMode,
@@ -42,29 +36,14 @@ import type {
 import type { TransactionResponse } from '../types/portfolio.ts';
 import type { PortfolioStatsResponse } from '../types/analytics.types.ts';
 
-function getTransactionCashFlow(
-  tx: TransactionResponse,
-  baseCurrency: string,
-  rates: Record<string, number>
-): { amount: number; isOutflow: boolean } {
-  const fx = (tx.currency === baseCurrency ? 1 : rates[tx.currency]) || 1;
-  if (tx.transactionType === 'BUY') {
-    const cost = tx.baseAmount ?? (tx.quantity * tx.price + (tx.commission || 0)) * fx;
-    return { amount: cost, isOutflow: true };
-  } else {
-    const proceeds = tx.baseAmount ?? (tx.quantity * tx.price - (tx.commission || 0)) * fx;
-    return { amount: proceeds, isOutflow: false };
-  }
-}
-
 export const DashboardPage = () => {
-  const dispatch = useAppDispatch();
   const { t } = useTranslation();
-  const { user } = useAppSelector((state) => state.auth);
 
   const {
+    dispatch,
     activePortfolioId,
     portfolios,
+    activePortfolio,
     positions,
     transactions,
     instruments,
@@ -72,19 +51,15 @@ export const DashboardPage = () => {
     rates,
     historicalPrices,
     historicalSortedDates,
+    cpi,
+    baseCurrency,
     loading,
-  } = useAppSelector((state) => state.portfolio);
-
-  const activePortfolio = useMemo(
-    () => portfolios.find((p) => p.id === activePortfolioId),
-    [portfolios, activePortfolioId]
-  );
-  const baseCurrency = activePortfolio?.baseCurrency || user?.baseCurrency || 'PLN';
+    refreshData,
+  } = useActivePortfolioData();
 
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [isCreatePortfolioOpen, setIsCreatePortfolioOpen] = useState(false);
   const [editingTx, setEditingTx] = useState<TransactionResponse | null>(null);
-  const [cpi, setCpi] = useState<number>(3.6);
   const [taxMode, setTaxMode] = useState<TaxMode>('NETTO');
   const [timeframe, setTimeframe] = useState<TimeframeOption>('YTD');
   const [metricMode, setMetricMode] = useState<ChartMetricMode>('PLN');
@@ -101,41 +76,8 @@ export const DashboardPage = () => {
   const [activeFilter, setActiveFilter] = useState<AssetFilterType>('ALL');
   const [sortBy, setSortBy] = useState<SortOption>('value');
 
-  useEffect(() => {
-    dispatch(fetchPortfolios(baseCurrency));
-  }, [dispatch, baseCurrency]);
-
-  useEffect(() => {
-    marketService
-      .getInflation()
-      .then((inf) => {
-        if (inf && inf.currentCpi != null) {
-          setCpi(inf.currentCpi);
-        }
-      })
-      .catch(() => {});
-  }, []);
-
-  useEffect(() => {
-    if (activePortfolioId) {
-      dispatch(fetchPositions(activePortfolioId));
-      dispatch(fetchTransactions(activePortfolioId));
-    }
-  }, [dispatch, activePortfolioId]);
-
   const handleRefresh = () => {
-    if (activePortfolioId) {
-      dispatch(fetchPositions(activePortfolioId));
-      dispatch(fetchTransactions(activePortfolioId));
-    }
-    marketService
-      .getInflation()
-      .then((inf) => {
-        if (inf && inf.currentCpi != null) {
-          setCpi(inf.currentCpi);
-        }
-      })
-      .catch(() => {});
+    refreshData();
   };
 
   const enrichedHoldings = useMemo(() => {
@@ -152,6 +94,8 @@ export const DashboardPage = () => {
             bondMargin: pos.bondMargin,
             cpi,
             targetDate: nowTimestamp,
+            seriesName: pos.seriesName,
+            termMonths: pos.termMonths,
           })
         : (quotes[symbol]?.price && quotes[symbol].price > 0 ? quotes[symbol].price : pos.averageBuyPrice);
 
@@ -163,6 +107,8 @@ export const DashboardPage = () => {
           bondMargin: pos.bondMargin,
           cpi,
           targetDate: nowTimestamp - 86400000,
+          seriesName: pos.seriesName,
+          termMonths: pos.termMonths,
         });
       } else if (quotes[symbol]?.previousClose && quotes[symbol].previousClose! > 0) {
         previousPrice = quotes[symbol].previousClose!;
@@ -170,7 +116,8 @@ export const DashboardPage = () => {
         const dates = historicalSortedDates[inst.symbol];
         const dateMap = historicalPrices[inst.symbol];
         if (dates && dates.length > 0) {
-          const todayDateStr = new Date(nowTimestamp).toISOString().slice(0, 10);
+          const dNow = new Date(nowTimestamp);
+          const todayDateStr = `${dNow.getFullYear()}-${String(dNow.getMonth() + 1).padStart(2, '0')}-${String(dNow.getDate()).padStart(2, '0')}`;
           const lastDate = dates[dates.length - 1];
           if (lastDate >= todayDateStr && dates.length >= 2) {
             previousPrice = dateMap[dates[dates.length - 2]] ?? currentPrice;
@@ -212,6 +159,7 @@ export const DashboardPage = () => {
         dailyChange,
         purchaseDate: pos.purchaseDate,
         bondRate: pos.bondRate,
+        bondMargin: pos.bondMargin,
       };
     });
   }, [positions, instruments, quotes, rates, baseCurrency, cpi, nowTimestamp, historicalPrices, historicalSortedDates]);
@@ -265,9 +213,7 @@ export const DashboardPage = () => {
           }
         }
       })
-      .catch((err) => {
-        console.error('Failed to fetch empirical stats:', err);
-      });
+      .catch(() => {});
 
     return () => {
       isCancelled = true;
@@ -298,421 +244,53 @@ export const DashboardPage = () => {
   const isIkeAccount = activePortfolio?.name.toLowerCase().includes('ike') || false;
   const shouldApplyTax = taxMode === 'NETTO' && !isIkeAccount;
 
-  const dashboardPositions = useMemo((): Position[] => {
-    const list: Position[] = [];
+  const dashboardPositions = useMemo(
+    () =>
+      buildDashboardPositions({
+        enrichedHoldings,
+        transactions,
+        totalPortfolioValue,
+        baseCurrency,
+        rates,
+        shouldApplyTax,
+        nowTimestamp,
+      }),
+    [enrichedHoldings, transactions, totalPortfolioValue, baseCurrency, rates, shouldApplyTax, nowTimestamp]
+  );
 
-    const nonBonds = enrichedHoldings.filter((h) => !h.isBond);
-    for (const h of nonBonds) {
-      const allHoldingTransactions = transactions
-        .filter((t) => t.instrumentId === h.instrumentId)
-        .sort((a, b) => new Date(a.executedAt).getTime() - new Date(b.executedAt).getTime());
-
-      const buyTransactions = allHoldingTransactions.filter((t) => t.transactionType === 'BUY');
-
-      const isForeign = h.currency !== baseCurrency;
-      const currentFx = (isForeign ? rates[h.currency] : 1) || 1;
-
-      const subPositions: SubPosition[] = buyTransactions.map((tx) => {
-        const { amount: txCost } = getTransactionCashFlow(tx, baseCurrency, rates);
-        const fx = (tx.currency === baseCurrency ? 1 : rates[tx.currency]) || 1;
-        const txVal = tx.quantity * h.currentPrice * fx;
-        const txProfitGross = txVal - txCost;
-        const txTax = shouldApplyTax && txProfitGross > 0 ? txProfitGross * 0.19 : 0;
-        const txProfit = txProfitGross - txTax;
-        const txProfitPct = txCost > 0 ? (txProfit / txCost) * 100 : 0;
-        const txNetVal = txVal - txTax;
-
-        const subXirrResult = calculateHoldingXirr(
-          [{ amount: -txCost, date: tx.executedAt }],
-          txNetVal,
-          nowTimestamp
-        );
-
-        let subDecomp: { marketReturnPct: number; fxReturnPct: number } | null = null;
-        if (isForeign) {
-          const txBuyFx =
-            tx.exchangeRate ||
-            (tx.baseAmount && tx.quantity * tx.price > 0
-              ? tx.baseAmount / (tx.quantity * tx.price)
-              : rates[tx.currency]) ||
-            1;
-          const decomp = calculateFxDecomposition({
-            buyPrice: tx.price,
-            currentPrice: h.currentPrice,
-            buyExchangeRate: txBuyFx,
-            currentExchangeRate: currentFx,
-          });
-          if (decomp) {
-            subDecomp = {
-              marketReturnPct: decomp.marketReturnPct,
-              fxReturnPct: decomp.fxReturnPct,
-            };
-          }
-        }
-
-        return {
-          id: tx.id,
-          name: new Date(tx.executedAt).toLocaleDateString('pl-PL'),
-          subName: `${tx.quantity} szt. po ${tx.price.toFixed(2)} ${tx.currency}`,
-          sharePercent: 0,
-          priceFormatted: `${txCost.toLocaleString('pl-PL', { maximumFractionDigits: 0 })} ${baseCurrency}`,
-          valueFormatted: `${txVal.toLocaleString('pl-PL', { maximumFractionDigits: 0 })} ${baseCurrency}`,
-          profitFormatted: `${txProfit >= 0 ? '+' : ''}${txProfit.toLocaleString('pl-PL', { maximumFractionDigits: 0 })} ${baseCurrency}`,
-          profitPercentFormatted: `${txProfitPct >= 0 ? '+' : ''}${txProfitPct.toFixed(1)}%`,
-          transactionId: tx.id,
-          xirr: subXirrResult.xirr,
-          isXirrFallback: subXirrResult.isSimpleFallback,
-          fxDecomposition: subDecomp,
-        };
-      });
-
-      const posProfitGross = h.profit;
-      const posTax = shouldApplyTax && posProfitGross > 0 ? posProfitGross * 0.19 : 0;
-      const posProfit = posProfitGross - posTax;
-      const posProfitPct = h.totalCost > 0 ? (posProfit / h.totalCost) * 100 : 0;
-      const posNetVal = h.totalValue - posTax;
-
-      const parentCashFlows: CashFlow[] = allHoldingTransactions.map((tx) => {
-        const { amount, isOutflow } = getTransactionCashFlow(tx, baseCurrency, rates);
-        return { amount: isOutflow ? -amount : amount, date: tx.executedAt };
-      });
-      if (parentCashFlows.length === 0 && h.totalCost > 0) {
-        parentCashFlows.push({ amount: -h.totalCost, date: h.purchaseDate || nowTimestamp });
-      }
-
-      const posHoldingResult = calculateHoldingXirr(parentCashFlows, posNetVal, nowTimestamp);
-
-      let parentDecomp: { marketReturnPct: number; fxReturnPct: number } | null = null;
-      if (isForeign) {
-        const foreignTotalCost = h.quantity * h.averagePrice;
-        const avgBuyFx =
-          foreignTotalCost > 0 && h.totalCost > 0
-            ? h.totalCost / foreignTotalCost
-            : rates[h.currency] || 1;
-        const decomp = calculateFxDecomposition({
-          buyPrice: h.averagePrice,
-          currentPrice: h.currentPrice,
-          buyExchangeRate: avgBuyFx,
-          currentExchangeRate: currentFx,
-        });
-        if (decomp) {
-          parentDecomp = {
-            marketReturnPct: decomp.marketReturnPct,
-            fxReturnPct: decomp.fxReturnPct,
-          };
-        }
-      }
-
-      list.push({
-        id: h.id,
-        ticker: h.ticker,
-        name: h.name,
-        type: h.assetType,
-        quantityFormatted: `${h.quantity.toLocaleString('pl-PL')} szt.`,
-        sharePercent: totalPortfolioValue > 0 ? (h.totalValue / totalPortfolioValue) * 100 : 0,
-        priceFormatted: `${h.currentPrice.toLocaleString('pl-PL', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} ${h.currency}`,
-        valueFormatted: `${h.totalValue.toLocaleString('pl-PL', { maximumFractionDigits: 0 })} ${baseCurrency}`,
-        profitFormatted: `${posProfit >= 0 ? '+' : ''}${posProfit.toLocaleString('pl-PL', { maximumFractionDigits: 0 })} ${baseCurrency}`,
-        profitPercentFormatted: `${posProfitPct >= 0 ? '+' : ''}${posProfitPct.toFixed(1)}%`,
-        isProfit: posProfit >= 0,
-        subPositionsType: 'purchases',
-        subPositions,
-        xirr: posHoldingResult.xirr,
-        isXirrFallback: posHoldingResult.isSimpleFallback,
-        fxDecomposition: parentDecomp,
-      });
-    }
-
-    const bondHoldings = enrichedHoldings.filter((h) => h.isBond);
-    const bondFamilies: Record<string, typeof bondHoldings> = {};
-
-    for (const bh of bondHoldings) {
-      let family = 'EDO';
-      if (bh.ticker.startsWith('TOS')) family = 'TOS';
-      else if (bh.ticker.startsWith('COI')) family = 'COI';
-      else if (bh.ticker.startsWith('ROR')) family = 'ROR';
-      else if (bh.ticker.startsWith('DOR')) family = 'DOR';
-
-      if (!bondFamilies[family]) {
-        bondFamilies[family] = [];
-      }
-      bondFamilies[family].push(bh);
-    }
-
-    Object.entries(bondFamilies).forEach(([family, items]) => {
-      const sumQty = items.reduce((s, b) => s + b.quantity, 0);
-      const sumVal = items.reduce((s, b) => s + b.totalValue, 0);
-      const sumCost = items.reduce((s, b) => s + b.totalCost, 0);
-      const sumProfitGross = sumVal - sumCost;
-      const bondTax = shouldApplyTax && sumProfitGross > 0 ? sumProfitGross * 0.19 : 0;
-      const sumProfit = sumProfitGross - bondTax;
-      const sumProfitPct = sumCost > 0 ? (sumProfit / sumCost) * 100 : 0;
-      const avgPrice = sumQty > 0 ? sumVal / sumQty : 100;
-
-      const familyName =
-        family === 'EDO'
-          ? 'EDO (10-letnie)'
-          : family === 'TOS'
-          ? 'TOS (3-letnie)'
-          : family === 'COI'
-          ? 'COI (4-letnie)'
-          : `${family} Obligacje`;
-
-      const familyRates = items
-        .map((b) => b.bondRate)
-        .filter((r): r is number => r != null);
-      const minRate = familyRates.length ? Math.min(...familyRates) : null;
-      const maxRate = familyRates.length ? Math.max(...familyRates) : null;
-      const fixedRateLabel =
-        minRate == null
-          ? 'Stałe oprocentowanie'
-          : minRate === maxRate
-          ? `Stałe ${minRate.toFixed(2)}%`
-          : `Stałe ${minRate.toFixed(2)}–${maxRate!.toFixed(2)}%`;
-
-      const typeDesc =
-        family === 'EDO'
-          ? 'Antyinflacyjne'
-          : family === 'TOS'
-          ? fixedRateLabel
-          : 'Indeksowane';
-
-      const yearlyGroups: Record<number, typeof items> = {};
-      items.forEach((item) => {
-        const year = item.purchaseDate
-          ? new Date(item.purchaseDate).getFullYear()
-          : new Date().getFullYear();
-        if (!yearlyGroups[year]) {
-          yearlyGroups[year] = [];
-        }
-        yearlyGroups[year].push(item);
-      });
-
-      const yearlyCashFlows: CashFlow[] = [];
-      const subPositions: SubPosition[] = Object.entries(yearlyGroups)
-        .sort(([yA], [yB]) => Number(yB) - Number(yA))
-        .map(([year, yearItems]) => {
-          const yQty = yearItems.reduce((s, i) => s + i.quantity, 0);
-          const yVal = yearItems.reduce((s, i) => s + i.totalValue, 0);
-          const yCost = yearItems.reduce((s, i) => s + i.totalCost, 0);
-          const yProfitGross = yVal - yCost;
-          const yTax = shouldApplyTax && yProfitGross > 0 ? yProfitGross * 0.19 : 0;
-          const yProfit = yProfitGross - yTax;
-          const yProfitPct = yCost > 0 ? (yProfit / yCost) * 100 : 0;
-          const yNetVal = yVal - yTax;
-          const yPrice = yQty > 0 ? yVal / yQty : 100;
-          const yShare = totalPortfolioValue > 0 ? (yVal / totalPortfolioValue) * 100 : 0;
-          const purchaseYear = Number(year);
-          const yearInstrumentIds = [...new Set(yearItems.map((i) => i.instrumentId))];
-          const yearTransactions = transactions.filter(
-            (t) =>
-              t.transactionType === 'BUY' &&
-              yearInstrumentIds.includes(t.instrumentId) &&
-              t.executedAt &&
-              new Date(t.executedAt).getFullYear() === purchaseYear
-          );
-          const yearTx =
-            yearInstrumentIds.length === 1 && yearTransactions.length === 1
-              ? yearTransactions[0]
-              : undefined;
-
-          const yearFlows: CashFlow[] = [];
-          if (yearTransactions.length > 0) {
-            yearTransactions.forEach((tx) => {
-              const { amount } = getTransactionCashFlow(tx, baseCurrency, rates);
-              yearFlows.push({ amount: -amount, date: tx.executedAt });
-            });
-          } else {
-            yearItems.forEach((item) => {
-              yearFlows.push({
-                amount: -item.totalCost,
-                date: item.purchaseDate || `${year}-01-01`,
-              });
-            });
-          }
-
-          yearlyCashFlows.push(...yearFlows);
-
-          const yHoldingResult = calculateHoldingXirr(yearFlows, yNetVal, nowTimestamp);
-
-          return {
-            id: `${family}-${year}`,
-            name: `Rocznik ${year}`,
-            subName: `${yQty.toLocaleString('pl-PL')} szt. (Wkład ${yCost.toLocaleString('pl-PL', { maximumFractionDigits: 0 })} ${baseCurrency})`,
-            sharePercent: yShare,
-            shareNote: 'portfela',
-            priceFormatted: `${yPrice.toLocaleString('pl-PL', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} ${baseCurrency}`,
-            valueFormatted: formatMoney(yVal, baseCurrency),
-            profitFormatted: formatMoney(yProfit, baseCurrency, true),
-            profitPercentFormatted: `+${yProfitPct.toFixed(1)}%`,
-            transactionId: yearTx?.id,
-            xirr: yHoldingResult.xirr,
-            isXirrFallback: yHoldingResult.isSimpleFallback,
-            fxDecomposition: null,
-          };
-        });
-
-      const familyHoldingResult = calculateHoldingXirr(
-        yearlyCashFlows,
-        sumVal - bondTax,
-        nowTimestamp
-      );
-
-      list.push({
-        id: `bond-${family}`,
-        ticker: familyName,
-        name: typeDesc,
-        type: 'BOND',
-        quantityFormatted: `${sumQty.toLocaleString('pl-PL')} szt.`,
-        sharePercent: totalPortfolioValue > 0 ? (sumVal / totalPortfolioValue) * 100 : 0,
-        priceFormatted: `${avgPrice.toLocaleString('pl-PL', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} ${baseCurrency}`,
-        valueFormatted: formatMoney(sumVal, baseCurrency),
-        profitFormatted: formatMoney(sumProfit, baseCurrency, true),
-        profitPercentFormatted: `+${sumProfitPct.toFixed(1)}% (Odsetki)`,
-        isProfit: true,
-        subPositionsType: 'bonds_yearly',
-        subPositions,
-        xirr: familyHoldingResult.xirr,
-        isXirrFallback: familyHoldingResult.isSimpleFallback,
-        fxDecomposition: null,
-      });
-    });
-
-    return list;
-  }, [enrichedHoldings, transactions, totalPortfolioValue, baseCurrency, rates, shouldApplyTax, nowTimestamp]);
-
-  const dashboardSummary = useMemo((): PortfolioSummary => {
-    const grossProfit = totalPortfolioValue - totalPortfolioCost;
-
-    let totalBelkaTax = 0;
-    if (shouldApplyTax) {
-      enrichedHoldings.forEach((h) => {
-        if (h.profit > 0) {
-          totalBelkaTax += h.profit * 0.19;
-        }
-      });
-    }
-
-    const profit = grossProfit - totalBelkaTax;
-    const profitPct = totalPortfolioCost > 0 ? (profit / totalPortfolioCost) * 100 : 0;
-    const netPortfolioVal = totalPortfolioValue - totalBelkaTax;
-
-    const portfolioFlows: CashFlow[] = [];
-    const hurdleTransactions: { cost: number; executedAt: string | Date | number }[] = [];
-
-    const txInstrumentIds = new Set(transactions.map((t) => t.instrumentId));
-
-    transactions.forEach((tx) => {
-      const { amount, isOutflow } = getTransactionCashFlow(tx, baseCurrency, rates);
-      portfolioFlows.push({ amount: isOutflow ? -amount : amount, date: tx.executedAt });
-    });
-
-    enrichedHoldings.forEach((h) => {
-      if (!txInstrumentIds.has(h.instrumentId) && h.totalCost > 0) {
-        const execDate = h.purchaseDate || nowTimestamp;
-        portfolioFlows.push({ amount: -h.totalCost, date: execDate });
-      }
-    });
-
-    const activeHoldings = enrichedHoldings.filter((h) => h.quantity > 0 && h.totalCost > 0);
-    for (const h of activeHoldings) {
-      const holdingBuyTxs = transactions.filter(
-        (t) => t.instrumentId === h.instrumentId && t.transactionType === 'BUY'
-      );
-      if (holdingBuyTxs.length > 0) {
-        const totalBuyCost = holdingBuyTxs.reduce((sum, tx) => {
-          const { amount } = getTransactionCashFlow(tx, baseCurrency, rates);
-          return sum + amount;
-        }, 0);
-        const scale = totalBuyCost > 0 ? Math.min(1, h.totalCost / totalBuyCost) : 1;
-        holdingBuyTxs.forEach((tx) => {
-          const { amount } = getTransactionCashFlow(tx, baseCurrency, rates);
-          hurdleTransactions.push({ cost: amount * scale, executedAt: tx.executedAt });
-        });
-      } else {
-        hurdleTransactions.push({
-          cost: h.totalCost,
-          executedAt: h.purchaseDate || nowTimestamp,
-        });
-      }
-    }
-
-    const portfolioHoldingRes = calculateHoldingXirr(
-      portfolioFlows,
-      netPortfolioVal,
-      nowTimestamp
-    );
-    const nominalXirr = portfolioHoldingRes.xirr;
-
-    const realMetrics = calculatePortfolioRealMetrics({
-      transactions: hurdleTransactions,
-      portfolioValue: netPortfolioVal,
-      cpi: cpi ?? 3.6,
-      nominalXirr,
-      currentDate: nowTimestamp,
-    });
-
-    const taxNoteFormatted = shouldApplyTax
-      ? `Belka: -${formatMoney(totalBelkaTax, baseCurrency)}`
-      : isIkeAccount
-      ? 'IKE (zwolnione z Belki)'
-      : undefined;
-
-    const totalDailyChange = enrichedHoldings.reduce((sum, h) => sum + (h.dailyChange || 0), 0);
-    const prevPortfolioVal = totalPortfolioValue - totalDailyChange;
-    const dailyChangePct = prevPortfolioVal > 0 ? (totalDailyChange / prevPortfolioVal) * 100 : 0;
-
-    const annualizedUnit = t('dashboard.annualizedReturn', 'r/r');
-    const aboveCpiUnit = t('dashboard.aboveCpi', 'ponad CPI');
-    const taxNoteSuffix = shouldApplyTax ? t('dashboard.afterTax', 'po podatku') : t('dashboard.return', 'zwrotu');
-
-    let totalProfitPercentFormatted: string;
-    if (nominalXirr != null && !portfolioHoldingRes.isSimpleFallback) {
-      const xirrPct = (nominalXirr * 100).toFixed(1);
-      totalProfitPercentFormatted = `${profitPct >= 0 ? '+' : ''}${profitPct.toFixed(1)}% · ${xirrPct}% ${annualizedUnit}`;
-    } else {
-      totalProfitPercentFormatted = `${profitPct >= 0 ? '+' : ''}${profitPct.toFixed(1)}% ${taxNoteSuffix}`;
-    }
-
-    let realProfitPercentFormatted: string;
-    if (realMetrics.realXirr != null && !portfolioHoldingRes.isSimpleFallback) {
-      const realXirrPct = (realMetrics.realXirr * 100).toFixed(1);
-      realProfitPercentFormatted = `${realMetrics.realProfitPercent >= 0 ? '+' : ''}${realMetrics.realProfitPercent.toFixed(1)}% ${aboveCpiUnit} · ${realXirrPct}% ${annualizedUnit}`;
-    } else {
-      realProfitPercentFormatted = `${realMetrics.realProfitPercent >= 0 ? '+' : ''}${realMetrics.realProfitPercent.toFixed(1)}% ${aboveCpiUnit}`;
-    }
-
-    return {
-      portfolioValueFormatted: formatMoney(totalPortfolioValue, baseCurrency),
-      dailyChangeAmountFormatted: formatMoney(totalDailyChange, baseCurrency, true),
-      dailyChangePercentFormatted: `${totalDailyChange >= 0 ? '+' : ''}${dailyChangePct.toFixed(2)}% dzisiaj`,
-      totalCostFormatted: formatMoney(totalPortfolioCost, baseCurrency),
-      totalProfitAmountFormatted: formatMoney(profit, baseCurrency, true),
-      totalProfitPercentFormatted,
-      realProfitAmountFormatted: formatMoney(realMetrics.realProfitAmount, baseCurrency, true),
-      realProfitPercentFormatted,
-      positionCount: positions.length,
+  const dashboardSummary = useMemo(
+    () =>
+      buildDashboardSummary({
+        totalPortfolioValue,
+        totalPortfolioCost,
+        enrichedHoldings,
+        positions,
+        transactions,
+        baseCurrency,
+        rates,
+        cpi,
+        taxMode,
+        shouldApplyTax,
+        isIkeAccount,
+        nowTimestamp,
+        t: (k: string, d?: string) => (d !== undefined ? t(k, d) : t(k)),
+      }),
+    [
+      totalPortfolioValue,
+      totalPortfolioCost,
+      enrichedHoldings,
+      positions,
+      transactions,
+      baseCurrency,
+      rates,
+      cpi,
       taxMode,
-      profitLabel: shouldApplyTax ? 'Zysk netto' : 'Zysk brutto',
-      taxNoteFormatted,
-      nominalXirr,
-      realXirr: realMetrics.realXirr,
-    };
-  }, [
-    totalPortfolioValue,
-    totalPortfolioCost,
-    enrichedHoldings,
-    transactions,
-    baseCurrency,
-    rates,
-    cpi,
-    positions.length,
-    taxMode,
-    shouldApplyTax,
-    isIkeAccount,
-    nowTimestamp,
-    t,
-  ]);
+      shouldApplyTax,
+      isIkeAccount,
+      nowTimestamp,
+      t,
+    ]
+  );
 
   const chartData = useMemo(() => {
     const instrumentPrices: Record<string, number> = {};

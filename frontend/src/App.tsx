@@ -23,11 +23,9 @@ function App() {
     <BrowserRouter>
       <Suspense fallback={<div className="min-h-screen bg-slate-950 flex items-center justify-center text-slate-400">Ładowanie...</div>}>
         <Routes>
-          {/* Public auth routes */}
           <Route path="/login" element={<LoginPage />} />
           <Route path="/register" element={<RegisterPage />} />
 
-          {/* Protected application routes */}
           <Route element={<ProtectedRoute />}>
             <Route element={<AppLayout />}>
               <Route path="/" element={<DashboardPage />} />
@@ -36,7 +34,6 @@ function App() {
             </Route>
           </Route>
 
-          {/* Fallback route */}
           <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>
       </Suspense>

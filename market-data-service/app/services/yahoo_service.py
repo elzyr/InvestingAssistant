@@ -12,22 +12,36 @@ _adapter = HTTPAdapter(pool_connections=10, pool_maxsize=20, max_retries=Retry(t
 _session.mount("https://", _adapter)
 _session.mount("http://", _adapter)
 
+import re
+
 class YahooService:
     @staticmethod
     def get_exchange_rate(from_currency: str, to_currency: str, date_str: str = None) -> float:
+        if not re.match(r"^[A-Za-z]{3}$", from_currency or "") or not re.match(r"^[A-Za-z]{3}$", to_currency or ""):
+            raise HTTPException(status_code=400, detail="Currency code must be a 3-letter ISO code")
+
         from_cur = from_currency.upper()
         to_cur = to_currency.upper()
         if from_cur == to_cur:
             return 1.0
 
-        cache_key = f"rate:{from_cur}:{to_cur}:{date_str}" if date_str else f"rate:{from_cur}:{to_cur}"
+        clean_date = None
+        if date_str:
+            clean_date = date_str[:10]
+            try:
+                datetime.strptime(clean_date, "%Y-%m-%d")
+            except ValueError:
+                raise HTTPException(status_code=400, detail=f"Invalid date format: {date_str}. Expected YYYY-MM-DD")
+
+        cache_key = f"rate:{from_cur}:{to_cur}:{clean_date}" if clean_date else f"rate:{from_cur}:{to_cur}"
         cached_data = cache_service.get(cache_key)
         if cached_data is not None and "rate" in cached_data:
             return float(cached_data["rate"])
 
         rate = None
-        if date_str:
-            clean_date = date_str[:10]
+        is_spot_fallback = False
+
+        if clean_date:
             if from_cur == "PLN" or to_cur == "PLN":
                 foreign_code = to_cur if from_cur == "PLN" else from_cur
                 try:
@@ -61,6 +75,8 @@ class YahooService:
                     logging.warning(f"Yahoo historical FX rate fetch failed for {from_cur}->{to_cur} on {clean_date}: {e}")
 
         if rate is None:
+            if clean_date:
+                is_spot_fallback = True
             ticker = f"{from_cur}{to_cur}=X"
             stock = yf.Ticker(ticker)
             info = stock.fast_info
@@ -73,8 +89,10 @@ class YahooService:
             else:
                 rate = float(price)
 
-        expire = 86400 if date_str else 300
-        cache_service.set(cache_key, {"rate": rate}, expire=expire)
+        if not is_spot_fallback:
+            expire = 86400 if clean_date else 300
+            cache_service.set(cache_key, {"rate": rate}, expire=expire)
+
         return rate
 
     @staticmethod

@@ -4,7 +4,6 @@ import {checkAuthThunk, loginThunk, logoutThunk, registerThunk} from "../thunks/
 
 const initialState: AuthState = {
     user: null,
-    accessToken: null,
     isAuthenticated: false,
     isInitialized: false,
     loading: false,
@@ -20,7 +19,6 @@ export const authSlice = createSlice({
         },
         forceLogout: (state) => {
             state.user = null;
-            state.accessToken = null;
             state.isAuthenticated = false;
             state.loading = false;
             state.error = null;
@@ -36,7 +34,6 @@ export const authSlice = createSlice({
                 state.loading = false;
                 state.isAuthenticated = true;
                 state.user = action.payload.user;
-                state.accessToken = action.payload.accessToken;
                 state.error = null;
             })
             .addCase(loginThunk.rejected, (state, action) => {
@@ -51,7 +48,6 @@ export const authSlice = createSlice({
                 state.loading = false;
                 state.isAuthenticated = true;
                 state.user = action.payload.user;
-                state.accessToken = action.payload.accessToken;
                 state.error = null;
             })
             .addCase(registerThunk.rejected, (state, action) => {
@@ -63,19 +59,16 @@ export const authSlice = createSlice({
                 state.isInitialized = true;
                 state.isAuthenticated = true;
                 state.user = action.payload.user;
-                state.accessToken = action.payload.accessToken;
             })
             .addCase(checkAuthThunk.rejected, (state) => {
                 state.loading = false;
                 state.isInitialized = true;
                 state.isAuthenticated = false;
                 state.user = null;
-                state.accessToken = null;
-            })
+                })
             .addCase(logoutThunk.fulfilled, (state) => {
                 state.user = null;
-                state.accessToken = null;
-                state.isAuthenticated = false;
+                    state.isAuthenticated = false;
                 state.loading = false;
                 state.error = null;
             });
