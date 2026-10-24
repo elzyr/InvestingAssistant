@@ -1,20 +1,19 @@
 from typing import Optional
 from fastapi import APIRouter, HTTPException
 import logging
-from app.services.cache_service import cache_service
 from app.services.yahoo_service import YahooService
 
 router = APIRouter(prefix="/api/currencies", tags=["Currencies"])
 
 @router.get("/rate")
 def get_exchange_rate(
-    from_currency: str, 
-    to_currency: str, 
+    from_currency: str,
+    to_currency: str,
     date: Optional[str] = None
 ):
     from_currency = from_currency.upper()
     to_currency = to_currency.upper()
-    
+
     if from_currency == to_currency:
         return {"from": from_currency, "to": to_currency, "rate": 1.0}
 

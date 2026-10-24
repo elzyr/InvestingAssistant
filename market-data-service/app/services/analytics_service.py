@@ -1,11 +1,9 @@
 import datetime
 import logging
-from typing import Dict, Any, List, Optional
+from typing import Dict, Any, List
 import numpy as np
 import yfinance as yf
 from app.services.market_history_repo import market_history_repo
-
-POLISH_BELKA_TAX_RATE = 0.19
 
 UCITS_FALLBACK_MAP = {
     "VWCE.DE": {"ter": 0.0022, "trailingPe": 21.0, "dividendYield": 0.015, "beta": 1.0},
@@ -197,116 +195,4 @@ class AnalyticsService:
             "weightedDividendYield": round(weighted_dividend_yield, 4),
             "portfolioBeta": round(portfolio_beta, 2),
             "instruments": instruments_metrics,
-        }
-
-    @staticmethod
-    def simulate_monte_carlo(
-        initial_amount: float,
-        monthly_contribution: float,
-        years: int,
-        simulations_count: int,
-        equity_weight: float,
-        equity_return: float,
-        equity_volatility: float,
-        equity_ter: float,
-        bond_weight: float,
-        bond_rate: float,
-        is_tax_exempt: bool,
-        target_goal: Optional[float]
-    ) -> Dict[str, Any]:
-        simulations_count = max(100, min(simulations_count, 20000))
-        years = max(1, min(years, 50))
-        total_months = years * 12
-        dt = 1.0 / 12.0
-
-        total_alloc = equity_weight + bond_weight
-        if total_alloc > 0:
-            eq_w = equity_weight / total_alloc
-            bd_w = bond_weight / total_alloc
-        else:
-            eq_w, bd_w = 1.0, 0.0
-
-        mu_net = equity_return - equity_ter
-        sigma = equity_volatility
-
-        rng = np.random.default_rng(42)
-        Z = rng.standard_normal((simulations_count, total_months))
-
-        drift_term = (mu_net - 0.5 * (sigma ** 2)) * dt
-        drift_term_nofee = (equity_return - 0.5 * (sigma ** 2)) * dt
-        diff_term = sigma * np.sqrt(dt)
-
-        equity_factors = np.exp(drift_term + diff_term * Z)
-        equity_factors_nofee = np.exp(drift_term_nofee + diff_term * Z)
-        bond_factor = 1.0 + (bond_rate * dt)
-
-        equity_val = np.full(simulations_count, initial_amount * eq_w, dtype=np.float64)
-        bond_val = np.full(simulations_count, initial_amount * bd_w, dtype=np.float64)
-        equity_val_nofee = np.full(simulations_count, initial_amount * eq_w, dtype=np.float64)
-        bond_val_nofee = np.full(simulations_count, initial_amount * bd_w, dtype=np.float64)
-
-        monthly_equity = monthly_contribution * eq_w
-        monthly_bond = monthly_contribution * bd_w
-
-        timeline = []
-        invested = initial_amount
-
-        for m in range(1, total_months + 1):
-            equity_val = equity_val * equity_factors[:, m - 1] + monthly_equity
-            bond_val = bond_val * bond_factor + monthly_bond
-
-            equity_val_nofee = equity_val_nofee * equity_factors_nofee[:, m - 1] + monthly_equity
-            bond_val_nofee = bond_val_nofee * bond_factor + monthly_bond
-
-            invested += monthly_contribution
-
-            if m % 12 == 0:
-                current_year = m // 12
-                total_current = equity_val + bond_val
-                total_current_nofee = equity_val_nofee + bond_val_nofee
-
-                if not is_tax_exempt:
-                    gain = np.maximum(0.0, total_current - invested)
-                    val_for_p = total_current - POLISH_BELKA_TAX_RATE * gain
-                else:
-                    val_for_p = total_current
-
-                drag = np.maximum(0.0, total_current_nofee - total_current)
-                timeline.append({
-                    "year": current_year,
-                    "p10": round(float(np.percentile(val_for_p, 10)), 2),
-                    "p50": round(float(np.percentile(val_for_p, 50)), 2),
-                    "p90": round(float(np.percentile(val_for_p, 90)), 2),
-                    "feeDrag": round(float(np.percentile(drag, 50)), 2),
-                    "invested": round(float(invested), 2),
-                })
-
-        final_val = equity_val + bond_val
-        final_val_nofee = equity_val_nofee + bond_val_nofee
-
-        if not is_tax_exempt:
-            final_gain = np.maximum(0.0, final_val - invested)
-            final_val_net = final_val - POLISH_BELKA_TAX_RATE * final_gain
-        else:
-            final_val_net = final_val
-
-        final_fee_drag = np.maximum(0.0, final_val_nofee - final_val)
-        success_rate = (
-            float(np.mean(final_val_net >= target_goal))
-            if target_goal and target_goal > 0
-            else float(np.mean(final_val_net >= invested))
-        )
-
-        summary = {
-            "p10Final": round(float(np.percentile(final_val_net, 10)), 2),
-            "p50Final": round(float(np.percentile(final_val_net, 50)), 2),
-            "p90Final": round(float(np.percentile(final_val_net, 90)), 2),
-            "totalInvested": round(float(invested), 2),
-            "totalFeeDrag": round(float(np.percentile(final_fee_drag, 50)), 2),
-            "successRate": round(success_rate, 4),
-        }
-
-        return {
-            "summary": summary,
-            "timeline": timeline,
         }

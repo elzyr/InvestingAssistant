@@ -19,6 +19,29 @@ export interface EtfProfile {
   category: EtfCategory;
 }
 
+export function isBondItem(
+  item: {
+    bondRate?: number | null;
+    seriesName?: string | null;
+    currency?: string;
+    price?: number;
+    averageBuyPrice?: number;
+  },
+  inst?: InstrumentResponse
+): boolean {
+  return Boolean(
+    item.bondRate != null ||
+      (item.seriesName && item.seriesName.length >= 3) ||
+      (inst &&
+        (inst.type === 'BOND' ||
+          inst.symbol.startsWith('PL_BOND') ||
+          inst.symbol.includes('EDO') ||
+          inst.symbol.includes('TOS') ||
+          inst.symbol.includes('COI'))) ||
+      (item.currency === 'PLN' && (item.price === 100 || item.averageBuyPrice === 100))
+  );
+}
+
 export function detectEtfProfile(symbol: string, name: string): EtfProfile {
   const sym = (symbol || '').toUpperCase();
   const nm = (name || '').toUpperCase();
@@ -214,11 +237,7 @@ export function generateUnifiedPortfolioTimeline({
       const fx = (tx.currency === baseCurrency ? 1 : rates[tx.currency]) || 1;
       const txCost = tx.baseAmount ?? (tx.quantity * tx.price + (tx.commission || 0)) * fx;
       const inst = instruments[tx.instrumentId];
-      const isBond =
-        tx.bondRate != null ||
-        (tx.seriesName && tx.seriesName.length >= 3) ||
-        (inst && (inst.type === 'BOND' || inst.symbol.startsWith('PL_BOND'))) ||
-        (tx.currency === 'PLN' && tx.price === 100);
+      const isBond = isBondItem(tx, inst);
       const symbol = inst?.symbol || tx.seriesName || '';
       const fallbackPrice = instrumentPrices[tx.instrumentId] ?? tx.price;
       return {
@@ -249,11 +268,7 @@ export function generateUnifiedPortfolioTimeline({
 
   for (const pos of positions) {
     const inst = instruments[pos.instrumentId];
-    const isBond =
-      pos.bondRate != null ||
-      (pos.seriesName && pos.seriesName.length >= 3) ||
-      (inst && (inst.type === 'BOND' || inst.symbol.includes('EDO') || inst.symbol.includes('TOS') || inst.symbol.includes('COI'))) ||
-      (pos.currency === 'PLN' && pos.averageBuyPrice === 100);
+    const isBond = isBondItem(pos, inst);
     const fx = (pos.currency === baseCurrency ? 1 : rates[pos.currency]) || 1;
     const currentPrice = isBond
       ? calculateBondCurrentPrice({

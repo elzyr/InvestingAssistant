@@ -1,22 +1,24 @@
 services:
-  api-gateway:
+  backend:
     build:
-      context: ./api-gateway
+      context: ./backend
       dockerfile: Dockerfile
-    container_name: investassist-gateway
+    container_name: investassist-backend
     ports:
       - "8080:8080"
     environment:
-      - AUTH_SERVICE_URL=http://auth-service:8081
-      - PORTFOLIO_SERVICE_URL=http://portfolio-service:8082
-      - MARKET_DATA_SERVICE_URL=http://market-data-service:8083
-      - INSTRUMENT_SERVICE_URL=http://instrument-service:8084
+      - DB_URL=jdbc:postgresql://postgres:5432/${DB_NAME}
+      - DB_USER=${DB_USER}
+      - DB_PASSWORD=${DB_PASSWORD}
+      - JPA_DDL_AUTO=update
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
       - JWT_SECRET=${JWT_SECRET}
+      - MARKET_DATA_SERVICE_URL=http://market-data-service:8083
     depends_on:
-      - auth-service
-      - portfolio-service
+      - postgres
+      - redis
       - market-data-service
-      - instrument-service
     networks:
       - investassist-network
     restart: always
@@ -37,8 +39,8 @@ services:
       context: ./market-data-service
       dockerfile: Dockerfile
     container_name: investassist-market-data
-    expose:
-      - "8083"
+    ports:
+      - "8083:8083"
     environment:
       - REDIS_HOST=redis
       - REDIS_PORT=6379
@@ -58,72 +60,11 @@ services:
     expose:
       - "5432"
     environment:
-      - POSTGRES_DB=${DB_NAME:-postgres}
+      - POSTGRES_DB=${DB_NAME}
       - POSTGRES_USER=${DB_USER}
       - POSTGRES_PASSWORD=${DB_PASSWORD}
     volumes:
       - postgres_data:/var/lib/postgresql/data
-      - ./postgres-init:/docker-entrypoint-initdb.d
-    networks:
-      - investassist-network
-    restart: always
-
-  auth-service:
-    build:
-      context: ./auth-service
-      dockerfile: Dockerfile
-    container_name: investassist-auth
-    expose:
-      - "8081"
-    environment:
-      - DB_URL=jdbc:postgresql://postgres:5432/auth_db
-      - DB_USER=${DB_USER}
-      - DB_PASSWORD=${DB_PASSWORD}
-      - REDIS_HOST=redis
-      - REDIS_PORT=6379
-      - JWT_SECRET=${JWT_SECRET}
-    depends_on:
-      - postgres
-      - redis
-    networks:
-      - investassist-network
-    restart: always
-
-  portfolio-service:
-    build:
-      context: ./portfolio-service
-      dockerfile: Dockerfile
-    container_name: investassist-portfolio
-    expose:
-      - "8082"
-    environment:
-      - DB_URL=jdbc:postgresql://postgres:5432/investing_assistant
-      - DB_USER=${DB_USER}
-      - DB_PASSWORD=${DB_PASSWORD}
-      - JPA_DDL_AUTO=update
-      - INSTRUMENT_SERVICE_URL=http://instrument-service:8084
-      - MARKET_DATA_SERVICE_URL=http://market-data-service:8083
-    depends_on:
-      - postgres
-      - instrument-service
-      - market-data-service
-    networks:
-      - investassist-network
-    restart: always
-
-  instrument-service:
-    build:
-      context: ./instrument-service
-      dockerfile: Dockerfile
-    container_name: investassist-instrument
-    expose:
-      - "8084"
-    environment:
-      - DB_URL=jdbc:postgresql://postgres:5432/instrument_db
-      - DB_USER=${DB_USER}
-      - DB_PASSWORD=${DB_PASSWORD}
-    depends_on:
-      - postgres
     networks:
       - investassist-network
     restart: always
@@ -136,7 +77,8 @@ services:
     ports:
       - "3000:80"
     depends_on:
-      - api-gateway
+      - backend
+      - market-data-service
     networks:
       - investassist-network
     restart: always

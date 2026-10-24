@@ -6,7 +6,7 @@ import type {
   MonthlyCategoryBreakdown,
   MonthlyReportRecord,
 } from '../types/reports.types.ts';
-import { calculateBondCurrentPrice, getHistoricalPrice } from './portfolioUnifiedEngine.ts';
+import { calculateBondCurrentPrice, getHistoricalPrice, isBondItem } from './portfolioUnifiedEngine.ts';
 
 const MONTH_NAMES = [
   'Styczeń',
@@ -61,16 +61,11 @@ function resolveCategory(
   tx: TransactionResponse,
   instruments: Record<string, InstrumentResponse>
 ): CategoryInfo {
-  const isBond =
-    tx.bondRate != null ||
-    (tx.seriesName && tx.seriesName.length >= 3) ||
-    (tx.currency === 'PLN' && tx.price === 100);
-
-  if (isBond) {
+  const inst = instruments[tx.instrumentId];
+  if (isBondItem(tx, inst)) {
     return { name: 'Obligacje Skarbowe', color: '#3b82f6' };
   }
 
-  const inst = instruments[tx.instrumentId];
   const symbol = (inst?.symbol || tx.seriesName || '').toUpperCase();
   const name = (inst?.name || '').toUpperCase();
 
@@ -135,11 +130,7 @@ export function generateRealAnnualSummary({
       const fx = (tx.currency === baseCurrency ? 1 : rates[tx.currency]) || 1;
       const txCost = tx.baseAmount ?? (tx.quantity * tx.price + (tx.commission || 0)) * fx;
       const inst = instruments[tx.instrumentId];
-      const isBond =
-        tx.bondRate != null ||
-        (tx.seriesName && tx.seriesName.length >= 3) ||
-        (inst && (inst.type === 'BOND' || inst.symbol.startsWith('PL_BOND'))) ||
-        (tx.currency === 'PLN' && tx.price === 100);
+      const isBond = isBondItem(tx, inst);
       const cat = resolveCategory(tx, instruments);
       const symbol = inst?.symbol || tx.seriesName || '';
       const fallbackPrice = quotes[symbol]?.price ?? tx.price;
@@ -331,7 +322,6 @@ export function generateRealAnnualSummary({
     });
   }
 
-  // Calculate Month-over-Month (MoM) deltas
   for (let m = 0; m < records.length; m++) {
     const cur = records[m];
     if (cur.status === 'RECORDED') {

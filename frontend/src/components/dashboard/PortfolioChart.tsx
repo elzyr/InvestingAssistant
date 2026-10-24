@@ -22,6 +22,7 @@ import type {
   InflationAdjustMode,
 } from '../../types/dashboard.ts';
 import type { PortfolioStatsResponse } from '../../types/analytics.types.ts';
+import { formatNumberWithSpaces, formatSignedNumberWithSpaces } from '../../utils/reportsFormatters.ts';
 
 interface PortfolioChartProps {
   data: ChartPoint[];
@@ -50,18 +51,6 @@ interface PortfolioChartProps {
 
 const TIMEFRAMES: TimeframeOption[] = ['1M', '3M', 'YTD', '1R', 'MAX'];
 const PROJECTIONS: ProjectionHorizonOption[] = ['3Y', '5Y', '10Y', '20Y'];
-
-function formatNumberWithSpaces(val: number): string {
-  const rounded = Math.round(val);
-  return rounded.toString().replace(/\B(?=(\d{3})+(?!\d))/g, ' ');
-}
-
-function formatSignedNumberWithSpaces(val: number): string {
-  const rounded = Math.round(val);
-  const sign = rounded > 0 ? '+' : rounded < 0 ? '-' : '';
-  const abs = Math.abs(rounded).toString().replace(/\B(?=(\d{3})+(?!\d))/g, ' ');
-  return `${sign}${abs}`;
-}
 
 const POLISH_MONTHS = ['sty', 'lut', 'mar', 'kwi', 'maj', 'cze', 'lip', 'sie', 'wrz', 'paź', 'lis', 'gru'];
 

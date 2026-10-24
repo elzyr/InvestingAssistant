@@ -2,8 +2,6 @@ import apiClient from '../api/client.ts';
 import type {
   PortfolioStatsRequest,
   PortfolioStatsResponse,
-  MonteCarloRequest,
-  MonteCarloResponse,
 } from '../types/analytics.types.ts';
 
 export interface PriceQuote {
@@ -32,6 +30,22 @@ export interface MonthlyInflationPoint {
   year: number;
   month: number;
   rate: number;
+  source: string;
+}
+
+export interface HistoricalPricePoint {
+  date: string;
+  open: number;
+  high: number;
+  low: number;
+  close: number;
+  volume: number;
+}
+
+export interface HistoricalPriceResponse {
+  symbol: string;
+  currency: string;
+  history: HistoricalPricePoint[];
   source: string;
 }
 
@@ -92,28 +106,4 @@ export const marketService = {
     );
     return response.data;
   },
-
-  async runMonteCarlo(request: MonteCarloRequest): Promise<MonteCarloResponse> {
-    const response = await apiClient.post<MonteCarloResponse>(
-      '/api/market/analytics/monte-carlo',
-      request
-    );
-    return response.data;
-  },
 };
-
-export interface HistoricalPricePoint {
-  date: string;
-  open: number;
-  high: number;
-  low: number;
-  close: number;
-  volume: number;
-}
-
-export interface HistoricalPriceResponse {
-  symbol: string;
-  currency: string;
-  history: HistoricalPricePoint[];
-  source: string;
-}

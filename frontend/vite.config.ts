@@ -9,6 +9,18 @@ export default defineConfig({
   ],
   server: {
     proxy: {
+      '/api/prices': {
+        target: 'http://localhost:8083',
+        changeOrigin: true,
+      },
+      '/api/currencies': {
+        target: 'http://localhost:8083',
+        changeOrigin: true,
+      },
+      '/api/market': {
+        target: 'http://localhost:8083',
+        changeOrigin: true,
+      },
       '/api': {
         target: 'http://localhost:8080',
         changeOrigin: true,
