@@ -294,7 +294,7 @@ export function calculatePortfolioRealMetrics(
     };
   }
 
-  const normalizedCpi = Math.abs(cpi) >= 1 ? cpi / 100 : cpi;
+  const normalizedCpi = cpi > 0 && cpi <= 0.2 ? cpi : cpi / 100;
   const currentMs = currentDate ? parseDateMs(currentDate) : Date.now();
 
   let totalHurdle = 0;

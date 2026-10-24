@@ -16,12 +16,13 @@ const formatReturnWithXirr = (
   isXirrFallback?: boolean,
   unit = 'r/r'
 ): string => {
-  const base = profitPercentFormatted.replace(/\s*\(.*?\)/, '').trim();
   if (xirr != null && !isXirrFallback) {
     const xirrVal = (xirr * 100).toFixed(1);
+    const match = profitPercentFormatted.match(/^([+-]?\d+(?:\.\d+)?%)/);
+    const base = match ? match[1] : profitPercentFormatted;
     return `${base} (${xirrVal}% ${unit})`;
   }
-  return base;
+  return profitPercentFormatted;
 };
 
 const PositionRow = ({
@@ -134,7 +135,7 @@ const PositionRow = ({
                   )}
                   {sub.fxDecomposition && (
                     <div className="mt-0.5 flex items-center gap-1 font-mono text-[10px] text-zinc-400">
-                      <span className="bg-zinc-800/60 px-1.5 py-0.2 rounded border border-zinc-700/40">
+                      <span className="bg-zinc-800/60 px-1.5 py-0.5 rounded border border-zinc-700/40">
                         {t('dashboard.market', 'Rynek')}: {sub.fxDecomposition.marketReturnPct >= 0 ? '+' : ''}
                         {sub.fxDecomposition.marketReturnPct.toFixed(1)}% · {t('dashboard.fx', 'FX')}:{' '}
                         {sub.fxDecomposition.fxReturnPct >= 0 ? '+' : ''}

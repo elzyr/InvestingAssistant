@@ -47,6 +47,21 @@ function formatMoney(amount: number, currency: string, showSign = false): string
   return `${sign}${absFormatted} ${currency}`;
 }
 
+function getTransactionCashFlow(
+  tx: TransactionResponse,
+  baseCurrency: string,
+  rates: Record<string, number>
+): { amount: number; isOutflow: boolean } {
+  const fx = (tx.currency === baseCurrency ? 1 : rates[tx.currency]) || 1;
+  if (tx.transactionType === 'BUY') {
+    const cost = tx.baseAmount ?? (tx.quantity * tx.price + (tx.commission || 0)) * fx;
+    return { amount: cost, isOutflow: true };
+  } else {
+    const proceeds = tx.baseAmount ?? (tx.quantity * tx.price - (tx.commission || 0)) * fx;
+    return { amount: proceeds, isOutflow: false };
+  }
+}
+
 export const DashboardPage = () => {
   const dispatch = useAppDispatch();
   const { t } = useTranslation();
@@ -293,16 +308,18 @@ export const DashboardPage = () => {
 
     const nonBonds = enrichedHoldings.filter((h) => !h.isBond);
     for (const h of nonBonds) {
-      const holdingTransactions = transactions
-        .filter((t) => t.instrumentId === h.instrumentId && t.transactionType === 'BUY')
+      const allHoldingTransactions = transactions
+        .filter((t) => t.instrumentId === h.instrumentId)
         .sort((a, b) => new Date(a.executedAt).getTime() - new Date(b.executedAt).getTime());
+
+      const buyTransactions = allHoldingTransactions.filter((t) => t.transactionType === 'BUY');
 
       const isForeign = h.currency !== baseCurrency;
       const currentFx = (isForeign ? rates[h.currency] : 1) || 1;
 
-      const subPositions: SubPosition[] = holdingTransactions.map((tx) => {
+      const subPositions: SubPosition[] = buyTransactions.map((tx) => {
+        const { amount: txCost } = getTransactionCashFlow(tx, baseCurrency, rates);
         const fx = (tx.currency === baseCurrency ? 1 : rates[tx.currency]) || 1;
-        const txCost = tx.baseAmount ?? (tx.quantity * tx.price + (tx.commission || 0)) * fx;
         const txVal = tx.quantity * h.currentPrice * fx;
         const txProfitGross = txVal - txCost;
         const txTax = shouldApplyTax && txProfitGross > 0 ? txProfitGross * 0.19 : 0;
@@ -360,10 +377,9 @@ export const DashboardPage = () => {
       const posProfitPct = h.totalCost > 0 ? (posProfit / h.totalCost) * 100 : 0;
       const posNetVal = h.totalValue - posTax;
 
-      const parentCashFlows: CashFlow[] = holdingTransactions.map((tx) => {
-        const fx = (tx.currency === baseCurrency ? 1 : rates[tx.currency]) || 1;
-        const cost = tx.baseAmount ?? (tx.quantity * tx.price + (tx.commission || 0)) * fx;
-        return { amount: -cost, date: tx.executedAt };
+      const parentCashFlows: CashFlow[] = allHoldingTransactions.map((tx) => {
+        const { amount, isOutflow } = getTransactionCashFlow(tx, baseCurrency, rates);
+        return { amount: isOutflow ? -amount : amount, date: tx.executedAt };
       });
       if (parentCashFlows.length === 0 && h.totalCost > 0) {
         parentCashFlows.push({ amount: -h.totalCost, date: h.purchaseDate || nowTimestamp });
@@ -508,9 +524,8 @@ export const DashboardPage = () => {
           const yearFlows: CashFlow[] = [];
           if (yearTransactions.length > 0) {
             yearTransactions.forEach((tx) => {
-              const fx = (tx.currency === baseCurrency ? 1 : rates[tx.currency]) || 1;
-              const cost = tx.baseAmount ?? (tx.quantity * tx.price + (tx.commission || 0)) * fx;
-              yearFlows.push({ amount: -cost, date: tx.executedAt });
+              const { amount } = getTransactionCashFlow(tx, baseCurrency, rates);
+              yearFlows.push({ amount: -amount, date: tx.executedAt });
             });
           } else {
             yearItems.forEach((item) => {
@@ -593,24 +608,39 @@ export const DashboardPage = () => {
     const txInstrumentIds = new Set(transactions.map((t) => t.instrumentId));
 
     transactions.forEach((tx) => {
-      const fx = (tx.currency === baseCurrency ? 1 : rates[tx.currency]) || 1;
-      const cost = tx.baseAmount ?? (tx.quantity * tx.price + (tx.commission || 0)) * fx;
-      if (tx.transactionType === 'BUY') {
-        portfolioFlows.push({ amount: -cost, date: tx.executedAt });
-        hurdleTransactions.push({ cost, executedAt: tx.executedAt });
-      } else if (tx.transactionType === 'SELL') {
-        const proceeds = tx.baseAmount ?? (tx.quantity * tx.price - (tx.commission || 0)) * fx;
-        portfolioFlows.push({ amount: proceeds, date: tx.executedAt });
-      }
+      const { amount, isOutflow } = getTransactionCashFlow(tx, baseCurrency, rates);
+      portfolioFlows.push({ amount: isOutflow ? -amount : amount, date: tx.executedAt });
     });
 
     enrichedHoldings.forEach((h) => {
       if (!txInstrumentIds.has(h.instrumentId) && h.totalCost > 0) {
         const execDate = h.purchaseDate || nowTimestamp;
         portfolioFlows.push({ amount: -h.totalCost, date: execDate });
-        hurdleTransactions.push({ cost: h.totalCost, executedAt: execDate });
       }
     });
+
+    const activeHoldings = enrichedHoldings.filter((h) => h.quantity > 0 && h.totalCost > 0);
+    for (const h of activeHoldings) {
+      const holdingBuyTxs = transactions.filter(
+        (t) => t.instrumentId === h.instrumentId && t.transactionType === 'BUY'
+      );
+      if (holdingBuyTxs.length > 0) {
+        const totalBuyCost = holdingBuyTxs.reduce((sum, tx) => {
+          const { amount } = getTransactionCashFlow(tx, baseCurrency, rates);
+          return sum + amount;
+        }, 0);
+        const scale = totalBuyCost > 0 ? Math.min(1, h.totalCost / totalBuyCost) : 1;
+        holdingBuyTxs.forEach((tx) => {
+          const { amount } = getTransactionCashFlow(tx, baseCurrency, rates);
+          hurdleTransactions.push({ cost: amount * scale, executedAt: tx.executedAt });
+        });
+      } else {
+        hurdleTransactions.push({
+          cost: h.totalCost,
+          executedAt: h.purchaseDate || nowTimestamp,
+        });
+      }
+    }
 
     const portfolioHoldingRes = calculateHoldingXirr(
       portfolioFlows,
@@ -766,9 +796,12 @@ export const DashboardPage = () => {
         }
         if (sortBy === 'name') return a.ticker.localeCompare(b.ticker);
         if (sortBy === 'xirr') {
-          const xirrA = a.xirr != null && !a.isXirrFallback ? a.xirr : -Infinity;
-          const xirrB = b.xirr != null && !b.isXirrFallback ? b.xirr : -Infinity;
-          return xirrB - xirrA;
+          const hasA = a.xirr != null && !a.isXirrFallback;
+          const hasB = b.xirr != null && !b.isXirrFallback;
+          if (!hasA && !hasB) return b.sharePercent - a.sharePercent;
+          if (!hasA) return 1;
+          if (!hasB) return -1;
+          return b.xirr! - a.xirr!;
         }
         return b.sharePercent - a.sharePercent;
       });

@@ -29,7 +29,7 @@ export const FilterBar = ({
   const { t } = useTranslation();
 
   return (
-    <div className="flex flex-col sm:row sm:items-center justify-between gap-2.5 pt-1">
+    <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2.5 pt-1">
       <div className="flex flex-wrap items-center gap-2">
         <div className="relative">
           <Search className="w-3.5 h-3.5 text-zinc-400 absolute left-2.5 top-1/2 -translate-y-1/2 pointer-events-none" />
