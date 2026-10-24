@@ -6,6 +6,10 @@ from app.services.yahoo_service import YahooService
 
 router = APIRouter(prefix="/api/prices", tags=["Prices"])
 
+@router.get("/search")
+def search_instruments(query: str = Query(..., min_length=1)):
+    return YahooService.search_instruments(query)
+
 @router.get("/{symbol}")
 def get_price(
     symbol: str = Path(..., pattern=r"^[A-Za-z0-9.\-^=_]+$", max_length=20),

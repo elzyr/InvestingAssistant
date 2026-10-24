@@ -203,5 +203,73 @@ class TestSqliteRepositorySeam(unittest.TestCase):
         self.assertEqual(prices[1]["closePrice"], 119.2)
 
 
+class TestPostgresRepositorySeam(unittest.TestCase):
+    def test_repository_initialization_with_database_url_sets_postgres_mode(self):
+        from unittest.mock import MagicMock, patch
+        from app.services.market_history_repo import MarketHistoryRepository
+
+        mock_psycopg2 = MagicMock()
+        mock_pool = MagicMock()
+        mock_psycopg2.pool = mock_pool
+
+        with patch.dict("sys.modules", {"psycopg2": mock_psycopg2, "psycopg2.pool": mock_pool}):
+            repo = MarketHistoryRepository(
+                database_url="postgresql://postgres:postgres@localhost:5432/investing_assistant"
+            )
+            self.assertTrue(getattr(repo, "is_postgres", False))
+
+    def test_repository_postgres_dialect_formats_upsert_with_on_conflict(self):
+        from unittest.mock import MagicMock
+        from app.services.market_history_repo import MarketHistoryRepository
+
+        mock_conn = MagicMock()
+        mock_cursor = MagicMock()
+        mock_conn.cursor.return_value = mock_cursor
+
+        repo = MarketHistoryRepository(
+            connection=mock_conn,
+            dialect="postgres"
+        )
+        yesterday = (datetime.date.today() - datetime.timedelta(days=1)).isoformat()
+        repo.save_eod_price("VWCE.DE", yesterday, 120.5, "EUR", 50000)
+
+        mock_cursor.execute.assert_called()
+        call_args = mock_cursor.execute.call_args[0]
+        query = call_args[0]
+        params = call_args[1]
+
+        self.assertIn("ON CONFLICT", query.upper())
+        self.assertNotIn("INSERT OR IGNORE", query.upper())
+        self.assertIn("%s", query)
+        self.assertNotIn("?", query)
+        self.assertEqual(params[0], "VWCE.DE")
+
+    def test_repository_postgres_bulk_upsert_uses_on_conflict_update(self):
+        from unittest.mock import MagicMock
+        from app.services.market_history_repo import MarketHistoryRepository
+
+        mock_conn = MagicMock()
+        mock_cursor = MagicMock()
+        mock_conn.cursor.return_value = mock_cursor
+
+        repo = MarketHistoryRepository(
+            connection=mock_conn,
+            dialect="postgres"
+        )
+        yesterday = (datetime.date.today() - datetime.timedelta(days=1)).isoformat()
+        batch = [
+            {"date": yesterday, "close_price": 120.5, "volume": 50000}
+        ]
+        repo.save_eod_prices_bulk("VWCE.DE", batch, currency="EUR")
+
+        mock_cursor.executemany.assert_called()
+        query = mock_cursor.executemany.call_args[0][0]
+
+        self.assertIn("ON CONFLICT", query.upper())
+        self.assertNotIn("INSERT OR REPLACE", query.upper())
+        self.assertIn("%s", query)
+        self.assertNotIn("?", query)
+
+
 if __name__ == "__main__":
     unittest.main()

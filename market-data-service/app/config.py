@@ -1,3 +1,4 @@
+from typing import Optional
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 class Settings(BaseSettings):
@@ -8,5 +9,12 @@ class Settings(BaseSettings):
     REDIS_HOST: str = "localhost"
     REDIS_PORT: int = 6379
     MARKET_DB_PATH: str = "data/market_history.db"
+
+    DB_HOST: Optional[str] = None
+    DB_PORT: int = 5432
+    DB_NAME: Optional[str] = None
+    DB_USER: Optional[str] = None
+    DB_PASSWORD: Optional[str] = None
+    DATABASE_URL: Optional[str] = None
 
 settings = Settings()

@@ -186,3 +186,90 @@ class YahooService:
                 raise e
             logging.error(f"Error fetching historical data: {e}")
             raise HTTPException(status_code=400, detail="Error fetching historical data")
+
+    @staticmethod
+    def search_instruments(query: str) -> list[dict]:
+        clean_q = (query or "").strip()
+        if not clean_q:
+            return []
+        cache_key = f"search:{clean_q.upper()}"
+        cached = cache_service.get(cache_key)
+        if cached is not None and isinstance(cached, list):
+            return cached
+
+        try:
+            search_obj = yf.Search(clean_q)
+            quotes = getattr(search_obj, "quotes", []) or []
+        except Exception as e:
+            logging.warning(f"Yahoo search failed for query '{clean_q}': {e}")
+            return []
+
+        suffix_map = {
+            ".WA": "PLN",
+            ".DE": "EUR",
+            ".F": "EUR",
+            ".PA": "EUR",
+            ".AS": "EUR",
+            ".MC": "EUR",
+            ".MI": "EUR",
+            ".L": "GBP",
+        }
+        exchange_map = {
+            "NMS": "USD",
+            "NYQ": "USD",
+            "NGM": "USD",
+            "PCX": "USD",
+            "BTS": "USD",
+            "BATS": "USD",
+            "ASE": "USD",
+            "NAS": "USD",
+            "PNK": "USD",
+            "GER": "EUR",
+            "FRA": "EUR",
+            "STU": "EUR",
+            "XETRA": "EUR",
+            "PAR": "EUR",
+            "AMS": "EUR",
+            "WSE": "PLN",
+            "WAR": "PLN",
+        }
+
+        results = []
+        seen = set()
+        for item in quotes:
+            if not isinstance(item, dict):
+                continue
+            symbol = (item.get("symbol") or "").strip()
+            if not symbol or symbol in seen:
+                continue
+            qtype = (item.get("quoteType") or "").upper()
+            if qtype not in ("EQUITY", "ETF"):
+                continue
+            mapped_type = "STOCK" if qtype == "EQUITY" else "ETF"
+
+            currency = (item.get("currency") or "").upper() or None
+            if not currency:
+                sym_upper = symbol.upper()
+                for sfx, cur in suffix_map.items():
+                    if sym_upper.endswith(sfx):
+                        currency = cur
+                        break
+            if not currency:
+                exch = (item.get("exchange") or "").upper()
+                currency = exchange_map.get(exch)
+
+            if currency not in {"USD", "EUR", "PLN"}:
+                continue
+
+            seen.add(symbol)
+            name = item.get("shortname") or item.get("longname") or symbol
+            results.append({
+                "symbol": symbol,
+                "name": name,
+                "type": mapped_type,
+                "currency": currency,
+            })
+
+        if results:
+            cache_service.set(cache_key, results, expire=3600)
+        return results
