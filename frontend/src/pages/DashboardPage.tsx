@@ -38,7 +38,7 @@ import type { TransactionResponse } from '../types/portfolio.ts';
 import type { PortfolioStatsResponse } from '../types/analytics.types.ts';
 
 export const DashboardPage = () => {
-  const { t } = useTranslation();
+  const { t, i18n } = useTranslation();
 
   const {
     dispatch,
@@ -169,7 +169,7 @@ export const DashboardPage = () => {
         bondMargin: pos.bondMargin,
       };
     });
-  }, [positions, instruments, quotes, rates, baseCurrency, cpi, nowTimestamp, historicalPrices, historicalSortedDates]);
+  }, [positions, instruments, quotes, rates, baseCurrency, cpi, nowTimestamp, historicalPrices, historicalSortedDates, i18n.language]);
 
   const equityHoldings = useMemo(
     () =>

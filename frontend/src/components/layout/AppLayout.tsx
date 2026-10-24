@@ -28,8 +28,8 @@ export const AppLayout = () => {
 
   const navItems = [
     { to: '/', label: t('nav.overview', 'Przegląd portfela'), icon: LayoutDashboard },
-    { to: '/reports', label: 'Raporty miesięczne', icon: CalendarDays },
-    { to: '/stress-testing', label: 'Stress-Testing', icon: AlertTriangle },
+    { to: '/reports', label: t('nav.reports', 'Raporty miesięczne'), icon: CalendarDays },
+    { to: '/stress-testing', label: t('nav.stressTesting', 'Stress-Testing'), icon: AlertTriangle },
   ];
 
   return (

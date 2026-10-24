@@ -59,6 +59,8 @@ export interface BuildDashboardPositionsParams {
   rates: Record<string, number>;
   shouldApplyTax: boolean;
   nowTimestamp: number;
+  t?: (key: string, options?: any) => string;
+  locale?: string;
 }
 
 export function buildDashboardPositions({
@@ -69,7 +71,12 @@ export function buildDashboardPositions({
   rates,
   shouldApplyTax,
   nowTimestamp,
+  t,
+  locale = 'pl-PL',
 }: BuildDashboardPositionsParams): Position[] {
+  const translate = t || ((k: string, opt?: any) => (typeof opt === 'string' ? opt : opt?.defaultValue || k));
+  const units = translate('common.units', 'szt.');
+  const atPrice = translate('common.atPrice', 'po');
   const list: Position[] = [];
 
   const nonBonds = enrichedHoldings.filter((h) => !h.isBond);
@@ -148,8 +155,8 @@ export function buildDashboardPositions({
 
       return {
         id: tx.id,
-        name: new Date(tx.executedAt).toLocaleDateString('pl-PL'),
-        subName: `${remainingQty} szt. po ${tx.price.toFixed(2)} ${tx.currency}`,
+        name: new Date(tx.executedAt).toLocaleDateString(locale),
+        subName: `${remainingQty} ${units} ${atPrice} ${tx.price.toFixed(2)} ${tx.currency}`,
         sharePercent: 0,
         priceFormatted: `${txCost.toLocaleString('pl-PL', { maximumFractionDigits: 0 })} ${baseCurrency}`,
         valueFormatted: `${txVal.toLocaleString('pl-PL', { maximumFractionDigits: 0 })} ${baseCurrency}`,
@@ -202,7 +209,7 @@ export function buildDashboardPositions({
       ticker: h.ticker,
       name: h.name,
       type: h.assetType,
-      quantityFormatted: `${h.quantity.toLocaleString('pl-PL')} szt.`,
+      quantityFormatted: `${h.quantity.toLocaleString(locale)} ${units}`,
       sharePercent: totalPortfolioValue > 0 ? (h.totalValue / totalPortfolioValue) * 100 : 0,
       priceFormatted: `${h.currentPrice.toLocaleString('pl-PL', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} ${h.currency}`,
       valueFormatted: `${h.totalValue.toLocaleString('pl-PL', { maximumFractionDigits: 0 })} ${baseCurrency}`,
@@ -245,12 +252,12 @@ export function buildDashboardPositions({
 
     const familyName =
       family === 'EDO'
-        ? 'EDO (10-letnie)'
+        ? translate('dashboard.tenYear', 'EDO (10-letnie)')
         : family === 'TOS'
-        ? 'TOS (3-letnie)'
+        ? translate('dashboard.threeYear', 'TOS (3-letnie)')
         : family === 'COI'
-        ? 'COI (4-letnie)'
-        : `${family} Obligacje`;
+        ? translate('dashboard.fourYear', 'COI (4-letnie)')
+        : translate('dashboard.bondsFamily', { family, defaultValue: `${family} Obligacje` });
 
     const familyRates = items
       .map((b) => b.bondRate)
@@ -259,17 +266,17 @@ export function buildDashboardPositions({
     const maxRate = familyRates.length ? Math.max(...familyRates) : null;
     const fixedRateLabel =
       minRate == null
-        ? 'Stałe oprocentowanie'
+        ? translate('dashboard.fixedRate', 'Stałe oprocentowanie')
         : minRate === maxRate
-        ? `Stałe ${minRate.toFixed(2)}%`
-        : `Stałe ${minRate.toFixed(2)}–${maxRate!.toFixed(2)}%`;
+        ? translate('dashboard.fixedRateLabel', { rate: minRate.toFixed(2), defaultValue: `Stałe ${minRate.toFixed(2)}%` })
+        : translate('dashboard.fixedRateRange', { min: minRate.toFixed(2), max: maxRate!.toFixed(2), defaultValue: `Stałe ${minRate.toFixed(2)}–${maxRate!.toFixed(2)}%` });
 
     const typeDesc =
       family === 'EDO'
-        ? 'Antyinflacyjne'
+        ? translate('dashboard.antiInflation', 'Antyinflacyjne')
         : family === 'TOS'
         ? fixedRateLabel
-        : 'Indeksowane';
+        : translate('dashboard.inflationIndexed', 'Indeksowane');
 
     const yearlyGroups: Record<number, typeof items> = {};
     items.forEach((item) => {
@@ -363,10 +370,10 @@ export function buildDashboardPositions({
 
         return {
           id: `${family}-${year}`,
-          name: `Rocznik ${year}`,
-          subName: `${yQty.toLocaleString('pl-PL')} szt. (Wkład ${yCost.toLocaleString('pl-PL', { maximumFractionDigits: 0 })} ${baseCurrency})`,
+          name: `${translate('dashboard.vintage', 'Rocznik')} ${year}`,
+          subName: `${yQty.toLocaleString(locale)} ${units} (${translate('common.costBasis', 'Wkład')} ${yCost.toLocaleString(locale, { maximumFractionDigits: 0 })} ${baseCurrency})`,
           sharePercent: yShare,
-          shareNote: 'portfela',
+          shareNote: translate('dashboard.ofPortfolio', 'portfela'),
           priceFormatted: `${yPrice.toLocaleString('pl-PL', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} ${baseCurrency}`,
           valueFormatted: formatMoney(yVal, baseCurrency),
           profitFormatted: formatMoney(yProfit, baseCurrency, true),
@@ -389,7 +396,7 @@ export function buildDashboardPositions({
       ticker: familyName,
       name: typeDesc,
       type: 'BOND',
-      quantityFormatted: `${sumQty.toLocaleString('pl-PL')} szt.`,
+      quantityFormatted: `${sumQty.toLocaleString(locale)} ${units}`,
       sharePercent: totalPortfolioValue > 0 ? (sumVal / totalPortfolioValue) * 100 : 0,
       priceFormatted: `${avgPrice.toLocaleString('pl-PL', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} ${baseCurrency}`,
       valueFormatted: formatMoney(sumVal, baseCurrency),
@@ -421,6 +428,7 @@ export interface BuildDashboardSummaryParams {
   isIkeAccount: boolean;
   nowTimestamp: number;
   t: (key: string, defaultValue?: string) => string;
+  locale?: string;
 }
 
 export function buildDashboardSummary({
@@ -541,7 +549,7 @@ export function buildDashboardSummary({
   return {
     portfolioValueFormatted: formatMoney(totalPortfolioValue, baseCurrency),
     dailyChangeAmountFormatted: formatMoney(totalDailyChange, baseCurrency, true),
-    dailyChangePercentFormatted: `${totalDailyChange >= 0 ? '+' : ''}${dailyChangePct.toFixed(2)}% dzisiaj`,
+    dailyChangePercentFormatted: `${totalDailyChange >= 0 ? '+' : ''}${dailyChangePct.toFixed(2)}% ${t ? t('dashboard.today', 'dzisiaj') : 'dzisiaj'}`,
     totalCostFormatted: formatMoney(totalPortfolioCost, baseCurrency),
     totalProfitAmountFormatted: formatMoney(profit, baseCurrency, true),
     totalProfitPercentFormatted,
@@ -549,7 +557,7 @@ export function buildDashboardSummary({
     realProfitPercentFormatted,
     positionCount: positions.length,
     taxMode,
-    profitLabel: shouldApplyTax ? 'Zysk netto' : 'Zysk brutto',
+    profitLabel: shouldApplyTax ? (t ? t('dashboard.netProfit', 'Zysk netto') : 'Zysk netto') : (t ? t('dashboard.grossProfit', 'Zysk brutto') : 'Zysk brutto'),
     taxNoteFormatted,
     nominalXirr,
     realXirr: realMetrics.realXirr,
