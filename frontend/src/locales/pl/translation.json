@@ -146,7 +146,31 @@
     "month_few": "{{count}} miesiące",
     "month_many": "{{count}} miesięcy",
     "month": "Miesiąc",
-    "portfolioVsBenchmark": "Twój portfel vs 100% Akcje -{{stockDrawdown}}% | 100% Obligacje 0.0%"
+    "portfolioVsBenchmark": "Twój portfel vs 100% Akcje -{{stockDrawdown}}% | 100% Obligacje 0.0%",
+    "trough": "Dołek",
+    "allStockLabel": "100% Akcje",
+    "allBondLabel": "100% Obligacje",
+    "yourPortfolioLabel": "Twój Portfel",
+    "scenarios": {
+      "covid2020": {
+        "title": "Flash-Crash COVID-19 (Marzec 2020)",
+        "shortTitle": "COVID-19 (2020)",
+        "period": "24 miesiące (2 lata)",
+        "desc": "Błyskawiczna panika pandemiczna: rynki akcji zanurkowały o -34% w 33 dni, po czym nastąpiło spektakularne odbicie w kształcie litery V."
+      },
+      "gfc2008": {
+        "title": "Globalny Kryzys Finansowy (2007–2009)",
+        "shortTitle": "GFC (2008)",
+        "period": "48 miesięcy (4 lata)",
+        "desc": "Najgłębsza bessa nowoczesnej giełdy. Globalne akcje tąpnęły o -55% w ciągu 17 miesięcy, a powrót do szczytów zajął 4 lata. Obligacje skarbowe stabilizowały portfel."
+      },
+      "stagflation2022": {
+        "title": "Szok Stagflacyjny & Wojna (2021–2023)",
+        "shortTitle": "Stagflacja (2022)",
+        "period": "36 miesięcy (3 lata)",
+        "desc": "Gwałtowny skok inflacji w Polsce do 18.4% połączony z bessą technologiczną i spadkiem akcji o -28%. EDO indeksowane inflacją osiągały rekordowe stopy zwrotu."
+      }
+    }
   },
   "reports": {
     "badge": "Raporty Finansowe • Rzeczywiste Transakcje",
@@ -353,7 +377,8 @@
     "enableProjection": "Włącz prognozę na {{label}}",
     "taxNettoBadge": "Netto (Belka 19%)",
     "taxBruttoBadge": "Brutto",
-    "realBadge": "Realnie"
+    "realBadge": "Realnie",
+    "goal": "Cel"
   },
   "portfolioModal": {
     "createTitle": "Nowy portfel",

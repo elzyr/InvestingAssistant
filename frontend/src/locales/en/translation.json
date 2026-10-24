@@ -146,7 +146,31 @@
     "month_few": "{{count}} months",
     "month_many": "{{count}} months",
     "month": "Month",
-    "portfolioVsBenchmark": "Your portfolio vs 100% Stocks -{{stockDrawdown}}% | 100% Bonds 0.0%"
+    "portfolioVsBenchmark": "Your portfolio vs 100% Stocks -{{stockDrawdown}}% | 100% Bonds 0.0%",
+    "trough": "Trough",
+    "allStockLabel": "100% Stocks",
+    "allBondLabel": "100% Bonds",
+    "yourPortfolioLabel": "Your Portfolio",
+    "scenarios": {
+      "covid2020": {
+        "title": "Flash-Crash COVID-19 (March 2020)",
+        "shortTitle": "COVID-19 (2020)",
+        "period": "24 months (2 years)",
+        "desc": "Sudden pandemic panic: equity markets tumbled -34% in 33 days, followed by a dramatic V-shaped recovery."
+      },
+      "gfc2008": {
+        "title": "Global Financial Crisis (2007–2009)",
+        "shortTitle": "GFC (2008)",
+        "period": "48 months (4 years)",
+        "desc": "The deepest modern bear market. Global stocks plunged -55% over 17 months, and returning to prior highs took 4 years. Treasury bonds provided crucial portfolio stability."
+      },
+      "stagflation2022": {
+        "title": "Stagflation Shock & War (2021–2023)",
+        "shortTitle": "Stagflation (2022)",
+        "period": "36 months (3 years)",
+        "desc": "A sharp spike in Polish inflation to 18.4% coupled with a tech bear market and -28% stock decline. Inflation-indexed EDO bonds generated record returns."
+      }
+    }
   },
   "reports": {
     "badge": "Financial Reports • Real Transactions",
@@ -353,7 +377,8 @@
     "enableProjection": "Enable forecast for {{label}}",
     "taxNettoBadge": "Net (19% tax)",
     "taxBruttoBadge": "Gross",
-    "realBadge": "Real"
+    "realBadge": "Real",
+    "goal": "Target"
   },
   "portfolioModal": {
     "createTitle": "New portfolio",
