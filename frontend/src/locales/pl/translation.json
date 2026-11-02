@@ -319,6 +319,11 @@
     "optional": "opcjonalnie"
   },
   "chart": {
+    "profitAttribution": "Kontrybucja",
+    "profitAttributionTitle": "Rozbicie zysku na poszczególne pozycje portfela",
+    "profitAttributionBreakdown": "Składniki zysku",
+    "totalProfitSeries": "Całkowity zysk",
+    "otherContributors": "Pozostałe",
     "titleHistory": "Historia wyceny portfela",
     "titleProjection": "Historia & Prognoza Portfela (Monte Carlo)",
     "currentValuation": "BIEŻĄCA WYCENA:",
