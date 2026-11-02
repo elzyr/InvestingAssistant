@@ -6,7 +6,19 @@ export type ChartMetricMode = 'PLN' | 'PERCENT';
 export type ProjectionHorizonOption = 'OFF' | '3Y' | '5Y' | '10Y' | '20Y';
 export type InflationAdjustMode = 'NOMINAL' | 'REAL';
 
+export interface ProfitContributor {
+  key: string;
+  label: string;
+  assetType: 'ETF' | 'BOND' | 'STOCK' | 'OTHER';
+  valuation: number;
+  cost: number;
+  profit: number;
+  returnContributionPct: number;
+  sharePct: number;
+}
+
 export interface ChartPoint {
+  contributors?: ProfitContributor[];
   timestamp: number;
   dateLabel: string;
   valuation: number;

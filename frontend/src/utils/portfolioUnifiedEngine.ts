@@ -2,11 +2,23 @@ import type { TransactionResponse, PositionResponse } from '../types/portfolio.t
 import type { InstrumentResponse } from '../types/instrument.ts';
 import type { 
   ChartPoint, 
+  ProfitContributor, 
   TaxMode, 
   TimeframeOption, 
   ProjectionHorizonOption,
   InflationAdjustMode 
 } from '../types/dashboard.ts';
+
+export function getBondFamily(seriesOrSymbol?: string | null): string {
+  if (!seriesOrSymbol) return 'EDO';
+  const s = seriesOrSymbol.toUpperCase();
+  for (const prefix of ['TOS', 'COI', 'ROR', 'DOR', 'OTS', 'EDO']) {
+    if (s.includes(prefix)) {
+      return prefix;
+    }
+  }
+  return 'EDO';
+}
 
 export type EtfCategory = 'SP500' | 'ALL_WORLD' | 'DEVELOPED' | 'EMERGING' | 'OTHER';
 
@@ -29,6 +41,9 @@ export function isBondItem(
   },
   inst?: InstrumentResponse
 ): boolean {
+  if (inst?.type === 'ETF' || inst?.type === 'STOCK') {
+    return false;
+  }
   return Boolean(
     item.bondRate != null ||
       (item.seriesName && item.seriesName.length >= 3) ||
@@ -37,7 +52,10 @@ export function isBondItem(
           inst.symbol.startsWith('PL_BOND') ||
           inst.symbol.includes('EDO') ||
           inst.symbol.includes('TOS') ||
-          inst.symbol.includes('COI'))) ||
+          inst.symbol.includes('COI') ||
+          inst.symbol.includes('ROR') ||
+          inst.symbol.includes('DOR') ||
+          inst.symbol.includes('OTS'))) ||
       (item.currency === 'PLN' && (item.price === 100 || item.averageBuyPrice === 100))
   );
 }
@@ -309,11 +327,21 @@ export function generateUnifiedPortfolioTimeline({
   let userBondValSum = 0;
   let userBondWeightedRateSum = 0;
 
+  const posInstrumentCounts = new Map<string, number>();
+  for (const p of positions) {
+    posInstrumentCounts.set(p.instrumentId, (posInstrumentCounts.get(p.instrumentId) || 0) + 1);
+  }
+
   for (const pos of positions) {
     const inst = instruments[pos.instrumentId];
     const isBond = isBondItem(pos, inst);
     const fx = (pos.currency === baseCurrency ? 1 : rates[pos.currency]) || 1;
-    const currentPrice = isBond
+    const canUseDirectPrice =
+      instrumentPrices[pos.instrumentId] != null &&
+      (!isBond || posInstrumentCounts.get(pos.instrumentId) === 1);
+    const currentPrice = canUseDirectPrice
+      ? instrumentPrices[pos.instrumentId]
+      : isBond
       ? calculateBondCurrentPrice({
           purchaseDate: pos.purchaseDate,
           bondRate: pos.bondRate,
@@ -405,6 +433,16 @@ export function generateUnifiedPortfolioTimeline({
     : Math.max(1, Math.round((now - startMs) / oneDayMs));
 
   const points: ChartPoint[] = [];
+  const rawStepContributors: Map<string, {
+    key: string;
+    label: string;
+    assetType: 'ETF' | 'BOND' | 'STOCK' | 'OTHER';
+    valuation: number;
+    cost: number;
+    isBond: boolean;
+    netProfit: number;
+  }>[] = [];
+  const keyMetaMap = new Map<string, { label: string; assetType: 'ETF' | 'BOND' | 'STOCK' | 'OTHER' }>();
 
   for (let i = 0; i <= totalHistorySteps; i++) {
     const isToday = i === totalHistorySteps;
@@ -413,6 +451,7 @@ export function generateUnifiedPortfolioTimeline({
     const dayDateStr = `${dDay.getFullYear()}-${String(dDay.getMonth() + 1).padStart(2, '0')}-${String(dDay.getDate()).padStart(2, '0')}`;
 
     const holdings = new Map<string, {
+      instrumentId: string;
       currentQty: number;
       costBasis: number;
       isBond: boolean;
@@ -441,6 +480,7 @@ export function generateUnifiedPortfolioTimeline({
       let h = holdings.get(key);
       if (!h) {
         h = {
+          instrumentId: tx.instrumentId,
           currentQty: 0,
           costBasis: 0,
           isBond: tx.isBond,
@@ -496,10 +536,21 @@ export function generateUnifiedPortfolioTimeline({
     let nonBondCostAtT = 0;
     let nonBondValAtT = 0;
 
+    const stepContribMap = new Map<string, {
+      key: string;
+      label: string;
+      assetType: 'ETF' | 'BOND' | 'STOCK' | 'OTHER';
+      valuation: number;
+      cost: number;
+      isBond: boolean;
+      netProfit: number;
+    }>();
+
     for (const h of holdings.values()) {
       if (h.currentQty <= 0) continue;
       if (h.isBond) {
         bondCostAtT += h.costBasis;
+        let hVal = 0;
         for (const lot of h.lots) {
           const unitPrice = calculateBondCurrentPrice({
             purchaseDate: lot.executedAt,
@@ -510,7 +561,27 @@ export function generateUnifiedPortfolioTimeline({
             seriesName: lot.seriesName,
             termMonths: lot.termMonths,
           });
-          bondValAtT += lot.quantity * unitPrice * lot.fx;
+          const lotVal = lot.quantity * unitPrice * lot.fx;
+          bondValAtT += lotVal;
+          hVal += lotVal;
+        }
+        const bondKey = getBondFamily(h.lots[0]?.seriesName || h.symbol);
+        const bondAssetType: 'ETF' | 'BOND' | 'STOCK' | 'OTHER' = 'BOND';
+        keyMetaMap.set(bondKey, { label: bondKey, assetType: bondAssetType });
+        const existingBond = stepContribMap.get(bondKey);
+        if (existingBond) {
+          existingBond.valuation += hVal;
+          existingBond.cost += h.costBasis;
+        } else {
+          stepContribMap.set(bondKey, {
+            key: bondKey,
+            label: bondKey,
+            assetType: bondAssetType,
+            valuation: hVal,
+            cost: h.costBasis,
+            isBond: true,
+            netProfit: 0,
+          });
         }
       } else {
         nonBondCostAtT += h.costBasis;
@@ -520,7 +591,27 @@ export function generateUnifiedPortfolioTimeline({
           dayDateStr,
           h.fallbackPrice
         );
-        nonBondValAtT += h.currentQty * realClose * h.fx;
+        const hVal = h.currentQty * realClose * h.fx;
+        nonBondValAtT += hVal;
+        const inst = instruments[h.instrumentId];
+        const eqKey = inst?.symbol || h.symbol || h.instrumentId;
+        const eqAssetType: 'ETF' | 'BOND' | 'STOCK' | 'OTHER' = inst?.type === 'STOCK' ? 'STOCK' : 'ETF';
+        keyMetaMap.set(eqKey, { label: eqKey, assetType: eqAssetType });
+        const existingEq = stepContribMap.get(eqKey);
+        if (existingEq) {
+          existingEq.valuation += hVal;
+          existingEq.cost += h.costBasis;
+        } else {
+          stepContribMap.set(eqKey, {
+            key: eqKey,
+            label: eqKey,
+            assetType: eqAssetType,
+            valuation: hVal,
+            cost: h.costBasis,
+            isBond: false,
+            netProfit: 0,
+          });
+        }
       }
     }
 
@@ -528,6 +619,53 @@ export function generateUnifiedPortfolioTimeline({
     let rawValuation = bondValAtT + nonBondValAtT;
 
     if (isToday) {
+      if (positions.length > 0) {
+        stepContribMap.clear();
+        for (const pos of positions) {
+          const inst = instruments[pos.instrumentId];
+          const isBond = isBondItem(pos, inst);
+          const fx = (pos.currency === baseCurrency ? 1 : rates[pos.currency]) || 1;
+          const canUseDirectPrice =
+            instrumentPrices[pos.instrumentId] != null &&
+            (!isBond || posInstrumentCounts.get(pos.instrumentId) === 1);
+          const currentPrice = canUseDirectPrice
+            ? instrumentPrices[pos.instrumentId]
+            : isBond
+            ? calculateBondCurrentPrice({
+                purchaseDate: pos.purchaseDate,
+                bondRate: pos.bondRate,
+                bondMargin: pos.bondMargin,
+                cpi,
+                seriesName: pos.seriesName,
+                termMonths: pos.termMonths,
+              })
+            : (instrumentPrices[pos.instrumentId] ?? pos.averageBuyPrice);
+          const val = pos.quantity * currentPrice * fx;
+          const cost = pos.totalCostBase ?? (pos.quantity * pos.averageBuyPrice * fx);
+          const key = isBond
+            ? getBondFamily(pos.seriesName || inst?.symbol)
+            : (inst?.symbol || pos.seriesName || pos.instrumentId);
+          const assetType: 'ETF' | 'BOND' | 'STOCK' | 'OTHER' = isBond
+            ? 'BOND'
+            : (inst?.type === 'STOCK' ? 'STOCK' : 'ETF');
+          keyMetaMap.set(key, { label: key, assetType });
+          const existing = stepContribMap.get(key);
+          if (existing) {
+            existing.valuation += val;
+            existing.cost += cost;
+          } else {
+            stepContribMap.set(key, {
+              key,
+              label: key,
+              assetType,
+              valuation: val,
+              cost,
+              isBond,
+              netProfit: 0,
+            });
+          }
+        }
+      }
       finalCost = totalPortfolioCost > 0 ? totalPortfolioCost : finalCost;
       if (totalPortfolioValue > 0 && (totalPortfolioValue !== totalPortfolioCost || rawValuation === 0)) {
         rawValuation = totalPortfolioValue;
@@ -543,6 +681,25 @@ export function generateUnifiedPortfolioTimeline({
       }
       if (currentEquityCost > 0) {
         nonBondCostAtT = currentEquityCost;
+      }
+
+      let sumContribVal = 0;
+      let sumContribCost = 0;
+      for (const c of stepContribMap.values()) {
+        sumContribVal += c.valuation;
+        sumContribCost += c.cost;
+      }
+      if (sumContribVal > 0 && rawValuation > 0 && Math.abs(sumContribVal - rawValuation) > 1e-4) {
+        const ratio = rawValuation / sumContribVal;
+        for (const c of stepContribMap.values()) {
+          c.valuation *= ratio;
+        }
+      }
+      if (sumContribCost > 0 && finalCost > 0 && Math.abs(sumContribCost - finalCost) > 1e-4) {
+        const ratio = finalCost / sumContribCost;
+        for (const c of stepContribMap.values()) {
+          c.cost *= ratio;
+        }
       }
     }
 
@@ -561,6 +718,34 @@ export function generateUnifiedPortfolioTimeline({
       profit = totalProfitGross - totalBelka;
       valuation = rawValuation - totalBelka;
     }
+
+    const bondBelkaAmt = (taxMode === 'NETTO' && !isIkeAccount) ? bondProfit * 0.19 : 0;
+    const nonBondBelkaAmt = (taxMode === 'NETTO' && !isIkeAccount) ? nonBondProfit * 0.19 : 0;
+
+    let sumPosGrossBond = 0;
+    let sumPosGrossNonBond = 0;
+    for (const c of stepContribMap.values()) {
+      const g = c.valuation - c.cost;
+      if (g > 0) {
+        if (c.isBond) sumPosGrossBond += g;
+        else sumPosGrossNonBond += g;
+      }
+    }
+
+    for (const c of stepContribMap.values()) {
+      const g = c.valuation - c.cost;
+      let belka = 0;
+      if (taxMode === 'NETTO' && !isIkeAccount && g > 0) {
+        if (c.isBond && sumPosGrossBond > 0) {
+          belka = bondBelkaAmt * (g / sumPosGrossBond);
+        } else if (!c.isBond && sumPosGrossNonBond > 0) {
+          belka = nonBondBelkaAmt * (g / sumPosGrossNonBond);
+        }
+      }
+      c.netProfit = g - belka;
+    }
+
+    rawStepContributors.push(stepContribMap);
 
     const returnPct = finalCost > 0 ? (profit / finalCost) * 100 : 0;
     const dateObj = new Date(tMs);
@@ -582,6 +767,117 @@ export function generateUnifiedPortfolioTimeline({
       netP90: Math.round(valuation),
       netP10: Math.round(valuation),
     });
+  }
+
+  const allDistinctKeys = new Set<string>();
+  const maxAbsProfitMap = new Map<string, number>();
+
+  for (let s = 0; s < rawStepContributors.length; s++) {
+    const map = rawStepContributors[s];
+    for (const [k, c] of map.entries()) {
+      allDistinctKeys.add(k);
+      const absP = Math.abs(c.netProfit);
+      const prevMax = maxAbsProfitMap.get(k) || 0;
+      if (absP > prevMax) {
+        maxAbsProfitMap.set(k, absP);
+      }
+    }
+  }
+
+  const latestStepMap = rawStepContributors[rawStepContributors.length - 1];
+
+  const sortedKeys = Array.from(allDistinctKeys).sort((a, b) => {
+    const pA = Math.abs(latestStepMap?.get(a)?.netProfit ?? 0);
+    const pB = Math.abs(latestStepMap?.get(b)?.netProfit ?? 0);
+    if (Math.abs(pB - pA) > 1e-4) {
+      return pB - pA;
+    }
+    const maxA = maxAbsProfitMap.get(a) ?? 0;
+    const maxB = maxAbsProfitMap.get(b) ?? 0;
+    if (Math.abs(maxB - maxA) > 1e-4) {
+      return maxB - maxA;
+    }
+    return a.localeCompare(b);
+  });
+
+  const hasOther = sortedKeys.length > 5;
+  const topKeys = hasOther ? sortedKeys.slice(0, 5) : sortedKeys;
+  const otherKeys = hasOther ? sortedKeys.slice(5) : [];
+
+  for (let i = 0; i <= totalHistorySteps; i++) {
+    const map = rawStepContributors[i];
+    const point = points[i];
+    const pointProfit = point.profit;
+    const pointCost = point.cost;
+
+    const contributors: ProfitContributor[] = [];
+
+    for (const k of topKeys) {
+      const c = map.get(k);
+      const meta = keyMetaMap.get(k);
+      contributors.push({
+        key: k,
+        label: c?.label ?? meta?.label ?? k,
+        assetType: c?.assetType ?? meta?.assetType ?? 'OTHER',
+        valuation: Math.round(c?.valuation ?? 0),
+        cost: Math.round(c?.cost ?? 0),
+        profit: Math.round(c?.netProfit ?? 0),
+        returnContributionPct: 0,
+        sharePct: 0,
+      });
+    }
+
+    if (hasOther) {
+      let otherVal = 0;
+      let otherCost = 0;
+      let otherNetProfit = 0;
+      for (const ok of otherKeys) {
+        const c = map.get(ok);
+        if (c) {
+          otherVal += c.valuation;
+          otherCost += c.cost;
+          otherNetProfit += c.netProfit;
+        }
+      }
+      contributors.push({
+        key: 'OTHER',
+        label: locale?.startsWith('en') ? 'Other' : 'Pozostałe',
+        assetType: 'OTHER',
+        valuation: Math.round(otherVal),
+        cost: Math.round(otherCost),
+        profit: Math.round(otherNetProfit),
+        returnContributionPct: 0,
+        sharePct: 0,
+      });
+    }
+
+    if (contributors.length > 0) {
+      const sumProfit = contributors.reduce((acc, c) => acc + c.profit, 0);
+      const residual = pointProfit - sumProfit;
+      if (residual !== 0) {
+        let bestIdx = 0;
+        let bestAbs = -1;
+        let bestBase = -1;
+        for (let k = 0; k < contributors.length; k++) {
+          const a = Math.abs(contributors[k].profit);
+          const base = contributors[k].valuation + contributors[k].cost;
+          if (a > bestAbs || (a === bestAbs && base > bestBase)) {
+            bestAbs = a;
+            bestBase = base;
+            bestIdx = k;
+          }
+        }
+        contributors[bestIdx].profit += residual;
+      }
+
+      const absSum = contributors.reduce((acc, c) => acc + Math.abs(c.profit), 0);
+      for (const c of contributors) {
+        c.returnContributionPct = pointCost > 0 ? Number(((c.profit / pointCost) * 100).toFixed(2)) : 0;
+        c.sharePct = absSum > 0 ? Number(((c.profit / absSum) * 100).toFixed(1)) : 0;
+      }
+    }
+
+    point.contributors = contributors;
   }
 
   if (!isProjectionActive) {

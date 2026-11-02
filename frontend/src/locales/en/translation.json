@@ -319,6 +319,11 @@
     "optional": "optional"
   },
   "chart": {
+    "profitAttribution": "Attribution",
+    "profitAttributionTitle": "Profit attribution breakdown by portfolio holdings",
+    "profitAttributionBreakdown": "Profit breakdown",
+    "totalProfitSeries": "Total profit",
+    "otherContributors": "Other",
     "titleHistory": "Portfolio Valuation History",
     "titleProjection": "Portfolio History & Forecast (Monte Carlo)",
     "currentValuation": "CURRENT VALUATION:",

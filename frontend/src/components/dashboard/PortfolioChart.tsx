@@ -1,6 +1,6 @@
 import React, { useState, useMemo, useRef, useEffect } from 'react';
 import { useTranslation } from 'react-i18next';
-import { ChevronDown, ChevronUp, LineChart, Sparkles, Check, Info, X, Settings2, Maximize2, Target } from 'lucide-react';
+import { ChevronDown, ChevronUp, LineChart, Sparkles, Check, Info, X, Settings2, Maximize2, Target, Layers } from 'lucide-react';
 import {
   createChart,
   ColorType,
@@ -48,10 +48,13 @@ interface PortfolioChartProps {
   targetGoal?: number | null;
   onTargetGoalChange?: (goal: number | null) => void;
   empiricalStats?: PortfolioStatsResponse | null;
+  showAttribution?: boolean;
+  onShowAttributionChange?: (show: boolean) => void;
 }
 
 const TIMEFRAMES: TimeframeOption[] = ['1M', '3M', 'YTD', '1R', 'MAX'];
 const PROJECTIONS: ProjectionHorizonOption[] = ['3Y', '5Y', '10Y', '20Y'];
+const CONTRIBUTOR_COLORS = ['#f59e0b', '#38bdf8', '#a855f7', '#f43f5e', '#14b8a6', '#94a3b8'];
 
 const POLISH_MONTHS = ['sty', 'lut', 'mar', 'kwi', 'maj', 'cze', 'lip', 'sie', 'wrz', 'paź', 'lis', 'gru'];
 const ENGLISH_MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
@@ -79,7 +82,17 @@ export const PortfolioChart: React.FC<PortfolioChartProps> = ({
   targetGoal = null,
   onTargetGoalChange,
   empiricalStats,
+  showAttribution: controlledShowAttribution,
+  onShowAttributionChange,
 }) => {
+  const [internalShowAttribution, setInternalShowAttribution] = useState(false);
+  const showAttribution = controlledShowAttribution !== undefined ? controlledShowAttribution : internalShowAttribution;
+  const setShowAttribution = (val: boolean) => {
+    setInternalShowAttribution(val);
+    onShowAttributionChange?.(val);
+  };
+  const getContributorLabel = (c: { key: string; label: string }) =>
+    c.key === 'OTHER' ? t('chart.otherContributors', c.label) : c.label;
   const { t, i18n } = useTranslation();
   const chartContainerRef = useRef<HTMLDivElement | null>(null);
   const chartRef = useRef<IChartApi | null>(null);
@@ -210,6 +223,12 @@ export const PortfolioChart: React.FC<PortfolioChartProps> = ({
       },
       localization: {
         priceFormatter: (val: number) => {
+          if (showAttribution) {
+            if (metricMode === 'PLN') {
+              return `${formatSignedNumberWithSpaces(val)} ${baseCurrency}`;
+            }
+            return `${val >= 0 ? '+' : ''}${val.toFixed(2)} pp`;
+          }
           if (metricMode === 'PLN') {
             return `${formatNumberWithSpaces(val)} ${baseCurrency}`;
           }
@@ -228,29 +247,38 @@ export const PortfolioChart: React.FC<PortfolioChartProps> = ({
     }
 
     const areaSeries: ISeriesApi<'Area'> = chart.addSeries(AreaSeries, {
-      lineColor: '#34d399',
-      topColor: 'rgba(52, 211, 153, 0.35)',
+      lineColor: showAttribution ? '#10b981' : '#34d399',
+      topColor: showAttribution ? 'rgba(16, 185, 129, 0.25)' : 'rgba(52, 211, 153, 0.35)',
       bottomColor: 'rgba(52, 211, 153, 0.0)',
       lineWidth: 2,
       lastValueVisible: false,
       priceLineVisible: false,
+      title: showAttribution ? t('chart.totalProfitSeries', 'Całkowity zysk') : '',
       priceFormat: {
         type: 'custom',
-        formatter: (val: number) =>
-          metricMode === 'PLN'
+        formatter: (val: number) => {
+          if (showAttribution) {
+            return metricMode === 'PLN'
+              ? `${formatSignedNumberWithSpaces(val)} ${baseCurrency}`
+              : `${val >= 0 ? '+' : ''}${val.toFixed(2)}%`;
+          }
+          return metricMode === 'PLN'
             ? `${formatNumberWithSpaces(val)} ${baseCurrency}`
-            : `${val >= 0 ? '+' : ''}${val.toFixed(2)}%`,
+            : `${val >= 0 ? '+' : ''}${val.toFixed(2)}%`;
+        },
       },
     });
 
     areaSeries.setData(
       pastData.map((d) => ({
         time: d.utcTime,
-        value: metricMode === 'PLN' ? d.valuation : d.returnPct,
+        value: showAttribution
+          ? (metricMode === 'PLN' ? d.profit : d.returnPct)
+          : (metricMode === 'PLN' ? d.valuation : d.returnPct),
       }))
     );
 
-    if (metricMode === 'PLN') {
+    if (metricMode === 'PLN' && !showAttribution) {
       const costSeries = chart.addSeries(LineSeries, {
         color: '#71717a',
         lineStyle: LineStyle.Dashed,
@@ -267,6 +295,38 @@ export const PortfolioChart: React.FC<PortfolioChartProps> = ({
       );
     }
 
+    if (showAttribution && latestHistoricalPoint?.contributors) {
+      latestHistoricalPoint.contributors.forEach((c, idx) => {
+        const color = CONTRIBUTOR_COLORS[idx % CONTRIBUTOR_COLORS.length];
+        const cSeries = chart.addSeries(LineSeries, {
+          color,
+          lineWidth: 2,
+          lastValueVisible: false,
+          priceLineVisible: false,
+          title: getContributorLabel(c),
+          priceFormat: {
+            type: 'custom',
+            formatter: (val: number) =>
+              metricMode === 'PLN'
+                ? `${formatSignedNumberWithSpaces(val)} ${baseCurrency}`
+                : `${val >= 0 ? '+' : ''}${val.toFixed(2)} pp`,
+          },
+        });
+        cSeries.setData(
+          pastData.map((d) => {
+            const match = d.contributors?.find((item) => item.key === c.key);
+            const val = match
+              ? (metricMode === 'PLN' ? match.profit : match.returnContributionPct)
+              : 0;
+            return {
+              time: d.utcTime,
+              value: val,
+            };
+          })
+        );
+      });
+    }
+
     if (isProjectionActive && futureData.length > 0) {
       const medianSeries = chart.addSeries(LineSeries, {
         color: '#38bdf8',
@@ -280,7 +340,9 @@ export const PortfolioChart: React.FC<PortfolioChartProps> = ({
       medianSeries.setData(
         futureData.map((d) => ({
           time: d.utcTime,
-          value: metricMode === 'PLN' ? (d.netMedian ?? d.valuation) : d.returnPct,
+          value: showAttribution
+            ? (metricMode === 'PLN' ? ((d.netMedian ?? d.valuation) - d.cost) : d.returnPct)
+            : (metricMode === 'PLN' ? (d.netMedian ?? d.valuation) : d.returnPct),
         }))
       );
 
@@ -295,7 +357,9 @@ export const PortfolioChart: React.FC<PortfolioChartProps> = ({
       p90Series.setData(
         futureData.map((d) => ({
           time: d.utcTime,
-          value: metricMode === 'PLN' ? (d.netP90 ?? d.valuation) : (d.returnP90 ?? d.returnPct),
+          value: showAttribution
+            ? (metricMode === 'PLN' ? ((d.netP90 ?? d.valuation) - d.cost) : (d.returnP90 ?? d.returnPct))
+            : (metricMode === 'PLN' ? (d.netP90 ?? d.valuation) : (d.returnP90 ?? d.returnPct)),
         }))
       );
 
@@ -310,11 +374,13 @@ export const PortfolioChart: React.FC<PortfolioChartProps> = ({
       p10Series.setData(
         futureData.map((d) => ({
           time: d.utcTime,
-          value: metricMode === 'PLN' ? (d.netP10 ?? d.valuation) : (d.returnP10 ?? d.returnPct),
+          value: showAttribution
+            ? (metricMode === 'PLN' ? ((d.netP10 ?? d.valuation) - d.cost) : (d.returnP10 ?? d.returnPct))
+            : (metricMode === 'PLN' ? (d.netP10 ?? d.valuation) : (d.returnP10 ?? d.returnPct)),
         }))
       );
 
-      if (targetGoal && targetGoal > 0 && metricMode === 'PLN') {
+      if (targetGoal && targetGoal > 0 && metricMode === 'PLN' && !showAttribution) {
         medianSeries.createPriceLine({
           price: targetGoal,
           color: '#c084fc',
@@ -324,7 +390,7 @@ export const PortfolioChart: React.FC<PortfolioChartProps> = ({
           title: t('chart.goal', 'Cel'),
         });
       }
-    } else if (targetGoal && targetGoal > 0 && metricMode === 'PLN') {
+    } else if (targetGoal && targetGoal > 0 && metricMode === 'PLN' && !showAttribution) {
       areaSeries.createPriceLine({
         price: targetGoal,
         color: '#c084fc',
@@ -404,7 +470,7 @@ export const PortfolioChart: React.FC<PortfolioChartProps> = ({
       chart.remove();
       chartRef.current = null;
     };
-  }, [processedData, metricMode, baseCurrency, isProjectionActive, targetGoal, isCollapsed, todayUtcTime, latestHistoricalPoint, i18n.language]);
+  }, [processedData, metricMode, baseCurrency, isProjectionActive, targetGoal, isCollapsed, todayUtcTime, latestHistoricalPoint, i18n.language, showAttribution]);
 
   if (!data || data.length === 0) return null;
 
@@ -550,6 +616,20 @@ export const PortfolioChart: React.FC<PortfolioChartProps> = ({
             </button>
           </div>
 
+          <button
+            type="button"
+            onClick={() => setShowAttribution(!showAttribution)}
+            title={t('chart.profitAttributionTitle', 'Rozbicie zysku na poszczególne pozycje portfela')}
+            className={`px-2 py-1 rounded-lg border text-xs font-mono font-medium transition cursor-pointer flex items-center gap-1.5 ${
+              showAttribution
+                ? 'bg-amber-500/20 text-amber-300 font-bold border-amber-500/50 shadow-xs'
+                : 'bg-[#10121a] border-zinc-800 text-zinc-400 hover:text-zinc-200'
+            }`}
+          >
+            <Layers className="w-3.5 h-3.5" />
+            <span>{t('chart.profitAttribution', 'Kontrybucja')}</span>
+          </button>
+
           {isProjectionActive && (
             <div className="flex items-center bg-[#10121a] border border-zinc-800 rounded-lg p-0.5 text-xs font-mono">
               <button
@@ -640,6 +720,63 @@ export const PortfolioChart: React.FC<PortfolioChartProps> = ({
           </button>
         </div>
       </div>
+
+      {!isCollapsed && showAttribution && (hoveredPoint && !hoveredPoint.isFuture ? hoveredPoint : latestHistoricalPoint)?.contributors && ((hoveredPoint && !hoveredPoint.isFuture ? hoveredPoint : latestHistoricalPoint)?.contributors?.length ?? 0) > 0 && (() => {
+        const activePt = (hoveredPoint && !hoveredPoint.isFuture ? hoveredPoint : latestHistoricalPoint)!;
+        const contribs = activePt.contributors || [];
+        return (
+          <div className="px-4 py-2 bg-[#0c0e14] border-b border-zinc-800/80 text-xs font-mono">
+            <div className="flex items-center justify-between text-[11px] mb-1.5">
+              <span className="text-zinc-400 font-medium">
+                {t('chart.profitAttributionBreakdown', 'Składniki zysku')} ({activePt.dateLabel}):
+              </span>
+              <span className={`font-semibold ${activePt.profit >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
+                {metricMode === 'PLN'
+                  ? `${formatSignedNumberWithSpaces(activePt.profit)} ${baseCurrency}`
+                  : `${activePt.returnPct >= 0 ? '+' : ''}${activePt.returnPct.toFixed(2)}%`}
+              </span>
+            </div>
+
+            <div className="h-1.5 w-full rounded-full overflow-hidden flex bg-zinc-800/80 mb-2">
+              {contribs.map((c, idx) => {
+                const width = c.sharePct === 0 ? 0 : Math.min(100, Math.max(2, Math.abs(c.sharePct)));
+                const color = CONTRIBUTOR_COLORS[idx % CONTRIBUTOR_COLORS.length];
+                return (
+                  <div
+                    key={c.key}
+                    style={{ width: `${width}%`, backgroundColor: color }}
+                    title={`${getContributorLabel(c)}: ${c.profit >= 0 ? '+' : ''}${c.profit} ${baseCurrency} (${c.sharePct >= 0 ? '+' : ''}${c.sharePct}%)`}
+                    className="h-full transition-all"
+                  />
+                );
+              })}
+            </div>
+
+            <div className="flex flex-wrap items-center gap-1.5">
+              {contribs.map((c, idx) => {
+                const color = CONTRIBUTOR_COLORS[idx % CONTRIBUTOR_COLORS.length];
+                return (
+                  <div
+                    key={c.key}
+                    className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-zinc-900/90 border border-zinc-800 text-[10px]"
+                  >
+                    <span className="w-2 h-2 rounded-full shrink-0" style={{ backgroundColor: color }} />
+                    <span className="font-semibold text-zinc-200">{getContributorLabel(c)}</span>
+                    <span className={c.profit >= 0 ? 'text-emerald-400 font-medium' : 'text-rose-400 font-medium'}>
+                      {metricMode === 'PLN'
+                        ? `${formatSignedNumberWithSpaces(c.profit)} ${baseCurrency}`
+                        : `${c.returnContributionPct >= 0 ? '+' : ''}${c.returnContributionPct.toFixed(2)} pp`}
+                    </span>
+                    <span className="text-zinc-500">
+                      ({c.sharePct >= 0 ? '+' : ''}{c.sharePct.toFixed(1)}%)
+                    </span>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        );
+      })()}
 
       {!isCollapsed && isProjectionActive && (
         <div className="px-4 py-2 bg-[#0e1017] border-b border-zinc-800/80 text-xs font-mono flex flex-wrap items-center justify-between gap-3">
@@ -864,6 +1001,38 @@ export const PortfolioChart: React.FC<PortfolioChartProps> = ({
                   </span>
                 </div>
 
+                {showAttribution && !hoveredPoint.isFuture && hoveredPoint.contributors && hoveredPoint.contributors.length > 0 && (
+                  <div className="pt-1.5 mt-1 border-t border-zinc-800/80 space-y-1 text-[10px]">
+                    <div className="text-[10px] text-zinc-400 font-medium pb-0.5 border-b border-zinc-800/40">
+                      {t('chart.profitAttributionBreakdown', 'Składniki zysku')}:
+                    </div>
+                    {hoveredPoint.contributors
+                      .map((c, originalIdx) => ({ c, originalIdx }))
+                      .sort((a, b) => b.c.profit - a.c.profit)
+                      .map(({ c, originalIdx }) => {
+                        const color = CONTRIBUTOR_COLORS[originalIdx % CONTRIBUTOR_COLORS.length];
+                        return (
+                          <div key={c.key} className="flex justify-between items-center gap-2">
+                            <div className="flex items-center gap-1.5 min-w-0">
+                              <span className="w-1.5 h-1.5 rounded-full shrink-0" style={{ backgroundColor: color }} />
+                              <span className="truncate text-zinc-300">{getContributorLabel(c)}</span>
+                            </div>
+                            <div className="flex items-center gap-1 font-mono shrink-0">
+                              <span className={c.profit >= 0 ? 'text-emerald-400' : 'text-rose-400'}>
+                                {metricMode === 'PLN'
+                                  ? `${formatSignedNumberWithSpaces(c.profit)} ${baseCurrency}`
+                                  : `${c.returnContributionPct >= 0 ? '+' : ''}${c.returnContributionPct.toFixed(2)} pp`}
+                              </span>
+                              <span className="text-zinc-500">
+                                ({c.sharePct >= 0 ? '+' : ''}{c.sharePct.toFixed(1)}%)
+                              </span>
+                            </div>
+                          </div>
+                        );
+                      })}
+                  </div>
+                )}
+
                 {hoveredPoint.isFuture && (
                   <div className="pt-1.5 mt-1 border-t border-zinc-800/80 space-y-0.5 text-[10px]">
                     <div className="flex justify-between text-sky-300/80">
@@ -911,10 +1080,28 @@ export const PortfolioChart: React.FC<PortfolioChartProps> = ({
 
           <div className="flex flex-wrap items-center justify-between text-[11px] text-zinc-400 mt-4 pt-3 px-1 border-t border-zinc-800/80 font-mono gap-4">
             <div className="flex flex-wrap items-center gap-5">
-              <div className="flex items-center gap-1.5">
-                <span className="w-2.5 h-0.5 bg-emerald-400 inline-block rounded-full"></span>
-                <span>{t('chart.valuationHistory', 'Historia wyceny')}</span>
-              </div>
+              {showAttribution ? (
+                <>
+                  <div className="flex items-center gap-1.5">
+                    <span className="w-2.5 h-0.5 bg-emerald-400 inline-block rounded-full"></span>
+                    <span>{t('chart.totalProfitSeries', 'Całkowity zysk')}</span>
+                  </div>
+                  {latestHistoricalPoint?.contributors?.map((c, idx) => {
+                    const color = CONTRIBUTOR_COLORS[idx % CONTRIBUTOR_COLORS.length];
+                    return (
+                      <div key={c.key} className="flex items-center gap-1.5">
+                        <span className="w-2 h-2 rounded-full inline-block" style={{ backgroundColor: color }}></span>
+                        <span>{getContributorLabel(c)}</span>
+                      </div>
+                    );
+                  })}
+                </>
+              ) : (
+                <div className="flex items-center gap-1.5">
+                  <span className="w-2.5 h-0.5 bg-emerald-400 inline-block rounded-full"></span>
+                  <span>{t('chart.valuationHistory', 'Historia wyceny')}</span>
+                </div>
+              )}
 
               {isProjectionActive && (
                 <>
@@ -929,14 +1116,14 @@ export const PortfolioChart: React.FC<PortfolioChartProps> = ({
                 </>
               )}
 
-              {metricMode === 'PLN' && (
+              {metricMode === 'PLN' && !showAttribution && (
                 <div className="flex items-center gap-1.5">
                   <span className="w-2.5 h-0.5 border-b border-zinc-400 border-dashed inline-block"></span>
                   <span>{isProjectionActive ? t('chart.contributionWithDca', 'Wkład (+DCA)') : t('chart.contributionCapital', 'Wkład (kapitał)')}</span>
                 </div>
               )}
 
-              {targetGoal && metricMode === 'PLN' && (
+              {targetGoal && metricMode === 'PLN' && !showAttribution && (
                 <div className="flex items-center gap-1.5">
                   <span className="w-2.5 h-0.5 border-b border-purple-400 border-dashed inline-block"></span>
                   <span className="text-purple-300 font-medium">{t('chart.targetGoalLabel', { val: formatNumberWithSpaces(targetGoal / 1000), currency: baseCurrency, defaultValue: `Cel (${formatNumberWithSpaces(targetGoal / 1000)}k ${baseCurrency})` })}</span>
