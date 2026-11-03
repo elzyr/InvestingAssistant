@@ -337,29 +337,41 @@ class MarketHistoryRepository:
         finally:
             self._release_connection(conn, is_external)
 
-    def save_cpi_records(self, records: List[Dict[str, Any]]) -> int:
+    def save_cpi_records(self, records: List[Dict[str, Any]], allow_overwrite_authoritative: bool = False) -> int:
         if not records:
             return 0
         conn, is_external = self._get_connection()
         try:
             cursor = conn.cursor()
             if self.is_postgres:
-                query = """
-                    INSERT INTO macro_cpi (year, month, rate, source)
-                    VALUES (%s, %s, %s, %s)
-                    ON CONFLICT (year, month) DO UPDATE SET
-                        rate = EXCLUDED.rate,
-                        source = EXCLUDED.source
-                """
+                if allow_overwrite_authoritative:
+                    query = """
+                        INSERT INTO macro_cpi (year, month, rate, source)
+                        VALUES (%s, %s, %s, %s)
+                        ON CONFLICT (year, month) DO UPDATE SET
+                            rate = EXCLUDED.rate,
+                            source = EXCLUDED.source
+                    """
+                else:
+                    query = """
+                        INSERT INTO macro_cpi (year, month, rate, source)
+                        VALUES (%s, %s, %s, %s)
+                        ON CONFLICT (year, month) DO UPDATE SET
+                            rate = EXCLUDED.rate,
+                            source = EXCLUDED.source
+                        WHERE macro_cpi.source NOT IN ('GUS', 'NBP', 'GUS (szacunek)') OR EXCLUDED.source IN ('GUS', 'NBP', 'GUS (szacunek)')
+                    """
+                data = [(int(r["year"]), int(r["month"]), float(r["rate"]), str(r.get("source", "Eurostat"))) for r in records]
+                cursor.executemany(query, data)
             else:
-                query = """
-                    INSERT OR REPLACE INTO macro_cpi (year, month, rate, source)
-                    VALUES (?, ?, ?, ?)
-                """
-            data = [(int(r["year"]), int(r["month"]), float(r["rate"]), str(r.get("source", "Eurostat"))) for r in records]
-            cursor.executemany(query, data)
+                for r in records:
+                    y, m, rate, src = int(r["year"]), int(r["month"]), float(r["rate"]), str(r.get("source", "Eurostat"))
+                    if allow_overwrite_authoritative or src in ("GUS", "NBP", "GUS (szacunek)"):
+                        cursor.execute("INSERT OR REPLACE INTO macro_cpi (year, month, rate, source) VALUES (?, ?, ?, ?)", (y, m, rate, src))
+                    else:
+                        cursor.execute("INSERT OR IGNORE INTO macro_cpi (year, month, rate, source) VALUES (?, ?, ?, ?)", (y, m, rate, src))
             conn.commit()
-            return len(data)
+            return len(records)
         finally:
             self._release_connection(conn, is_external)
 

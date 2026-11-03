@@ -1,5 +1,8 @@
+import csv
 import datetime
+import io
 import logging
+import re
 from typing import Optional
 import requests
 from app.services.cache_service import cache_service
@@ -9,6 +12,63 @@ class InflationService:
 
     @staticmethod
     def sync_inflation_from_upstream() -> None:
+        gus_records = []
+        try:
+            csv_url = "https://stat.gov.pl/download/gfx/portalinformacyjny/pl/defaultstronaopisowa/4741/1/1/miesiecznewskaznikicentowarowiuslugkonsumpcyjnychod1982roku_9.csv"
+            resp = requests.get(csv_url, timeout=10)
+            if resp.status_code == 200:
+                reader = csv.reader(io.StringIO(resp.text), delimiter=";")
+                next(reader, None)
+                for row in reader:
+                    if len(row) > 5 and row[2] == "Analogiczny miesiąc poprzedniego roku = 100":
+                        val_str = row[5].replace(",", ".")
+                        try:
+                            rate = round(float(val_str) - 100.0, 2)
+                            gus_records.append({
+                                "year": int(row[3]),
+                                "month": int(row[4]),
+                                "rate": rate,
+                                "source": "GUS",
+                            })
+                        except ValueError:
+                            pass
+        except Exception as e:
+            logging.warning(f"Failed to fetch GUS CPI dataset: {e}")
+
+        try:
+            hub = requests.get("https://stat.gov.pl/obszary-tematyczne/ceny-handel/wskazniki-cen/", timeout=8)
+            if hub.status_code == 200:
+                months_pl = {
+                    "styczniu": 1, "lutym": 2, "marcu": 3, "kwietniu": 4,
+                    "maju": 5, "czerwcu": 6, "lipcu": 7, "sierpniu": 8,
+                    "wrzesniu": 9, "wrześniu": 9, "pazdzierniku": 10, "październiku": 10,
+                    "listopadzie": 11, "grudniu": 12
+                }
+                links = set(re.findall(r'href=[\x22\x27]([^\x22\x27]*szybki-szacunek[^\x22\x27]*)[\x22\x27]', hub.text))
+                for link in links:
+                    m_match = re.search(r'szybki-szacunek-wskaznika-cen-towarow-i-uslug-konsumpcyjnych-w-([a-z]+)-([0-9]{4})', link)
+                    if m_match:
+                        month_name = m_match.group(1).lower()
+                        year = int(m_match.group(2))
+                        month = months_pl.get(month_name)
+                        if month and year >= 2026:
+                            page = requests.get(link, timeout=8)
+                            if page.status_code == 200:
+                                rate_m = re.search(r'wzrosły o ([0-9]+[,\.][0-9]+)%', page.text)
+                                if rate_m:
+                                    rate = float(rate_m.group(1).replace(",", "."))
+                                    gus_records.append({
+                                        "year": year,
+                                        "month": month,
+                                        "rate": rate,
+                                        "source": "GUS (szacunek)",
+                                    })
+        except Exception as e:
+            logging.warning(f"Failed to fetch GUS flash estimate: {e}")
+
+        if gus_records:
+            market_history_repo.save_cpi_records(gus_records, allow_overwrite_authoritative=True)
+
         try:
             resp = requests.get(
                 "https://ec.europa.eu/eurostat/api/dissemination/statistics/1.0/data/prc_hicp_manr?geo=PL&coicop=CP00&unit=RCH_A&lastTimePeriod=60",
@@ -31,9 +91,11 @@ class InflationService:
                                 "source": "Eurostat",
                             })
                 if records:
-                    market_history_repo.save_cpi_records(records)
+                    market_history_repo.save_cpi_records(records, allow_overwrite_authoritative=False)
         except Exception as e:
             logging.warning(f"Failed to sync inflation from Eurostat: {e}")
+
+        cache_service.delete("macro:inflation:cpi")
 
     @staticmethod
     def get_cpi() -> dict:
@@ -43,7 +105,7 @@ class InflationService:
             return cached
 
         latest = market_history_repo.get_latest_cpi()
-        if not latest:
+        if not latest or latest.get("year", 0) < datetime.date.today().year:
             InflationService.sync_inflation_from_upstream()
             latest = market_history_repo.get_latest_cpi()
 
