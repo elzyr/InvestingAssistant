@@ -14,7 +14,14 @@
     "atPrice": "@",
     "costBasis": "Cost basis",
     "capital": "capital",
-    "today": "today"
+    "today": "today",
+    "user": "User",
+    "defaultPortfolioName": "Main",
+    "currencies": {
+      "pln": "PLN (Polish zloty)",
+      "eur": "EUR (Euro)",
+      "usd": "USD (US Dollar)"
+    }
   },
   "nav": {
     "overview": "Overview",
@@ -113,6 +120,7 @@
     "vintage": "Vintage",
     "ofPortfolio": "of portfolio",
     "interest": "Interest",
+    "interestAccrued": "Interest",
     "inflationIndexed": "Indexed",
     "antiInflation": "Anti-inflation",
     "fixedRate": "Fixed rate",
@@ -122,7 +130,15 @@
     "fourYear": "COI (4-year)",
     "threeYear": "TOS (3-year)",
     "bondsFamily": "{{family}} Bonds",
-    "ikeTaxFree": "IRA (tax-exempt)"
+    "ikeTaxFree": "IRA (tax-exempt)",
+    "net": "Net",
+    "gross": "Gross",
+    "priceUnavailable": "No live market quote available (purchase price used)",
+    "sortName": "Name",
+    "sortValue": "Value",
+    "sortProfit": "Nominal profit",
+    "sortReturn": "Return rate %",
+    "sortWeight": "Portfolio weight"
   },
   "monteCarlo": {
     "title": "Portfolio Stress-Testing: “Time Machine”",
@@ -231,7 +247,9 @@
     "catPlStocks": "Polish Stocks",
     "catUsStocks": "US Stocks",
     "catEmerging": "Emerging Markets ETF",
-    "catOther": "Other assets"
+    "catOther": "Other assets",
+    "selectPortfolioAria": "Select portfolio",
+    "selectYearAria": "Select report year"
   },
   "transactionHistory": {
     "title": "Transaction History",
@@ -320,7 +338,8 @@
     "errorCreateFailed": "Failed to save transaction",
     "errorDeleteFailed": "Failed to delete transaction",
     "errorLoadingInstruments": "Error loading instruments",
-    "optional": "optional"
+    "optional": "optional",
+    "typeDividend": "Dividend"
   },
   "chart": {
     "profitAttribution": "Attribution",
@@ -399,6 +418,22 @@
     "currencyLabel": "Base currency",
     "submit": "Create portfolio",
     "nameRequired": "Portfolio name is required",
-    "createError": "Failed to create portfolio"
+    "createError": "Failed to create portfolio",
+    "accountTypeLabel": "Account type",
+    "accountTypeStandard": "Standard",
+    "accountTypeIke": "IKE (Retirement)",
+    "accountTypeIkze": "IKZE (Retirement)"
+  },
+  "errors": {
+    "fetchPortfolios": "Failed to fetch portfolios",
+    "fetchPositions": "Failed to fetch positions",
+    "fetchTransactions": "Failed to fetch transactions",
+    "fetchInflation": "Failed to fetch inflation rate",
+    "saveTransaction": "Failed to save transaction",
+    "updateTransaction": "Failed to update transaction",
+    "deleteTransaction": "Failed to delete transaction",
+    "createPortfolio": "Failed to create portfolio",
+    "fetchHistory": "Failed to fetch history for {{symbol}}",
+    "generalError": "An error occurred during processing"
   }
 }

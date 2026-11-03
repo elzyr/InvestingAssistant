@@ -441,6 +441,17 @@ const assertCloseTo = (actual, expected, tolerance = 1e-4, message) => {
       },
     ];
 
+        const mockT = (k) => ({
+      'dashboard.netPortfolioValue': 'Wartość portfela (netto)',
+      'dashboard.grossPortfolioValue': 'Wartość portfela (brutto)',
+      'dashboard.netProfit': 'Zysk netto',
+      'dashboard.grossProfit': 'Zysk brutto',
+      'dashboard.annualizedReturn': 'r/r',
+      'dashboard.aboveCpi': 'ponad CPI',
+      'dashboard.afterTax': 'po podatku',
+      'dashboard.return': 'zwrotu',
+      'dashboard.today': 'dzisiaj',
+    }[k] || k);
     it('formats portfolio value as net of tax when shouldApplyTax is true', () => {
       const summaryNet = buildDashboardSummary({
         totalPortfolioValue: 12000,
@@ -455,7 +466,7 @@ const assertCloseTo = (actual, expected, tolerance = 1e-4, message) => {
         shouldApplyTax: true,
         isIkeAccount: false,
         nowTimestamp: new Date('2026-06-01T00:00:00Z').getTime(),
-        t: (k, d) => (d !== undefined ? d : k),
+        t: mockT,
       });
 
       assert.strictEqual(summaryNet.portfolioValueFormatted, '11 620 PLN');
@@ -478,7 +489,7 @@ const assertCloseTo = (actual, expected, tolerance = 1e-4, message) => {
         shouldApplyTax: false,
         isIkeAccount: false,
         nowTimestamp: new Date('2026-06-01T00:00:00Z').getTime(),
-        t: (k, d) => (d !== undefined ? d : k),
+        t: mockT,
       });
 
       assert.strictEqual(summaryGross.portfolioValueFormatted, '12 000 PLN');

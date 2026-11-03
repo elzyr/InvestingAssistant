@@ -1,6 +1,6 @@
 import datetime
 import logging
-from typing import Dict, Any, List
+from typing import Dict, Any, List, Optional
 import numpy as np
 import yfinance as yf
 from app.services.market_history_repo import market_history_repo
@@ -14,7 +14,7 @@ UCITS_FALLBACK_MAP = {
     "IS3N.DE": {"ter": 0.0018, "trailingPe": 14.0, "dividendYield": 0.024, "beta": 0.95},
 }
 
-def _safe_float(val: Any, default: float) -> float:
+def _safe_float(val: Any, default: Optional[float] = None) -> Optional[float]:
     try:
         return float(val) if val is not None else default
     except (ValueError, TypeError):
@@ -22,9 +22,9 @@ def _safe_float(val: Any, default: float) -> float:
 
 class AnalyticsService:
     @staticmethod
-    def enrich_with_ucits_fallback(symbol: str, raw_info: Dict[str, Any]) -> Dict[str, float]:
+    def enrich_with_ucits_fallback(symbol: str, raw_info: Dict[str, Any]) -> Dict[str, Optional[float]]:
         sym = symbol.upper()
-        fallback = UCITS_FALLBACK_MAP.get(sym, {"ter": 0.0020, "trailingPe": 20.0, "dividendYield": 0.015, "beta": 1.0})
+        fallback = UCITS_FALLBACK_MAP.get(sym, {"ter": None, "trailingPe": None, "dividendYield": None, "beta": None})
 
         raw_ter = raw_info.get("netExpenseRatio") or raw_info.get("annualReportExpenseRatio") or raw_info.get("expenseRatio")
         ter = _safe_float(raw_ter, fallback["ter"]) if raw_ter is not None else fallback["ter"]
@@ -34,17 +34,17 @@ class AnalyticsService:
 
         raw_yield = raw_info.get("dividendYield") or raw_info.get("yield")
         dividend_yield = _safe_float(raw_yield, fallback["dividendYield"]) if raw_yield is not None else fallback["dividendYield"]
-        if dividend_yield > 1.0:
+        if dividend_yield is not None and dividend_yield > 1.0:
             dividend_yield /= 100.0
 
         raw_beta = raw_info.get("beta") or raw_info.get("beta3Year")
         beta = _safe_float(raw_beta, fallback["beta"]) if raw_beta is not None else fallback["beta"]
 
         return {
-            "ter": float(ter),
-            "trailingPe": float(trailing_pe),
-            "dividendYield": float(dividend_yield),
-            "beta": float(beta),
+            "ter": ter,
+            "trailingPe": trailing_pe,
+            "dividendYield": dividend_yield,
+            "beta": beta,
         }
 
     @staticmethod
@@ -61,10 +61,7 @@ class AnalyticsService:
 
         if needs_fetch:
             try:
-                try:
-                    stock = yf.Ticker(sym)
-                except TypeError:
-                    stock = yf.Ticker(sym)
+                stock = yf.Ticker(sym)
                 hist = stock.history(start=max_date) if max_date else stock.history(period="5y")
                 if not hist.empty:
                     hist = hist.reset_index().dropna(subset=["Close"])
@@ -83,14 +80,15 @@ class AnalyticsService:
                                     date_col = "Date" if "Date" in hist.columns else ("Datetime" if "Datetime" in hist.columns else hist.columns[0])
                                 market_history_repo.delete_symbol_prices(sym)
 
+                    vols = hist["Volume"].values if "Volume" in hist.columns else [0] * len(hist)
                     records = [
                         {
-                            "date": str(row[date_col])[:10],
-                            "close_price": float(row["Close"]),
+                            "date": str(d)[:10],
+                            "close_price": float(c),
                             "currency": currency,
-                            "volume": int(row.get("Volume", 0) or 0)
+                            "volume": int(v or 0)
                         }
-                        for _, row in hist.iterrows()
+                        for d, c, v in zip(hist[date_col].values, hist["Close"].values, vols)
                     ]
                     market_history_repo.save_eod_prices_bulk(sym, records, currency)
 
@@ -110,10 +108,10 @@ class AnalyticsService:
                     enriched = AnalyticsService.enrich_with_ucits_fallback(sym, info)
                     market_history_repo.save_profile_metrics(
                         symbol=sym,
-                        ter=enriched["ter"],
-                        trailing_pe=enriched["trailingPe"],
-                        dividend_yield=enriched["dividendYield"],
-                        beta=enriched["beta"],
+                        ter=enriched["ter"] or 0.0,
+                        trailing_pe=enriched["trailingPe"] or 0.0,
+                        dividend_yield=enriched["dividendYield"] or 0.0,
+                        beta=enriched["beta"] or 1.0,
                         last_updated=today_str,
                     )
                     profile = enriched
@@ -130,24 +128,24 @@ class AnalyticsService:
             daily_returns = np.diff(closes) / closes[:-1]
             growth_factor = float(np.prod(1.0 + daily_returns))
             annual_return = float(growth_factor ** (252.0 / len(daily_returns)) - 1.0) if growth_factor > 0 else 0.0
-            annual_volatility = float(np.std(daily_returns, ddof=1) * np.sqrt(252)) if len(daily_returns) > 1 else 0.15
+            annual_volatility = float(np.std(daily_returns, ddof=1) * np.sqrt(252)) if len(daily_returns) > 1 else None
             daily_returns_dict = {
                 prices[i + 1]["date"]: float(daily_returns[i])
                 for i in range(len(daily_returns))
             }
         else:
-            annual_return = 0.08
-            annual_volatility = 0.15
+            annual_return = None
+            annual_volatility = None
             daily_returns_dict = {}
 
         return {
             "symbol": sym,
             "annualReturn": annual_return,
             "annualVolatility": annual_volatility,
-            "ter": profile["ter"],
-            "trailingPe": profile["trailingPe"],
-            "dividendYield": profile["dividendYield"],
-            "beta": profile["beta"],
+            "ter": profile.get("ter"),
+            "trailingPe": profile.get("trailingPe"),
+            "dividendYield": profile.get("dividendYield"),
+            "beta": profile.get("beta"),
             "dailyReturns": daily_returns_dict,
             "currency": currency,
         }
@@ -156,14 +154,15 @@ class AnalyticsService:
     def calculate_portfolio_metrics(holdings: List[Any], benchmark_symbol: str = "SPY") -> Dict[str, Any]:
         if not holdings:
             return {
-                "weightedReturn": 0.0,
-                "weightedVolatility": 0.0,
-                "weightedTer": 0.0,
-                "weightedPe": 0.0,
-                "weightedDividendYield": 0.0,
-                "portfolioBeta": 1.0,
+                "weightedReturn": None,
+                "weightedVolatility": None,
+                "weightedTer": None,
+                "weightedPe": None,
+                "weightedDividendYield": None,
+                "portfolioBeta": None,
                 "currencyBasis": "LOCAL",
                 "instruments": [],
+                "correlationMatrix": {},
             }
 
         total_weight = sum(getattr(h, "weight", 0.0) or 0.0 for h in holdings)
@@ -202,14 +201,53 @@ class AnalyticsService:
             })
 
         w_vec = np.array(normalized_weights, dtype=np.float64)
-        weighted_return = float(sum(w * m["annualReturn"] for w, m in zip(w_vec, instruments_metrics)))
-        weighted_ter = float(sum(w * m["ter"] for w, m in zip(w_vec, instruments_metrics)))
-        weighted_pe = float(sum(w * m["trailingPe"] for w, m in zip(w_vec, instruments_metrics)))
-        weighted_dividend_yield = float(sum(w * m["dividendYield"] for w, m in zip(w_vec, instruments_metrics)))
-        portfolio_beta = float(sum(w * m["beta"] for w, m in zip(w_vec, instruments_metrics)))
 
+        ret_items = [m["annualReturn"] for m in instruments_metrics if m["annualReturn"] is not None]
+        weighted_return = (
+            round(float(sum(w * m["annualReturn"] for w, m in zip(w_vec, instruments_metrics))), 4)
+            if len(ret_items) == len(instruments_metrics)
+            else None
+        )
+
+        ter_items = [m["ter"] for m in instruments_metrics if m["ter"] is not None]
+        weighted_ter = (
+            round(float(sum(w * m["ter"] for w, m in zip(w_vec, instruments_metrics))), 4)
+            if len(ter_items) == len(instruments_metrics)
+            else None
+        )
+
+        pe_items = [m["trailingPe"] for m in instruments_metrics if m["trailingPe"] is not None]
+        weighted_pe = (
+            round(float(sum(w * m["trailingPe"] for w, m in zip(w_vec, instruments_metrics))), 2)
+            if len(pe_items) == len(instruments_metrics)
+            else None
+        )
+
+        div_items = [m["dividendYield"] for m in instruments_metrics if m["dividendYield"] is not None]
+        weighted_dividend_yield = (
+            round(float(sum(w * m["dividendYield"] for w, m in zip(w_vec, instruments_metrics))), 4)
+            if len(div_items) == len(instruments_metrics)
+            else None
+        )
+
+        beta_items = [m["beta"] for m in instruments_metrics if m["beta"] is not None]
+        portfolio_beta = (
+            round(float(sum(w * m["beta"] for w, m in zip(w_vec, instruments_metrics))), 2)
+            if len(beta_items) == len(instruments_metrics)
+            else None
+        )
+
+        vol_items = [m["annualVolatility"] for m in instruments_metrics if m["annualVolatility"] is not None]
+        weighted_volatility = (
+            float(sum(w * m["annualVolatility"] for w, m in zip(w_vec, instruments_metrics)))
+            if len(vol_items) == len(instruments_metrics)
+            else None
+        )
+
+        correlation_matrix: Dict[str, Dict[str, float]] = {}
         valid_series = [s for s in daily_returns_series if s]
         if len(valid_series) == len(instruments_metrics) and len(valid_series) > 0:
+            aligned_returns = None
             if all(isinstance(s, dict) for s in valid_series):
                 common_dates = sorted(set.intersection(*(set(s.keys()) for s in valid_series)))
                 if len(common_dates) > 1:
@@ -217,30 +255,43 @@ class AnalyticsService:
                         np.array([s[d] for d in common_dates], dtype=np.float64)
                         for s in valid_series
                     ])
-                    port_daily = np.dot(aligned_returns, w_vec)
-                    weighted_volatility = float(np.std(port_daily, ddof=1) * np.sqrt(252))
-                else:
-                    weighted_volatility = float(sum(w * m["annualVolatility"] for w, m in zip(w_vec, instruments_metrics)))
             elif all(isinstance(s, list) for s in valid_series):
                 min_len = min(len(s) for s in valid_series)
                 if min_len > 1:
                     aligned_returns = np.column_stack([np.array(s[-min_len:], dtype=np.float64) for s in valid_series])
-                    port_daily = np.dot(aligned_returns, w_vec)
-                    weighted_volatility = float(np.std(port_daily, ddof=1) * np.sqrt(252))
-                else:
-                    weighted_volatility = float(sum(w * m["annualVolatility"] for w, m in zip(w_vec, instruments_metrics)))
-            else:
-                weighted_volatility = float(sum(w * m["annualVolatility"] for w, m in zip(w_vec, instruments_metrics)))
-        else:
-            weighted_volatility = float(sum(w * m["annualVolatility"] for w, m in zip(w_vec, instruments_metrics)))
+
+            if aligned_returns is not None and aligned_returns.shape[0] > 1:
+                port_daily = np.dot(aligned_returns, w_vec)
+                weighted_volatility = round(float(np.std(port_daily, ddof=1) * np.sqrt(252)), 4)
+                if len(instruments_metrics) > 1:
+                    cov_matrix = np.corrcoef(aligned_returns, rowvar=False)
+                    for i, hi in enumerate(instruments_metrics):
+                        sym_i = hi["symbol"]
+                        correlation_matrix[sym_i] = {}
+                        for j, hj in enumerate(instruments_metrics):
+                            sym_j = hj["symbol"]
+                            c_val = float(cov_matrix[i, j]) if not np.isnan(cov_matrix[i, j]) else (1.0 if i == j else 0.0)
+                            correlation_matrix[sym_i][sym_j] = round(c_val, 4)
+                elif len(instruments_metrics) == 1:
+                    sym = instruments_metrics[0]["symbol"]
+                    correlation_matrix[sym] = {sym: 1.0}
+
+        if not correlation_matrix and instruments_metrics:
+            for hi in instruments_metrics:
+                sym_i = hi["symbol"]
+                correlation_matrix[sym_i] = {}
+                for hj in instruments_metrics:
+                    sym_j = hj["symbol"]
+                    correlation_matrix[sym_i][sym_j] = 1.0 if sym_i == sym_j else 0.0
 
         return {
-            "weightedReturn": round(weighted_return, 4),
-            "weightedVolatility": round(weighted_volatility, 4),
-            "weightedTer": round(weighted_ter, 4),
-            "weightedPe": round(weighted_pe, 2),
-            "weightedDividendYield": round(weighted_dividend_yield, 4),
-            "portfolioBeta": round(portfolio_beta, 2),
+            "weightedReturn": weighted_return,
+            "weightedVolatility": weighted_volatility,
+            "weightedTer": weighted_ter,
+            "weightedPe": weighted_pe,
+            "weightedDividendYield": weighted_dividend_yield,
+            "portfolioBeta": portfolio_beta,
             "currencyBasis": "LOCAL",
             "instruments": instruments_metrics,
+            "correlationMatrix": correlation_matrix,
         }

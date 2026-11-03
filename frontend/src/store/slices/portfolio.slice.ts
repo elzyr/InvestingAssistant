@@ -1,3 +1,4 @@
+import i18n from '../../i18n/config.ts';
 import { createSlice, type PayloadAction } from '@reduxjs/toolkit';
 import type {
   PortfolioResponse,
@@ -83,12 +84,6 @@ export const portfolioSlice = createSlice({
     ) => {
       state.monthlyCpi[action.payload.year] = action.payload.data;
     },
-    setMonthlyCpi: (state, action: PayloadAction<Record<number, Record<number, number>>>) => {
-      state.monthlyCpi = action.payload;
-    },
-    clearPortfolioError: (state) => {
-      state.error = null;
-    },
     resetPortfolio: () => initialState,
   },
   extraReducers: (builder) => {
@@ -111,7 +106,7 @@ export const portfolioSlice = createSlice({
       .addCase(fetchPortfolios.rejected, (state, action) => {
         state.loading = false;
         state.isInitialLoading = false;
-        state.error = action.payload || 'Błąd pobierania portfeli';
+        state.error = action.payload || i18n.t('errors.fetchPortfolios');
       })
       .addCase(fetchPositions.pending, (state) => {
         state.loading = state.positions.length === 0;
@@ -133,7 +128,7 @@ export const portfolioSlice = createSlice({
       .addCase(fetchPositions.rejected, (state, action) => {
         state.loading = false;
         state.isPositionsLoading = false;
-        state.error = action.payload || 'Błąd pobierania pozycji';
+        state.error = action.payload || i18n.t('errors.fetchPositions');
       })
       .addCase(fetchTransactions.pending, (state) => {
         state.isTransactionsLoading = true;
@@ -171,7 +166,7 @@ export const portfolioSlice = createSlice({
         state.transactionsLastFetchedAt = {};
       })
       .addCase(createTransaction.rejected, (state, action) => {
-        state.error = action.payload || 'Błąd dodawania transakcji';
+        state.error = action.payload || i18n.t('errors.saveTransaction');
       })
       .addCase(updateTransaction.pending, (state) => {
         state.error = null;
@@ -181,7 +176,7 @@ export const portfolioSlice = createSlice({
         state.transactionsLastFetchedAt = {};
       })
       .addCase(updateTransaction.rejected, (state, action) => {
-        state.error = action.payload || 'Błąd aktualizacji transakcji';
+        state.error = action.payload || i18n.t('errors.updateTransaction');
       })
       .addCase(deleteTransaction.pending, (state) => {
         state.error = null;
@@ -191,7 +186,7 @@ export const portfolioSlice = createSlice({
         state.transactionsLastFetchedAt = {};
       })
       .addCase(deleteTransaction.rejected, (state, action) => {
-        state.error = action.payload || 'Błąd usuwania transakcji';
+        state.error = action.payload || i18n.t('errors.deleteTransaction');
       })
       .addCase(createPortfolio.fulfilled, (state, action) => {
         state.portfolios.push(action.payload);
@@ -204,8 +199,6 @@ export const {
   setActivePortfolioId,
   setInflation,
   setYearMonthlyCpi,
-  setMonthlyCpi,
-  clearPortfolioError,
   resetPortfolio,
 } = portfolioSlice.actions;
 

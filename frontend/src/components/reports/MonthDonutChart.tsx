@@ -6,11 +6,13 @@ import { formatPLN, formatPercent } from '../../utils/reportsFormatters.ts';
 interface MonthDonutChartProps {
   breakdown: MonthlyCategoryBreakdown[];
   totalValue: number;
+  currency?: string;
 }
 
 export const MonthDonutChart: React.FC<MonthDonutChartProps> = ({
   breakdown,
   totalValue,
+  currency = 'PLN',
 }) => {
   const { t } = useTranslation();
   const [hoveredIdx, setHoveredIdx] = useState<number | null>(null);
@@ -49,7 +51,7 @@ export const MonthDonutChart: React.FC<MonthDonutChartProps> = ({
           <div className="text-right font-mono">
             <span className="text-[11px] text-zinc-500 block">{t('reports.total')}</span>
             <span className="text-sm font-bold text-white tabular-nums">
-              {formatPLN(totalValue)}
+              {formatPLN(totalValue, false, currency)}
             </span>
           </div>
         </div>
@@ -70,7 +72,7 @@ export const MonthDonutChart: React.FC<MonthDonutChartProps> = ({
                   className={`h-full rounded-sm transition-all duration-200 cursor-pointer ${
                     isHovered ? 'brightness-125 scale-y-110 shadow-lg' : 'hover:brightness-110'
                   }`}
-                  title={`${item.category}: ${formatPercent(item.pct)} (${formatPLN(item.currentValue)})`}
+                  title={`${item.category}: ${formatPercent(item.pct)} (${formatPLN(item.currentValue, false, currency)})`}
                 />
               );
             })}
@@ -81,7 +83,7 @@ export const MonthDonutChart: React.FC<MonthDonutChartProps> = ({
               <>
                 <span className="text-zinc-300 font-medium">{activeItem.category}</span>
                 <span className="text-sky-400 font-bold">
-                  {formatPercent(activeItem.pct)} &bull; {formatPLN(activeItem.currentValue)}
+                  {formatPercent(activeItem.pct)} &bull; {formatPLN(activeItem.currentValue, false, currency)}
                 </span>
               </>
             ) : (
@@ -119,7 +121,7 @@ export const MonthDonutChart: React.FC<MonthDonutChartProps> = ({
                   </span>
                 </div>
                 <div className="flex items-center gap-2.5 font-mono tabular-nums shrink-0">
-                  <span className="text-zinc-400">{formatPLN(item.currentValue)}</span>
+                  <span className="text-zinc-400">{formatPLN(item.currentValue, false, currency)}</span>
                   <span className="text-zinc-100 font-bold w-12 text-right">
                     {formatPercent(item.pct)}
                   </span>

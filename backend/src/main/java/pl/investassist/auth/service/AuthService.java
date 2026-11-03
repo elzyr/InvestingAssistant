@@ -56,15 +56,7 @@ public class AuthService {
             currency);
 
     User savedUser = userRepository.save(user);
-
-    String accessToken = jwtService.generateAccessToken(savedUser);
-    String refreshToken = refreshTokenService.createRefreshToken(savedUser.getId());
-
-    return AuthResponse.of(
-        accessToken,
-        refreshToken,
-        jwtService.getJwtExpirationMs(),
-        UserProfileResponse.from(savedUser));
+    return issueTokens(savedUser);
   }
 
   public AuthResponse login(LoginRequest request) {
@@ -81,11 +73,7 @@ public class AuthService {
       throw new ResponseStatusException(HttpStatus.UNAUTHORIZED, "Invalid email or password");
     }
 
-    String accessToken = jwtService.generateAccessToken(user);
-    String refreshToken = refreshTokenService.createRefreshToken(user.getId());
-
-    return AuthResponse.of(
-        accessToken, refreshToken, jwtService.getJwtExpirationMs(), UserProfileResponse.from(user));
+    return issueTokens(user);
   }
 
   @Transactional(readOnly = true)
@@ -106,19 +94,22 @@ public class AuthService {
                     new ResponseStatusException(
                         HttpStatus.UNAUTHORIZED, "User associated with token not found"));
 
-    String newAccessToken = jwtService.generateAccessToken(user);
-    String newRefreshToken = refreshTokenService.createRefreshToken(user.getId());
-
-    return AuthResponse.of(
-        newAccessToken,
-        newRefreshToken,
-        jwtService.getJwtExpirationMs(),
-        UserProfileResponse.from(user));
+    return issueTokens(user);
   }
 
   public void logout(String refreshToken) {
     if (refreshToken != null && !refreshToken.isBlank()) {
       refreshTokenService.deleteRefreshToken(refreshToken);
     }
+  }
+
+  private AuthResponse issueTokens(User user) {
+    String accessToken = jwtService.generateAccessToken(user);
+    String refreshToken = refreshTokenService.createRefreshToken(user.getId());
+    return AuthResponse.of(
+        accessToken,
+        refreshToken,
+        jwtService.getJwtExpirationMs(),
+        UserProfileResponse.from(user));
   }
 }

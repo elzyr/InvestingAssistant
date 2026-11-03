@@ -4,6 +4,7 @@ import java.math.BigDecimal;
 import java.math.RoundingMode;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.List;
 import java.util.Objects;
 import java.util.Optional;
@@ -12,6 +13,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import pl.investassist.common.enums.Currency;
 import pl.investassist.common.exception.InsufficientPositionException;
+import pl.investassist.common.util.SeriesUtils;
 import pl.investassist.portfolio.dto.response.PositionResponse;
 import pl.investassist.portfolio.entity.Portfolio;
 import pl.investassist.portfolio.entity.Position;
@@ -22,6 +24,11 @@ import pl.investassist.portfolio.repository.TransactionRepository;
 
 @Service
 public class PositionService {
+
+  private static final Comparator<Transaction> TX_ORDER =
+      Comparator.comparing(Transaction::getExecutedAt, Comparator.nullsFirst(Comparator.naturalOrder()))
+          .thenComparingInt(t -> t.getTransactionType() == TransactionType.BUY ? 0 : (t.getTransactionType() == TransactionType.DIVIDEND ? 2 : 1))
+          .thenComparing(Transaction::getId, Comparator.nullsLast(Comparator.naturalOrder()));
 
   private final PositionRepository positionRepository;
   private final PortfolioService portfolioService;
@@ -50,7 +57,7 @@ public class PositionService {
       UUID instrumentId,
       Currency instrumentCurrency,
       String seriesName) {
-    String cleanSeries = (seriesName != null && !seriesName.trim().isBlank()) ? seriesName.trim() : null;
+    String cleanSeries = SeriesUtils.normalize(seriesName);
 
     List<Transaction> transactions = null;
     if (cleanSeries != null) {
@@ -66,29 +73,8 @@ public class PositionService {
     }
 
     transactions = transactions.stream()
-        .filter(t -> {
-          String s = (t.getSeriesName() != null && !t.getSeriesName().trim().isBlank()) ? t.getSeriesName().trim() : null;
-          return Objects.equals(s, cleanSeries);
-        })
-        .sorted((a, b) -> {
-          LocalDateTime timeA = a.getExecutedAt();
-          LocalDateTime timeB = b.getExecutedAt();
-          if (timeA != null && timeB != null) {
-            int cmp = timeA.compareTo(timeB);
-            if (cmp != 0) return cmp;
-          } else if (timeA != null) {
-            return 1;
-          } else if (timeB != null) {
-            return -1;
-          }
-          int typeA = a.getTransactionType() == TransactionType.BUY ? 0 : (a.getTransactionType() == TransactionType.DIVIDEND ? 2 : 1);
-          int typeB = b.getTransactionType() == TransactionType.BUY ? 0 : (b.getTransactionType() == TransactionType.DIVIDEND ? 2 : 1);
-          if (typeA != typeB) return Integer.compare(typeA, typeB);
-          if (a.getId() != null && b.getId() != null) {
-            return a.getId().compareTo(b.getId());
-          }
-          return 0;
-        })
+        .filter(t -> Objects.equals(SeriesUtils.normalize(t.getSeriesName()), cleanSeries))
+        .sorted(TX_ORDER)
         .toList();
 
     Optional<Position> posOpt = (cleanSeries != null)

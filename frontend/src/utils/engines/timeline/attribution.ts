@@ -1,3 +1,4 @@
+import i18n from '../../../i18n/config.ts';
 import type { ChartPoint, ProfitContributor } from '../../../types/dashboard.ts';
 import type { RawContributor } from './types.ts';
 
@@ -6,7 +7,7 @@ export function attachContributors(
   rawStepContributors: Map<string, RawContributor>[],
   keyMetaMap: Map<string, { label: string; assetType: 'ETF' | 'BOND' | 'STOCK' | 'OTHER' }>,
   totalHistorySteps: number,
-  locale = 'pl-PL'
+  _locale = 'pl-PL'
 ): void {
   const allDistinctKeys = new Set<string>();
   const maxAbsProfitMap = new Map<string, number>();
@@ -80,7 +81,7 @@ export function attachContributors(
       }
       contributors.push({
         key: 'OTHER',
-        label: locale?.startsWith('en') ? 'Other' : 'Pozostałe',
+        label: i18n.t('chart.otherContributors'),
         assetType: 'OTHER',
         valuation: Math.round(otherVal),
         cost: Math.round(otherCost),

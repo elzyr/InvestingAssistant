@@ -12,7 +12,7 @@ export function calculateBondCurrentPrice({
   purchaseDate,
   bondRate,
   bondMargin,
-  cpi = 3.6,
+  cpi,
   targetDate,
   seriesName,
   termMonths,
@@ -42,26 +42,36 @@ export function calculateBondCurrentPrice({
   const isInflation = bondMargin != null && bondMargin > 0;
 
   if (isInflation) {
-    const r1 = (bondRate ?? 6.75) / 100;
-    const m = (bondMargin ?? 2.0) / 100;
-    const cpiRate = (cpi ?? 3.6) / 100;
-    const laterRate = Math.max(0, cpiRate) + m;
+    if (bondRate == null) {
+      return 100;
+    }
+    const r1 = bondRate / 100;
+    const m = (bondMargin || 0) / 100;
     const k = Math.floor(days / 365);
     const curDays = days % 365;
-
-    if (isNonCompounding) {
-      const activeRate = k === 0 ? r1 : laterRate;
-      return 100 * (1 + activeRate * (curDays / 365));
-    }
 
     if (k === 0) {
       return 100 * (1 + r1 * (curDays / 365));
     }
+
+    if (cpi == null) {
+      return 100 * (1 + r1);
+    }
+    const cpiRate = cpi / 100;
+    const laterRate = Math.max(0, cpiRate) + m;
+
+    if (isNonCompounding) {
+      return 100 * (1 + laterRate * (curDays / 365));
+    }
+
     const fullYearsCompounded = 100 * (1 + r1) * Math.pow(1 + laterRate, k - 1);
     return fullYearsCompounded * (1 + laterRate * (curDays / 365));
   }
 
-  const r = (bondRate ?? 6.5) / 100;
+  if (bondRate == null) {
+    return 100;
+  }
+  const r = bondRate / 100;
   if (isNonCompounding) {
     const curDays = days % 365;
     return 100 * (1 + r * (curDays / 365));

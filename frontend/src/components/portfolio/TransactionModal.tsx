@@ -5,6 +5,7 @@ import { X, ArrowDownRight, ArrowUpRight, Loader2, ShieldCheck, Sparkles, Trash2
 import { instrumentService } from '../../services/instrument.service.ts';
 import { marketService } from '../../services/market.service.ts';
 import { standardizeDate } from '../../utils/domain/dates.ts';
+import { isBondInstrument } from '../../utils/domain/assets.ts';
 import { partitionInstruments } from '../../utils/instrumentSearch.ts';
 import { useAppDispatch, useAppSelector } from '../../store/hooks.ts';
 import {
@@ -37,7 +38,7 @@ export const TransactionModal: React.FC<TransactionModalProps> = ({
   transaction,
   instrument,
 }) => {
-  const { t } = useTranslation();
+  const { t, i18n } = useTranslation();
   const dispatch = useAppDispatch();
   const reduxInstruments = useAppSelector((state) => state.portfolio.instruments);
   const reduxQuotes = useAppSelector((state) => state.portfolio.quotes);
@@ -64,10 +65,7 @@ export const TransactionModal: React.FC<TransactionModalProps> = ({
     return Object.values(reduxInstruments).filter((i) => i.type === 'ETF' || i.type === 'BOND' || i.type === 'STOCK');
   }, [reduxInstruments]);
   const initialInstrument = instrument || cachedInstruments[0];
-  const initialInstrumentIsBond = Boolean(
-    initialInstrument &&
-      (initialInstrument.type === 'BOND' || initialInstrument.symbol.startsWith('PL_BOND'))
-  );
+  const initialInstrumentIsBond = isBondInstrument(initialInstrument);
   const initialQuote = initialInstrument ? reduxQuotes[initialInstrument.symbol] : undefined;
   const [catalogInstruments, setCatalogInstruments] = useState<InstrumentResponse[]>([]);
   const [loadingCatalog, setLoadingCatalog] = useState(false);
@@ -143,15 +141,13 @@ export const TransactionModal: React.FC<TransactionModalProps> = ({
     if (initialInstrumentIsBond) return 'PLN';
     return (initialInstrument?.currency as Currency) || defaultCurrency;
   });
-  const [transactionDate, setTransactionDate] = useState<string>(
-    () => { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`; }
-  );
+  const [transactionDate, setTransactionDate] = useState<string>(getTodayLocalDateStr);
 
   const [seriesName, setSeriesName] = useState<string>('');
   const [interestType, setInterestType] = useState<'FIXED' | 'INFLATION'>('FIXED');
-  const [bondRate, setBondRate] = useState<string>('6.50');
-  const [bondMargin, setBondMargin] = useState<string>('2.00');
-  const [termMonths, setTermMonths] = useState<string>('36');
+  const [bondRate, setBondRate] = useState<string>('');
+  const [bondMargin, setBondMargin] = useState<string>('');
+  const [termMonths, setTermMonths] = useState<string>('');
 
   const [loadingPrice, setLoadingPrice] = useState(false);
   const [submitting, setSubmitting] = useState(false);
@@ -210,9 +206,9 @@ export const TransactionModal: React.FC<TransactionModalProps> = ({
     setTransactionDate(getTodayLocalDateStr());
     setSeriesName('');
     setInterestType('FIXED');
-    setBondRate('6.50');
-    setBondMargin('2.00');
-    setTermMonths('36');
+    setBondRate('');
+    setBondMargin('');
+    setTermMonths('');
     setError(null);
   }
 
@@ -223,18 +219,13 @@ export const TransactionModal: React.FC<TransactionModalProps> = ({
     catalogInstruments.find((i) => i.id === effectiveInstrumentId) ||
     cachedInstruments.find((i) => i.id === effectiveInstrumentId) ||
     instrument;
-  const isBond =
-    selectedInstrument?.type === 'BOND' ||
-    selectedInstrument?.symbol?.startsWith('PL_BOND') ||
-    transaction?.bondRate !== undefined ||
-    Boolean(transaction?.seriesName);
+  const isBond = isBondInstrument(selectedInstrument) || transaction?.bondRate !== undefined || Boolean(transaction?.seriesName);
 
   const handleInstrumentSelect = useCallback(
     (inst: InstrumentResponse) => {
       setSelectedInstrumentId(inst.id);
       setSelectedInstrumentObj(inst);
-      const instrumentIsBond =
-        inst.type === 'BOND' || inst.symbol.startsWith('PL_BOND');
+      const instrumentIsBond = isBondInstrument(inst);
 
       if (instrumentIsBond) {
         setCurrency('PLN');
@@ -274,43 +265,35 @@ export const TransactionModal: React.FC<TransactionModalProps> = ({
 
       let tenure = 36;
       let detectedType: 'FIXED' | 'INFLATION' = 'FIXED';
-      let defaultRate = '6.50';
-      let defaultMargin = '2.00';
 
       if (prefix === 'TOS') {
         tenure = 36;
         detectedType = 'FIXED';
-        defaultRate = '6.50';
       } else if (prefix === 'EDO') {
         tenure = 120;
         detectedType = 'INFLATION';
-        defaultRate = '6.75';
-        defaultMargin = '2.00';
       } else if (prefix === 'COI') {
         tenure = 48;
         detectedType = 'INFLATION';
-        defaultRate = '6.50';
-        defaultMargin = '1.50';
       } else if (prefix === 'DOR') {
         tenure = 24;
         detectedType = 'FIXED';
-        defaultRate = '6.30';
       } else if (prefix === 'ROR') {
         tenure = 12;
         detectedType = 'FIXED';
-        defaultRate = '6.00';
       } else if (prefix === 'OTS') {
         tenure = 3;
         detectedType = 'FIXED';
-        defaultRate = '3.00';
+      } else if (prefix === 'ROS') {
+        tenure = 72;
+        detectedType = 'INFLATION';
+      } else if (prefix === 'ROD') {
+        tenure = 144;
+        detectedType = 'INFLATION';
       }
 
       setInterestType(detectedType);
       setTermMonths(tenure.toString());
-      setBondRate(defaultRate);
-      if (detectedType === 'INFLATION') {
-        setBondMargin(defaultMargin);
-      }
 
       const issueYear = year - Math.round(tenure / 12);
       const safeMonth = Math.min(12, Math.max(1, month));
@@ -438,7 +421,7 @@ export const TransactionModal: React.FC<TransactionModalProps> = ({
   };
 
   const handleDelete = async () => {
-    if (!transaction || !window.confirm(t('transactionModal.confirmDelete', 'Czy na pewno chcesz usunąć tę transakcję?'))) {
+    if (!transaction || !window.confirm(t('transactionModal.confirmDelete'))) {
       return;
     }
     setDeleting(true);
@@ -468,7 +451,7 @@ export const TransactionModal: React.FC<TransactionModalProps> = ({
           <h2 className="text-sm font-semibold uppercase tracking-wider text-white flex items-center gap-2">
             {isBond && <ShieldCheck className={`w-4 h-4 ${isEdit ? 'text-amber-400' : 'text-emerald-400'}`} />}
             {isEdit
-              ? `${t('transactionModal.editTitle', 'Edycja transakcji')}: ${seriesName || selectedInstrument?.symbol || 'Instrument'}`
+              ? `${t('transactionModal.editTitle')}: ${seriesName || selectedInstrument?.symbol || 'Instrument'}`
               : isBond
               ? t('transactionModal.buyBondTitle')
               : t('transactionModal.addTitle')}
@@ -520,7 +503,7 @@ export const TransactionModal: React.FC<TransactionModalProps> = ({
                           value={searchQuery}
                           onChange={(e) => setSearchQuery(e.target.value)}
                           onKeyDown={handlePickerKeyDown}
-                          placeholder={t('transactionModal.searchInstrumentPlaceholder', 'Szukaj instrumentu (ticker, nazwa)...')}
+                          placeholder={t('transactionModal.searchInstrumentPlaceholder')}
                           className="w-full bg-transparent text-xs text-zinc-100 placeholder-zinc-500 focus:outline-none font-sans"
                           autoFocus
                         />
@@ -539,15 +522,15 @@ export const TransactionModal: React.FC<TransactionModalProps> = ({
                         {yourInstruments.length === 0 && allInstruments.length === 0 ? (
                           <div className="p-4 text-center text-xs text-zinc-500">
                             {loadingCatalog
-                              ? t('transactionModal.loadingCatalog', 'Ładowanie katalogu...')
-                              : t('transactionModal.noInstrumentsFound', 'Nie znaleziono instrumentów')}
+                              ? t('transactionModal.loadingCatalog')
+                              : t('transactionModal.noInstrumentsFound')}
                           </div>
                         ) : (
                           <>
                             {yourInstruments.length > 0 && (
                               <div>
                                 <div className="px-3 py-1.5 text-[10px] uppercase font-semibold text-zinc-400 bg-zinc-800/40 tracking-wider">
-                                  {t('transactionModal.yourInstruments', 'Twoje instrumenty')}
+                                  {t('transactionModal.yourInstruments')}
                                 </div>
                                 {yourInstruments.map((inst, idx) => {
                                   const isSelected = inst.id === effectiveInstrumentId;
@@ -584,7 +567,7 @@ export const TransactionModal: React.FC<TransactionModalProps> = ({
                             {allInstruments.length > 0 && (
                               <div>
                                 <div className="px-3 py-1.5 text-[10px] uppercase font-semibold text-zinc-400 bg-zinc-800/40 tracking-wider">
-                                  {t('transactionModal.allInstruments', 'Wszystkie instrumenty')}
+                                  {t('transactionModal.allInstruments')}
                                 </div>
                                 {allInstruments.map((inst, idx) => {
                                   const itemIndex = yourInstruments.length + idx;
@@ -733,7 +716,7 @@ export const TransactionModal: React.FC<TransactionModalProps> = ({
                   }`}
                 >
                   <Sparkles className="w-3.5 h-3.5" />
-                  {t('transactionModal.typeDividend', 'Dywidenda')}
+                  {t('transactionModal.typeDividend')}
                 </button>
               )}
             </div>
@@ -774,7 +757,7 @@ export const TransactionModal: React.FC<TransactionModalProps> = ({
                   <div>
                     <label className="block text-xs text-zinc-400 mb-1.5">{t('transactionModal.totalPayout')}</label>
                     <div className="w-full bg-zinc-900/60 border border-zinc-800 rounded px-3 py-2 text-xs text-emerald-400 font-mono flex items-center h-[34px]">
-                      {((parseFloat(quantity) || 0) * (parseFloat(price) || 0)).toLocaleString('pl-PL', { minimumFractionDigits: 2 })} PLN
+                      {((parseFloat(quantity) || 0) * (parseFloat(price) || 0)).toLocaleString(i18n.language, { minimumFractionDigits: 2 })} {currency || 'PLN'}
                     </div>
                   </div>
                   <div>
@@ -815,7 +798,7 @@ export const TransactionModal: React.FC<TransactionModalProps> = ({
                 <div>
                   <label className="block text-xs text-zinc-400 mb-1.5">{t('transactionModal.nominalValue')}</label>
                   <div className="w-full bg-zinc-900/60 border border-zinc-800 rounded px-3 py-2 text-xs text-emerald-400 font-mono flex items-center h-[34px]">
-                    {bondTotalNominal.toLocaleString('pl-PL', { minimumFractionDigits: 2 })} PLN
+                    {bondTotalNominal.toLocaleString(i18n.language, { minimumFractionDigits: 2 })} {currency || 'PLN'}
                   </div>
                   {!isEdit && (
                     <span className="text-[10px] text-zinc-500 font-mono block mt-1">
@@ -959,7 +942,7 @@ export const TransactionModal: React.FC<TransactionModalProps> = ({
                 className="flex items-center gap-1.5 px-3 py-1.5 rounded bg-rose-950/40 hover:bg-rose-900/60 border border-rose-800/60 text-xs font-medium text-rose-300 transition disabled:opacity-50"
               >
                 <Trash2 className="w-3.5 h-3.5" />
-                <span>{t('transactionHistory.delete', 'Usuń')}</span>
+                <span>{t('transactionHistory.delete')}</span>
               </button>
             ) : <div />}
 

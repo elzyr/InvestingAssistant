@@ -41,7 +41,7 @@ export const AnnualSummaryTable: React.FC<AnnualSummaryTableProps> = ({
           </p>
         </div>
         <div className="text-xs font-mono text-zinc-400 bg-zinc-800/40 px-3 py-1.5 rounded-lg border border-zinc-700/40 self-start sm:self-auto">
-          {t('reports.avgCpi')} <span className="text-zinc-200 font-semibold">{summary.avgCpi.toFixed(1)}%</span>
+          {t('reports.avgCpi')} <span className="text-zinc-200 font-semibold">{summary.avgCpi != null ? `${summary.avgCpi.toFixed(1)}%` : '—'}</span>
         </div>
       </div>
 
@@ -80,7 +80,7 @@ export const AnnualSummaryTable: React.FC<AnnualSummaryTableProps> = ({
                     <td className="py-2.5 px-3 text-right tabular-nums whitespace-nowrap">—</td>
                     <td className="py-2.5 px-3 text-right tabular-nums whitespace-nowrap">—</td>
                     <td className="py-2.5 px-3 text-right tabular-nums whitespace-nowrap">
-                      {r.cpiInflation > 0 ? `${r.cpiInflation.toFixed(1)}%` : '—'}
+                      {r.cpiInflation != null ? `${r.cpiInflation.toFixed(1)}%` : '—'}
                     </td>
                     <td className="py-2.5 px-3 text-right tabular-nums whitespace-nowrap">—</td>
                     <td className="py-2.5 px-3 text-right whitespace-nowrap">
@@ -140,14 +140,14 @@ export const AnnualSummaryTable: React.FC<AnnualSummaryTableProps> = ({
                     {formatPercent(r.returnNetPct, true)}
                   </td>
                   <td className="py-2.5 px-3 text-right text-zinc-400 tabular-nums whitespace-nowrap">
-                    {r.cpiInflation > 0 ? `${r.cpiInflation.toFixed(1)}%` : '—'}
+                    {r.cpiInflation != null ? `${r.cpiInflation.toFixed(1)}%` : '—'}
                   </td>
                   <td
                     className={`py-2.5 px-3 text-right font-semibold tabular-nums whitespace-nowrap ${
-                      r.cpiInflation > 0 ? getValueColorClass(r.realProfitPct) : 'text-zinc-500'
+                      r.realProfitPct != null ? getValueColorClass(r.realProfitPct) : 'text-zinc-500'
                     }`}
                   >
-                    {r.cpiInflation > 0 ? formatPercent(r.realProfitPct, true) : '—'}
+                    {r.realProfitPct != null ? formatPercent(r.realProfitPct, true) : '—'}
                   </td>
                   <td className="py-2.5 px-3 text-right font-sans whitespace-nowrap">
                     <button
@@ -202,14 +202,14 @@ export const AnnualSummaryTable: React.FC<AnnualSummaryTableProps> = ({
                 {formatPercent(summary.ytdReturnNetPct, true)}
               </td>
               <td className="py-3 px-3 text-right text-zinc-400 tabular-nums whitespace-nowrap">
-                {summary.avgCpi > 0 ? `${summary.avgCpi.toFixed(1)}%` : '—'}
+                {summary.avgCpi != null ? `${summary.avgCpi.toFixed(1)}%` : '—'}
               </td>
               <td
                 className={`py-3 px-3 text-right text-xs sm:text-sm tabular-nums whitespace-nowrap ${
-                  summary.avgCpi > 0 ? getValueColorClass(summary.ytdRealReturnPct) : 'text-zinc-500'
+                  summary.ytdRealReturnPct != null ? getValueColorClass(summary.ytdRealReturnPct) : 'text-zinc-500'
                 }`}
               >
-                {summary.avgCpi > 0 ? formatPercent(summary.ytdRealReturnPct, true) : '—'}
+                {summary.ytdRealReturnPct != null ? formatPercent(summary.ytdRealReturnPct, true) : '—'}
               </td>
               <td className="py-3 px-3 text-right font-sans text-emerald-400 text-[11px] whitespace-nowrap">
                 {summary.ytdProfitNet >= 0 ? (
