@@ -4,7 +4,7 @@ import type { ReportViewMode } from '../types/reports.types.ts';
 import {
   extractAvailableYears,
   generateRealAnnualSummary,
-} from '../utils/realReportsEngine.ts';
+} from '../utils/engines/reports.ts';
 import { useActivePortfolioData } from '../hooks/useActivePortfolioData.ts';
 import { setActivePortfolioId } from '../store/slices/portfolio.slice.ts';
 import { AnnualSummaryTable } from '../components/reports/AnnualSummaryTable.tsx';

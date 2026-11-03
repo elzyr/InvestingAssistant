@@ -11,17 +11,13 @@ import { KpiGrid } from '../components/dashboard/KpiGrid.tsx';
 import { PortfolioChart } from '../components/dashboard/PortfolioChart.tsx';
 import { FilterBar } from '../components/dashboard/FilterBar.tsx';
 import { PositionsTable } from '../components/dashboard/PositionsTable.tsx';
-import {
-  generateUnifiedPortfolioTimeline,
-  calculateBondCurrentPrice,
-  isBondItem,
-} from '../utils/portfolioUnifiedEngine.ts';
-
+import { generateUnifiedPortfolioTimeline } from '../utils/engines/timeline/index.ts';
+import { calculateBondCurrentPrice } from '../utils/domain/bondPricing.ts';
+import { isBondItem } from '../utils/domain/assets.ts';
 import {
   buildDashboardPositions,
   buildDashboardSummary,
-
-} from '../utils/dashboardCalculations.ts';
+} from '../utils/engines/dashboard.ts';
 import type {
 
 

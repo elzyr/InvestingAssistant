@@ -41,11 +41,12 @@ memory-bank/
 *-kopia/
 *— kopia/
 portfolio-service — kopia/
+
 # User data & scratch sheets
 *.xlsx
 *.csv
-
-
+__fixtures__/
+*.snapshot.json
 
 *.db
 market-data-service/data/

@@ -1,12 +1,18 @@
-import type { TransactionResponse, PositionResponse } from '../types/portfolio.ts';
-import type { Position, SubPosition, PortfolioSummary, TaxMode } from '../types/dashboard.ts';
+import type { TransactionResponse, PositionResponse } from '../../types/portfolio.ts';
+import type { Position, SubPosition, PortfolioSummary, TaxMode } from '../../types/dashboard.ts';
 import {
   calculateHoldingXirr,
   calculatePortfolioRealMetrics,
   calculateFxDecomposition,
   type CashFlow,
-} from './xirrEngine.ts';
-import { formatMoney } from './reportsFormatters.ts';
+} from './xirr.ts';
+import { formatMoney } from '../reportsFormatters.ts';
+import { computeBelka } from '../domain/tax.ts';
+import { getBondFamily } from '../domain/assets.ts';
+import { standardizeDate } from '../domain/dates.ts';
+import { getTransactionCashFlow, sumDividends, mapDividendsByInstrument } from '../domain/transactions.ts';
+export { getTransactionCashFlow };
+export { standardizeDate };
 
 export interface EnrichedHolding {
   id: string;
@@ -31,33 +37,6 @@ export interface EnrichedHolding {
   bondMargin?: number | null;
   termMonths?: number | null;
   isPriceUnavailable?: boolean;
-}
-
-export function getTransactionCashFlow(
-  tx: TransactionResponse,
-  baseCurrency: string,
-  rates: Record<string, number>
-): { amount: number; isOutflow: boolean } {
-  const isForeign = tx.currency !== baseCurrency;
-  const rawProduct = (tx.quantity != null && tx.price != null) ? tx.quantity * tx.price : ((tx as any).amount ?? 0);
-  const txFxFallback =
-    tx.exchangeRateToBase ||
-    (tx.baseAmount && rawProduct > 0
-      ? tx.baseAmount / rawProduct
-      : undefined);
-  const fx = isForeign ? (txFxFallback || rates[tx.currency] || 1) : 1;
-  const txType = (tx.transactionType || (tx as any).type);
-  if (txType === 'BUY') {
-    const cost = tx.baseAmount ?? ((tx.quantity * tx.price) + (tx.commission || 0)) * fx;
-    return { amount: cost, isOutflow: true };
-  } else if (txType === 'DIVIDEND') {
-    const rawDiv = (tx as any).amount ?? ((tx.price ?? 0) * (tx.quantity || 1));
-    const dividendAmount = tx.baseAmount ?? (rawDiv - (tx.commission || 0)) * fx;
-    return { amount: dividendAmount, isOutflow: false };
-  } else {
-    const proceeds = tx.baseAmount ?? ((tx.quantity * tx.price) - (tx.commission || 0)) * fx;
-    return { amount: proceeds, isOutflow: false };
-  }
 }
 
 export interface BuildDashboardPositionsParams {
@@ -135,7 +114,7 @@ export function buildDashboardPositions({
       const fx = isTxForeign ? (rates[tx.currency] || txBuyFx || 1) : 1;
       const txVal = remainingQty * h.currentPrice * fx;
       const txProfitGross = txVal - txCost;
-      const txTax = shouldApplyTax && txProfitGross > 0 ? txProfitGross * 0.19 : 0;
+      const txTax = computeBelka(txProfitGross, !shouldApplyTax);
       const txProfit = txProfitGross - txTax;
       const txProfitPct = txCost > 0 ? (txProfit / txCost) * 100 : 0;
       const txNetVal = txVal - txTax;
@@ -178,16 +157,10 @@ export function buildDashboardPositions({
       };
     });
 
-    const dividendTxs = allHoldingTransactions.filter(
-      (t) => (t.transactionType || (t as any).type) === 'DIVIDEND'
-    );
-    const totalDividends = dividendTxs.reduce(
-      (sum, dTx) => sum + getTransactionCashFlow(dTx, baseCurrency, rates).amount,
-      0
-    );
+    const totalDividends = sumDividends(allHoldingTransactions, baseCurrency, rates);
 
     const posProfitGross = h.profit + totalDividends;
-    const posTax = shouldApplyTax && posProfitGross > 0 ? posProfitGross * 0.19 : 0;
+    const posTax = computeBelka(posProfitGross, !shouldApplyTax);
     const posProfit = posProfitGross - posTax;
     const posProfitPct = h.totalCost > 0 ? (posProfit / h.totalCost) * 100 : 0;
     const posNetVal = h.totalValue - posTax;
@@ -246,21 +219,7 @@ export function buildDashboardPositions({
   const bondFamilies: Record<string, typeof bondHoldings> = {};
 
   for (const bh of bondHoldings) {
-    let family = 'EDO';
-    if (bh.ticker.startsWith('TOS')) family = 'TOS';
-    else if (bh.ticker.startsWith('COI')) family = 'COI';
-    else if (bh.ticker.startsWith('ROR')) family = 'ROR';
-    else if (bh.ticker.startsWith('DOR')) family = 'DOR';
-    else if (bh.ticker.startsWith('OTS')) family = 'OTS';
-    else if (bh.ticker.startsWith('EDO')) family = 'EDO';
-    else if (!bh.seriesName) {
-      if (bh.termMonths === 36) family = 'TOS';
-      else if (bh.termMonths === 48) family = 'COI';
-      else if (bh.termMonths === 12) family = 'ROR';
-      else if (bh.termMonths === 24) family = 'DOR';
-      else if (bh.termMonths === 3) family = 'OTS';
-      else if (bh.bondMargin == null || bh.bondMargin === 0) family = 'TOS';
-    }
+    const family = getBondFamily(bh.ticker, bh.termMonths, bh.bondMargin);
 
     if (!bondFamilies[family]) {
       bondFamilies[family] = [];
@@ -273,7 +232,7 @@ export function buildDashboardPositions({
     const sumVal = items.reduce((s, b) => s + b.totalValue, 0);
     const sumCost = items.reduce((s, b) => s + b.totalCost, 0);
     const sumProfitGross = sumVal - sumCost;
-    const bondTax = shouldApplyTax && sumProfitGross > 0 ? sumProfitGross * 0.19 : 0;
+    const bondTax = computeBelka(sumProfitGross, !shouldApplyTax);
     const sumProfit = sumProfitGross - bondTax;
     const sumProfitPct = sumCost > 0 ? (sumProfit / sumCost) * 100 : 0;
     const avgPrice = sumQty > 0 ? sumVal / sumQty : 100;
@@ -325,7 +284,7 @@ export function buildDashboardPositions({
         const yVal = yearItems.reduce((s, i) => s + i.totalValue, 0);
         const yCost = yearItems.reduce((s, i) => s + i.totalCost, 0);
         const yProfitGross = yVal - yCost;
-        const yTax = shouldApplyTax && yProfitGross > 0 ? yProfitGross * 0.19 : 0;
+        const yTax = computeBelka(yProfitGross, !shouldApplyTax);
         const yProfit = yProfitGross - yTax;
         const yProfitPct = yCost > 0 ? (yProfit / yCost) * 100 : 0;
         const yNetVal = yVal - yTax;
@@ -475,29 +434,18 @@ export function buildDashboardSummary({
   nowTimestamp,
   t,
 }: BuildDashboardSummaryParams): PortfolioSummary {
-  const dividendTxs = transactions.filter(
-    (t) => (t.transactionType || (t as any).type) === 'DIVIDEND'
-  );
-  const totalDividends = dividendTxs.reduce(
-    (sum, dTx) => sum + getTransactionCashFlow(dTx, baseCurrency, rates).amount,
-    0
-  );
+  const totalDividends = sumDividends(transactions, baseCurrency, rates);
 
   const grossProfit = totalPortfolioValue - totalPortfolioCost + totalDividends;
 
   let totalBelkaTax = 0;
   if (shouldApplyTax) {
+    const divsByInst = mapDividendsByInstrument(transactions, baseCurrency, rates);
     enrichedHoldings.forEach((h) => {
-      const hDivs = transactions
-        .filter(
-          (t) =>
-            t.instrumentId === h.instrumentId &&
-            ((t.transactionType || (t as any).type) === 'DIVIDEND')
-        )
-        .reduce((sum, dTx) => sum + getTransactionCashFlow(dTx, baseCurrency, rates).amount, 0);
+      const hDivs = divsByInst.get(h.instrumentId) || 0;
       const hProfit = h.profit + hDivs;
       if (hProfit > 0) {
-        totalBelkaTax += hProfit * 0.19;
+        totalBelkaTax += computeBelka(hProfit);
       }
     });
   }
@@ -626,26 +574,4 @@ export function buildDashboardSummary({
   };
 }
 
-export function standardizeDate(dateInput: string | Date | number): string {
-  if (typeof dateInput === 'string') {
-    if (/^\d{4}-\d{2}-\d{2}/.test(dateInput)) {
-      return dateInput.slice(0, 10);
-    }
-    const dt = new Date(dateInput);
-    if (!isNaN(dt.getTime())) {
-      const y = dt.getFullYear();
-      const m = String(dt.getMonth() + 1).padStart(2, '0');
-      const d = String(dt.getDate()).padStart(2, '0');
-      return `${y}-${m}-${d}`;
-    }
-    return dateInput;
-  }
-  const dt = typeof dateInput === 'number' ? new Date(dateInput) : dateInput;
-  if (dt instanceof Date && !isNaN(dt.getTime())) {
-    const y = dt.getFullYear();
-    const m = String(dt.getMonth() + 1).padStart(2, '0');
-    const d = String(dt.getDate()).padStart(2, '0');
-    return `${y}-${m}-${d}`;
-  }
-  return String(dateInput);
-}
+
