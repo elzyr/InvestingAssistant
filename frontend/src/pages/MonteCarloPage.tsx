@@ -1,6 +1,7 @@
 import { useMemo, useState } from 'react';
 import { useActivePortfolioData } from '../hooks/useActivePortfolioData.ts';
-import { calculateBondCurrentPrice, getBondFamily, isBondItem } from '../utils/portfolioUnifiedEngine.ts';
+import { calculateBondCurrentPrice } from '../utils/domain/bondPricing.ts';
+import { getBondFamily, isBondItem } from '../utils/domain/assets.ts';
 import { StressTestingView } from '../components/analytics/StressTestingView.tsx';
 
 export const MonteCarloPage = () => {

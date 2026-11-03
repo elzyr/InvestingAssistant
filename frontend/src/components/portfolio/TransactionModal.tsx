@@ -4,7 +4,7 @@ import { isAxiosError } from 'axios';
 import { X, ArrowDownRight, ArrowUpRight, Loader2, ShieldCheck, Sparkles, Trash2, Search, ChevronDown, Check } from 'lucide-react';
 import { instrumentService } from '../../services/instrument.service.ts';
 import { marketService } from '../../services/market.service.ts';
-import { standardizeDate } from '../../utils/dashboardCalculations.ts';
+import { standardizeDate } from '../../utils/domain/dates.ts';
 import { partitionInstruments } from '../../utils/instrumentSearch.ts';
 import { useAppDispatch, useAppSelector } from '../../store/hooks.ts';
 import {

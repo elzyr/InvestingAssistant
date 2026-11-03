@@ -1,3 +1,6 @@
+import { MS_PER_DAY, parseDateMs } from '../domain/dates.ts';
+import { compoundHurdle } from '../domain/inflation.ts';
+export { parseDateMs };
 export interface CashFlow {
   amount: number;
   date: string | Date | number;
@@ -50,21 +53,6 @@ export interface FxDecompositionResult {
   marketReturnPct: number;
   fxReturnPct: number;
   totalReturnPct: number;
-}
-
-const MS_PER_DAY = 86400000;
-
-function parseDateMs(date: string | Date | number): number {
-  if (typeof date === 'number') {
-    return Number.isFinite(date) ? date : NaN;
-  }
-  if (date instanceof Date) {
-    return date.getTime();
-  }
-  if (typeof date === 'string') {
-    return Date.parse(date);
-  }
-  return NaN;
 }
 
 export function calculateXirr(cashFlows: CashFlow[], guess = 0.1): number | null {
@@ -303,16 +291,8 @@ export function calculatePortfolioRealMetrics(
 
   const normalizedCpi = cpi / 100;
   const currentMs = currentDate ? parseDateMs(currentDate) : Date.now();
-
-  let totalHurdle = 0;
-
-  for (const tx of transactions) {
-    const txMs = parseDateMs(tx.executedAt);
-    if (Number.isNaN(txMs)) continue;
-    const deltaYears = Math.max(0, (currentMs - txMs) / (365 * MS_PER_DAY));
-    const hurdle_i = tx.cost * Math.pow(1 + normalizedCpi, deltaYears);
-    totalHurdle += hurdle_i;
-  }
+  const costLots = transactions.map((tx) => ({ cost: tx.cost, timeMs: parseDateMs(tx.executedAt) }));
+  const totalHurdle = compoundHurdle(costLots, cpi, currentMs);
 
   const realProfitAmount = portfolioValue - totalHurdle;
   const realProfitPercent = totalHurdle > 0 ? (realProfitAmount / totalHurdle) * 100 : 0;

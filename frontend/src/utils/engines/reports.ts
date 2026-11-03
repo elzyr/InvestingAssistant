@@ -1,13 +1,18 @@
-import type { TransactionResponse } from '../types/portfolio.ts';
-import type { InstrumentResponse } from '../types/instrument.ts';
-import type { PriceQuote } from '../services/market.service.ts';
+import type { TransactionResponse } from '../../types/portfolio.ts';
+import type { InstrumentResponse } from '../../types/instrument.ts';
+import type { PriceQuote } from '../../services/market.service.ts';
 import type {
   AnnualSummaryData,
   MonthlyCategoryBreakdown,
   MonthlyReportRecord,
-} from '../types/reports.types.ts';
-import { calculateBondCurrentPrice, getHistoricalPrice, isBondItem } from './portfolioUnifiedEngine.ts';
-import { calculateTwr } from './performanceEngine.ts';
+} from '../../types/reports.types.ts';
+import { isBondItem } from '../domain/assets.ts';
+import { getHistoricalPrice } from '../domain/prices.ts';
+import { calculateTwr } from './twr.ts';
+import { computeBelka } from '../domain/tax.ts';
+import { resolveTxFx, resolveTxCost } from '../domain/transactions.ts';
+import { reduceBondLotsFifo, valueBondLots } from '../domain/bondLots.ts';
+import { compoundHurdle } from '../domain/inflation.ts';
 
 
 
@@ -107,15 +112,8 @@ export function generateRealAnnualSummary({
   const preparedTxs = transactions
     .map((tx) => {
       const timeMs = new Date(tx.executedAt).getTime();
-      const rawProduct = tx.quantity * tx.price;
-      const txFxFallback = tx.exchangeRateToBase || (tx.baseAmount && rawProduct > 0 ? tx.baseAmount / rawProduct : undefined);
-      const fx = (tx.currency === baseCurrency ? 1 : (rates[tx.currency] || txFxFallback)) || 1;
-      const commission = tx.commission || 0;
-      const txCost = tx.baseAmount ?? (
-        tx.transactionType === 'SELL'
-          ? (tx.quantity * tx.price - commission) * fx
-          : (tx.quantity * tx.price + commission) * fx
-      );
+      const fx = resolveTxFx(tx, baseCurrency, rates, 'current');
+      const txCost = resolveTxCost(tx, fx);
       const inst = instruments[tx.instrumentId];
       const isBond = isBondItem(tx, inst);
       const cat = resolveCategory(tx, instruments, t);
@@ -271,16 +269,7 @@ export function generateRealAnnualSummary({
             h.lots = [];
             h.costLots = [];
           } else if (tx.isBond) {
-            let toReduce = sellQty;
-            while (toReduce > 0 && h.lots.length > 0) {
-              if (h.lots[0].quantity <= toReduce) {
-                toReduce -= h.lots[0].quantity;
-                h.lots.shift();
-              } else {
-                h.lots[0].quantity -= toReduce;
-                toReduce = 0;
-              }
-            }
+            reduceBondLotsFifo(h.lots, sellQty);
           }
         }
       }
@@ -308,23 +297,13 @@ export function generateRealAnnualSummary({
         };
       }
       categoryMap[h.cat.name].invested += h.costBasis;
-      for (const l of h.costLots) {
-        inflationHurdle += l.cost * Math.pow(1 + monthInflation / 100, Math.max(0, tMs - l.timeMs) / (365 * 86400000));
-      }
+      inflationHurdle += compoundHurdle(h.costLots, monthInflation, tMs);
 
       if (h.isBond) {
-        for (const lot of h.lots) {
-          const unitPrice = calculateBondCurrentPrice({
-            purchaseDate: lot.executedAt,
-            bondRate: lot.bondRate,
-            bondMargin: lot.bondMargin,
-            cpi: monthInflation,
-            targetDate: tMs,
-            seriesName: lot.seriesName,
-            termMonths: lot.termMonths,
-          });
-          categoryMap[h.cat.name].currentValue += lot.quantity * unitPrice * lot.fx;
-        }
+        categoryMap[h.cat.name].currentValue += valueBondLots(h.lots, {
+          cpi: monthInflation,
+          targetDate: tMs,
+        });
       } else {
         const realClose = getHistoricalPrice(
           historicalPrices[h.symbol],
@@ -353,7 +332,7 @@ export function generateRealAnnualSummary({
     const breakdown: MonthlyCategoryBreakdown[] = Object.values(categoryMap).map(
       (c) => {
         const profitGross = c.currentValue - c.invested;
-        const tax = isIkeAccount ? 0 : profitGross > 0 ? profitGross * 0.19 : 0;
+        const tax = computeBelka(profitGross, isIkeAccount);
         const profitNet = profitGross - tax;
         const returnGrossPct =
           c.invested > 0 ? (profitGross / c.invested) * 100 : 0;
