@@ -15,10 +15,7 @@ import pl.investassist.common.enums.Currency;
           columnNames = {"portfolio_id", "instrument_id", "series_name"})
     },
     indexes = {
-      @Index(name = "idx_position_portfolio_id", columnList = "portfolio_id"),
-      @Index(
-          name = "idx_position_port_inst_series",
-          columnList = "portfolio_id, instrument_id, series_name")
+      @Index(name = "idx_position_portfolio_id", columnList = "portfolio_id")
     })
 public class Position {
 

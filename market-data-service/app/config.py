@@ -15,6 +15,7 @@ class Settings(BaseSettings):
     DB_NAME: Optional[str] = None
     DB_USER: Optional[str] = None
     DB_PASSWORD: Optional[str] = None
+    DB_SCHEMA: str = "market_data"
     DATABASE_URL: Optional[str] = None
 
 settings = Settings()

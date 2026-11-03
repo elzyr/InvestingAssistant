@@ -1,3 +1,4 @@
+import pandas as pd
 import yfinance as yf
 from fastapi import HTTPException
 import logging
@@ -34,66 +35,84 @@ class YahooService:
                 raise HTTPException(status_code=400, detail=f"Invalid date format: {date_str}. Expected YYYY-MM-DD")
 
         cache_key = f"rate:{from_cur}:{to_cur}:{clean_date}" if clean_date else f"rate:{from_cur}:{to_cur}"
-        cached_data = cache_service.get(cache_key)
-        if cached_data is not None and "rate" in cached_data:
-            return float(cached_data["rate"])
+        with cache_service.get_lock(cache_key):
+            cached_data = cache_service.get(cache_key)
+            if cached_data is not None and "rate" in cached_data:
+                return float(cached_data["rate"])
 
-        rate = None
-        is_spot_fallback = False
+            rate = None
+            is_spot_fallback = False
 
-        if clean_date:
-            if from_cur == "PLN" or to_cur == "PLN":
-                foreign_code = to_cur if from_cur == "PLN" else from_cur
-                try:
-                    target_dt = datetime.strptime(clean_date, "%Y-%m-%d")
-                    start_dt = target_dt - timedelta(days=7)
-                    start_str = start_dt.strftime("%Y-%m-%d")
-                    url = f"https://api.nbp.pl/api/exchangerates/rates/a/{foreign_code.lower()}/{start_str}/{clean_date}/?format=json"
-                    resp = _session.get(url, timeout=5)
-                    if resp.status_code == 200:
-                        data = resp.json()
-                        rates = data.get("rates", [])
-                        if rates:
-                            mid = float(rates[-1]["mid"])
-                            rate = float(1.0 / mid if from_cur == "PLN" else mid)
-                except Exception as e:
-                    logging.warning(f"NBP rate fetch failed for {foreign_code} on {clean_date}: {e}")
+            if clean_date:
+                if from_cur == "PLN" or to_cur == "PLN":
+                    foreign_code = to_cur if from_cur == "PLN" else from_cur
+                    try:
+                        target_dt = datetime.strptime(clean_date, "%Y-%m-%d")
+                        start_dt = target_dt - timedelta(days=7)
+                        start_str = start_dt.strftime("%Y-%m-%d")
+                        url = f"https://api.nbp.pl/api/exchangerates/rates/a/{foreign_code.lower()}/{start_str}/{clean_date}/?format=json"
+                        resp = _session.get(url, timeout=5)
+                        if resp.status_code == 200:
+                            data = resp.json()
+                            rates = data.get("rates", [])
+                            if rates:
+                                mid = float(rates[-1]["mid"])
+                                rate = float(1.0 / mid if from_cur == "PLN" else mid)
+                    except Exception as e:
+                        logging.warning(f"NBP rate fetch failed for {foreign_code} on {clean_date}: {e}")
+
+                if rate is None:
+                    try:
+                        ticker = f"{from_cur}{to_cur}=X"
+                        target_dt = datetime.strptime(clean_date, "%Y-%m-%d")
+                        end_dt = target_dt + timedelta(days=1)
+                        start_dt = target_dt - timedelta(days=7)
+                        stock = yf.Ticker(ticker)
+                        hist = stock.history(start=start_dt.strftime("%Y-%m-%d"), end=end_dt.strftime("%Y-%m-%d"))
+                        if not hist.empty:
+                            hist = hist.dropna(subset=["Close"])
+                            hist = hist[hist.index.strftime("%Y-%m-%d") <= clean_date]
+                            if not hist.empty:
+                                rate = float(hist["Close"].iloc[-1])
+                    except Exception as e:
+                        logging.warning(f"Yahoo historical FX rate fetch failed for {from_cur}->{to_cur} on {clean_date}: {e}")
+            else:
+                if from_cur == "PLN" or to_cur == "PLN":
+                    foreign_code = to_cur if from_cur == "PLN" else from_cur
+                    try:
+                        url = f"https://api.nbp.pl/api/exchangerates/rates/a/{foreign_code.lower()}/?format=json"
+                        resp = _session.get(url, timeout=5)
+                        if resp.status_code == 200:
+                            data = resp.json()
+                            rates = data.get("rates", [])
+                            if rates:
+                                mid = float(rates[-1]["mid"])
+                                rate = float(1.0 / mid if from_cur == "PLN" else mid)
+                    except Exception as e:
+                        logging.warning(f"NBP spot rate fetch failed for {foreign_code}: {e}")
 
             if rate is None:
-                try:
-                    ticker = f"{from_cur}{to_cur}=X"
-                    target_dt = datetime.strptime(clean_date, "%Y-%m-%d")
-                    end_dt = target_dt + timedelta(days=2)
-                    start_dt = target_dt - timedelta(days=5)
-                    stock = yf.Ticker(ticker)
-                    hist = stock.history(start=start_dt.strftime("%Y-%m-%d"), end=end_dt.strftime("%Y-%m-%d"))
-                    if not hist.empty:
-                        hist = hist.dropna(subset=["Close"])
-                        if not hist.empty:
-                            rate = float(hist["Close"].iloc[-1])
-                except Exception as e:
-                    logging.warning(f"Yahoo historical FX rate fetch failed for {from_cur}->{to_cur} on {clean_date}: {e}")
+                if clean_date:
+                    is_spot_fallback = True
+                ticker = f"{from_cur}{to_cur}=X"
+                stock = yf.Ticker(ticker)
+                info = stock.fast_info
+                price = getattr(info, "last_price", None) if hasattr(info, "last_price") else (info.get("last_price") if isinstance(info, dict) else None)
+                if price is None:
+                    hist = stock.history(period="1d")
+                    if hist.empty:
+                        hist = stock.history(period="5d")
+                    if hist.empty:
+                        raise HTTPException(status_code=404, detail=f"Exchange rate {from_currency} to {to_currency} not found")
+                    rate = float(hist["Close"].iloc[-1])
+                else:
+                    rate = float(price)
 
-        if rate is None:
-            if clean_date:
-                is_spot_fallback = True
-            ticker = f"{from_cur}{to_cur}=X"
-            stock = yf.Ticker(ticker)
-            info = stock.fast_info
-            price = info.get("last_price")
-            if price is None:
-                hist = stock.history(period="1d")
-                if hist.empty:
-                    raise HTTPException(status_code=404, detail=f"Exchange rate {from_currency} to {to_currency} not found")
-                rate = float(hist["Close"].iloc[-1])
-            else:
-                rate = float(price)
+            if not is_spot_fallback:
+                expire = 2592000 if clean_date else 300
+                cache_service.set(cache_key, {"rate": rate}, expire=expire)
 
-        if not is_spot_fallback:
-            expire = 86400 if clean_date else 300
-            cache_service.set(cache_key, {"rate": rate}, expire=expire)
-
-        return rate
+            return rate
 
     @staticmethod
     def get_current_price(symbol: str, target_currency: str = None) -> dict:
@@ -143,7 +162,7 @@ class YahooService:
             if isinstance(e, HTTPException):
                 raise e
             logging.error(f"Error fetching data: {e}")
-            raise HTTPException(status_code=400, detail="Error fetching data")
+            raise HTTPException(status_code=502, detail="Upstream market provider failure")
 
     @staticmethod
     def get_historical_data(symbol: str, period: str = "1mo", interval: str = "1d", target_currency: str = None) -> dict:
@@ -156,28 +175,45 @@ class YahooService:
             info = stock.fast_info
             base_currency = (getattr(info, "currency", None) or "USD").upper()
 
-            rate = 1.0
-            actual_currency = base_currency
-            if target_currency and target_currency.upper() != base_currency:
-                target_currency = target_currency.upper()
-                rate = YahooService.get_exchange_rate(base_currency, target_currency)
-                actual_currency = target_currency
-            
             hist = hist.reset_index().dropna(subset=["Close"])
             date_col = "Date" if "Date" in hist.columns else ("Datetime" if "Datetime" in hist.columns else hist.columns[0])
-
-            close_series = (hist["Close"] * rate).round(4).astype(float)
-            hist["close"] = close_series
-            hist["open"] = (hist["Open"] * rate).round(4).fillna(close_series).astype(float) if "Open" in hist.columns else close_series
-            hist["high"] = (hist["High"] * rate).round(4).fillna(close_series).astype(float) if "High" in hist.columns else close_series
-            hist["low"] = (hist["Low"] * rate).round(4).fillna(close_series).astype(float) if "Low" in hist.columns else close_series
-            hist["volume"] = hist["Volume"].fillna(0).astype(int) if "Volume" in hist.columns else 0
-
             dates = hist[date_col]
-            if hasattr(dates.dt, "strftime"):
+            if hasattr(dates, "dt") and hasattr(dates.dt, "strftime"):
                 hist["date"] = dates.dt.strftime("%Y-%m-%d")
             else:
-                hist["date"] = dates.astype(str)
+                hist["date"] = dates.astype(str).str[:10]
+
+            actual_currency = base_currency
+            rate_multiplier = 1.0
+
+            if target_currency and target_currency.upper() != base_currency:
+                target_cur = target_currency.upper()
+                fx_ticker = f"{base_currency}{target_cur}=X"
+                try:
+                    fx_stock = yf.Ticker(fx_ticker)
+                    fx_hist = fx_stock.history(period=period, interval=interval)
+                    if not fx_hist.empty and "Close" in fx_hist.columns:
+                        fx_hist = fx_hist.dropna(subset=["Close"])
+                        fx_dates = fx_hist.index
+                        if hasattr(fx_dates, "strftime"):
+                            fx_date_str = fx_dates.strftime("%Y-%m-%d")
+                        else:
+                            fx_date_str = fx_dates.astype(str).str[:10]
+                        fx_df = pd.DataFrame({"fx_date": fx_date_str, "fx_rate": fx_hist["Close"].values})
+                        merged = hist[["date"]].merge(fx_df, left_on="date", right_on="fx_date", how="left")
+                        merged["fx_rate"] = merged["fx_rate"].ffill().bfill()
+                        if merged["fx_rate"].notna().all():
+                            rate_multiplier = merged["fx_rate"].values
+                            actual_currency = target_cur
+                except Exception as e:
+                    logging.warning(f"Vector FX fetch failed for {fx_ticker}: {e}")
+
+            close_series = (hist["Close"] * rate_multiplier).round(4).astype(float)
+            hist["close"] = close_series
+            hist["open"] = (hist["Open"] * rate_multiplier).round(4).fillna(close_series).astype(float) if "Open" in hist.columns else close_series
+            hist["high"] = (hist["High"] * rate_multiplier).round(4).fillna(close_series).astype(float) if "High" in hist.columns else close_series
+            hist["low"] = (hist["Low"] * rate_multiplier).round(4).fillna(close_series).astype(float) if "Low" in hist.columns else close_series
+            hist["volume"] = hist["Volume"].fillna(0).astype(int) if "Volume" in hist.columns else 0
 
             data = hist[["date", "open", "high", "low", "close", "volume"]].to_dict("records")
             return {"history": data, "currency": actual_currency}
@@ -185,7 +221,7 @@ class YahooService:
             if isinstance(e, HTTPException):
                 raise e
             logging.error(f"Error fetching historical data: {e}")
-            raise HTTPException(status_code=400, detail="Error fetching historical data")
+            raise HTTPException(status_code=502, detail="Upstream market provider failure")
 
     @staticmethod
     def search_instruments(query: str) -> list[dict]:
@@ -193,83 +229,91 @@ class YahooService:
         if not clean_q:
             return []
         cache_key = f"search:{clean_q.upper()}"
-        cached = cache_service.get(cache_key)
-        if cached is not None and isinstance(cached, list):
-            return cached
+        lock = cache_service.get_lock(cache_key)
+        with lock:
+            cached = cache_service.get(cache_key)
+            if cached is not None and isinstance(cached, list):
+                return cached
 
-        try:
-            search_obj = yf.Search(clean_q)
-            quotes = getattr(search_obj, "quotes", []) or []
-        except Exception as e:
-            logging.warning(f"Yahoo search failed for query '{clean_q}': {e}")
-            return []
+            try:
+                try:
+                    search_obj = yf.Search(clean_q)
+                except TypeError:
+                    search_obj = yf.Search(clean_q)
+                quotes = getattr(search_obj, "quotes", []) or []
+            except Exception as e:
+                logging.warning(f"Yahoo search failed for query '{clean_q}': {e}")
+                cache_service.set(cache_key, [], expire=300)
+                return []
 
-        suffix_map = {
-            ".WA": "PLN",
-            ".DE": "EUR",
-            ".F": "EUR",
-            ".PA": "EUR",
-            ".AS": "EUR",
-            ".MC": "EUR",
-            ".MI": "EUR",
-            ".L": "GBP",
-        }
-        exchange_map = {
-            "NMS": "USD",
-            "NYQ": "USD",
-            "NGM": "USD",
-            "PCX": "USD",
-            "BTS": "USD",
-            "BATS": "USD",
-            "ASE": "USD",
-            "NAS": "USD",
-            "PNK": "USD",
-            "GER": "EUR",
-            "FRA": "EUR",
-            "STU": "EUR",
-            "XETRA": "EUR",
-            "PAR": "EUR",
-            "AMS": "EUR",
-            "WSE": "PLN",
-            "WAR": "PLN",
-        }
+            suffix_map = {
+                ".WA": "PLN",
+                ".DE": "EUR",
+                ".F": "EUR",
+                ".PA": "EUR",
+                ".AS": "EUR",
+                ".MC": "EUR",
+                ".MI": "EUR",
+                ".L": "GBP",
+            }
+            exchange_map = {
+                "NMS": "USD",
+                "NYQ": "USD",
+                "NGM": "USD",
+                "PCX": "USD",
+                "BTS": "USD",
+                "BATS": "USD",
+                "ASE": "USD",
+                "NAS": "USD",
+                "PNK": "USD",
+                "GER": "EUR",
+                "FRA": "EUR",
+                "STU": "EUR",
+                "XETRA": "EUR",
+                "PAR": "EUR",
+                "AMS": "EUR",
+                "WSE": "PLN",
+                "WAR": "PLN",
+            }
 
-        results = []
-        seen = set()
-        for item in quotes:
-            if not isinstance(item, dict):
-                continue
-            symbol = (item.get("symbol") or "").strip()
-            if not symbol or symbol in seen:
-                continue
-            qtype = (item.get("quoteType") or "").upper()
-            if qtype not in ("EQUITY", "ETF"):
-                continue
-            mapped_type = "STOCK" if qtype == "EQUITY" else "ETF"
+            results = []
+            seen = set()
+            for item in quotes:
+                if not isinstance(item, dict):
+                    continue
+                symbol = (item.get("symbol") or "").strip()
+                if not symbol or symbol in seen:
+                    continue
+                qtype = (item.get("quoteType") or "").upper()
+                if qtype not in ("EQUITY", "ETF"):
+                    continue
+                mapped_type = "STOCK" if qtype == "EQUITY" else "ETF"
 
-            currency = (item.get("currency") or "").upper() or None
-            if not currency:
-                sym_upper = symbol.upper()
-                for sfx, cur in suffix_map.items():
-                    if sym_upper.endswith(sfx):
-                        currency = cur
-                        break
-            if not currency:
-                exch = (item.get("exchange") or "").upper()
-                currency = exchange_map.get(exch)
+                currency = (item.get("currency") or "").upper() or None
+                if not currency:
+                    sym_upper = symbol.upper()
+                    for sfx, cur in suffix_map.items():
+                        if sym_upper.endswith(sfx):
+                            currency = cur
+                            break
+                if not currency:
+                    exch = (item.get("exchange") or "").upper()
+                    currency = exchange_map.get(exch)
 
-            if currency not in {"USD", "EUR", "PLN"}:
-                continue
+                if currency not in {"USD", "EUR", "PLN"}:
+                    continue
 
-            seen.add(symbol)
-            name = item.get("shortname") or item.get("longname") or symbol
-            results.append({
-                "symbol": symbol,
-                "name": name,
-                "type": mapped_type,
-                "currency": currency,
-            })
+                seen.add(symbol)
+                name = item.get("shortname") or item.get("longname") or symbol
+                results.append({
+                    "symbol": symbol,
+                    "name": name,
+                    "type": mapped_type,
+                    "currency": currency,
+                })
 
-        if results:
-            cache_service.set(cache_key, results, expire=3600)
-        return results
+            if results:
+                cache_service.set(cache_key, results, expire=3600)
+            else:
+                cache_service.set(cache_key, [], expire=300)
+            return results

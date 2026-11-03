@@ -181,15 +181,22 @@ export function calculateXirr(cashFlows: CashFlow[], guess = 0.1): number | null
   let npvLower = calcNpv(lower);
   let npvUpper = calcNpv(upper);
 
-  if (Number.isFinite(npvLower) && Number.isFinite(npvUpper) && npvLower * npvUpper > 0) {
-    const candidates = [0.0, 0.5, 1.0, 5.0, 50.0, 500.0, 5000.0];
-    for (const cand of candidates) {
+  if (!Number.isFinite(npvLower) || !Number.isFinite(npvUpper) || npvLower * npvUpper > 0) {
+    const candidates = [-0.9, -0.7, -0.5, -0.3, -0.1, 0.0, 0.5, 1.0, 5.0, 50.0, 500.0];
+    let prevC = candidates[0];
+    let prevNpv = calcNpv(prevC);
+    for (let i = 1; i < candidates.length; i++) {
+      const cand = candidates[i];
       const npvCand = calcNpv(cand);
-      if (Number.isFinite(npvCand) && npvLower * npvCand <= 0) {
+      if (Number.isFinite(prevNpv) && Number.isFinite(npvCand) && prevNpv * npvCand <= 0) {
+        lower = prevC;
         upper = cand;
+        npvLower = prevNpv;
         npvUpper = npvCand;
         break;
       }
+      prevC = cand;
+      prevNpv = npvCand;
     }
   }
 
@@ -311,7 +318,12 @@ export function calculatePortfolioRealMetrics(
   const realProfitPercent = totalHurdle > 0 ? (realProfitAmount / totalHurdle) * 100 : 0;
 
   let realXirr: number | null = null;
-  if (nominalXirr !== null && nominalXirr !== undefined && Number.isFinite(nominalXirr)) {
+  if (
+    nominalXirr !== null &&
+    nominalXirr !== undefined &&
+    Number.isFinite(nominalXirr) &&
+    normalizedCpi > -1.0
+  ) {
     realXirr = (1 + nominalXirr) / (1 + normalizedCpi) - 1;
   }
 

@@ -7,6 +7,7 @@ import type {
   MonthlyReportRecord,
 } from '../types/reports.types.ts';
 import { calculateBondCurrentPrice, getHistoricalPrice, isBondItem } from './portfolioUnifiedEngine.ts';
+import { calculateTwr } from './performanceEngine.ts';
 
 
 
@@ -24,6 +25,7 @@ export interface RealReportsParams {
   year: number;
   t?: (key: string, options?: any) => string;
   locale?: string;
+  nowTimestamp?: number;
 }
 
 interface CategoryInfo {
@@ -97,14 +99,17 @@ export function generateRealAnnualSummary({
   year,
   t,
   locale = 'pl-PL',
+  nowTimestamp,
 }: RealReportsParams): AnnualSummaryData {
-  const now = Date.now();
+  const now = nowTimestamp ?? Date.now();
   const records: MonthlyReportRecord[] = [];
 
   const preparedTxs = transactions
     .map((tx) => {
       const timeMs = new Date(tx.executedAt).getTime();
-      const fx = (tx.currency === baseCurrency ? 1 : rates[tx.currency]) || 1;
+      const rawProduct = tx.quantity * tx.price;
+      const txFxFallback = tx.exchangeRateToBase || (tx.baseAmount && rawProduct > 0 ? tx.baseAmount / rawProduct : undefined);
+      const fx = (tx.currency === baseCurrency ? 1 : (rates[tx.currency] || txFxFallback)) || 1;
       const commission = tx.commission || 0;
       const txCost = tx.baseAmount ?? (
         tx.transactionType === 'SELL'
@@ -132,15 +137,20 @@ export function generateRealAnnualSummary({
         fallbackPrice,
         transactionType: tx.transactionType || 'BUY',
         instrumentId: tx.instrumentId,
+        currency: tx.currency,
       };
     })
     .sort((a, b) => a.timeMs - b.timeMs);
 
+  let lastKnownCpi = cpi ?? 3.6;
   for (let m = 0; m < 12; m++) {
     const monthStartMs = new Date(year, m, 1, 0, 0, 0, 0).getTime();
     const monthEndMs = new Date(year, m + 1, 0, 23, 59, 59, 999).getTime();
     const hasMonthCpi = monthlyCpi[m] !== undefined;
-    const monthInflation = hasMonthCpi ? monthlyCpi[m] : 0;
+    const monthInflation = hasMonthCpi ? monthlyCpi[m] : lastKnownCpi;
+    if (hasMonthCpi) {
+      lastKnownCpi = monthInflation;
+    }
 
     if (monthStartMs > now) {
       records.push({
@@ -156,7 +166,7 @@ export function generateRealAnnualSummary({
         returnNetPct: 0,
         profitNetMom: 0,
         returnNetMomPct: 0,
-        cpiInflation: hasMonthCpi ? Number(monthInflation.toFixed(1)) : 0,
+        cpiInflation: Number(monthInflation.toFixed(1)),
         realProfitPct: 0,
         status: 'UPCOMING',
         breakdown: [],
@@ -179,7 +189,7 @@ export function generateRealAnnualSummary({
         returnNetPct: 0,
         profitNetMom: 0,
         returnNetMomPct: 0,
-        cpiInflation: hasMonthCpi ? Number(monthInflation.toFixed(1)) : 0,
+        cpiInflation: Number(monthInflation.toFixed(1)),
         realProfitPct: 0,
         status: 'UPCOMING',
         breakdown: [],
@@ -197,6 +207,7 @@ export function generateRealAnnualSummary({
       fallbackPrice: number;
       fx: number;
       cat: { name: string; color: string };
+      costLots: { cost: number; timeMs: number }[];
       lots: {
         quantity: number;
         executedAt: string | Date | number;
@@ -214,7 +225,7 @@ export function generateRealAnnualSummary({
 
       const key = tx.isBond
         ? `${tx.instrumentId}_${tx.seriesName || ''}`
-        : tx.instrumentId;
+        : `${tx.instrumentId}_${tx.currency}`;
 
       let h = holdings.get(key);
       if (!h) {
@@ -226,6 +237,7 @@ export function generateRealAnnualSummary({
           fallbackPrice: tx.fallbackPrice,
           fx: tx.fx,
           cat: tx.cat,
+          costLots: [],
           lots: [],
         };
         holdings.set(key, h);
@@ -234,6 +246,7 @@ export function generateRealAnnualSummary({
       if (tx.transactionType === 'BUY') {
         h.currentQty += tx.quantity;
         h.costBasis += tx.txCost;
+        h.costLots.push({ cost: tx.txCost, timeMs: tx.timeMs });
         if (tx.isBond) {
           h.lots.push({
             quantity: tx.quantity,
@@ -248,12 +261,15 @@ export function generateRealAnnualSummary({
       } else if (tx.transactionType === 'SELL') {
         if (h.currentQty > 0) {
           const sellQty = Math.min(tx.quantity, h.currentQty);
-          h.costBasis -= h.costBasis * (sellQty / h.currentQty);
+          const keepRatio = 1 - sellQty / h.currentQty;
+          h.costBasis *= keepRatio;
+          h.costLots.forEach((l) => { l.cost *= keepRatio; });
           h.currentQty -= sellQty;
           if (h.currentQty <= 0) {
             h.costBasis = 0;
             h.currentQty = 0;
             h.lots = [];
+            h.costLots = [];
           } else if (tx.isBond) {
             let toReduce = sellQty;
             while (toReduce > 0 && h.lots.length > 0) {
@@ -280,6 +296,7 @@ export function generateRealAnnualSummary({
       }
     > = {};
 
+    let inflationHurdle = 0;
     for (const h of holdings.values()) {
       if (h.currentQty <= 0) continue;
       if (!categoryMap[h.cat.name]) {
@@ -291,6 +308,9 @@ export function generateRealAnnualSummary({
         };
       }
       categoryMap[h.cat.name].invested += h.costBasis;
+      for (const l of h.costLots) {
+        inflationHurdle += l.cost * Math.pow(1 + monthInflation / 100, Math.max(0, tMs - l.timeMs) / (365 * 86400000));
+      }
 
       if (h.isBond) {
         for (const lot of h.lots) {
@@ -298,7 +318,7 @@ export function generateRealAnnualSummary({
             purchaseDate: lot.executedAt,
             bondRate: lot.bondRate,
             bondMargin: lot.bondMargin,
-            cpi: hasMonthCpi ? monthInflation : (cpi ?? 3.6),
+            cpi: monthInflation,
             targetDate: tMs,
             seriesName: lot.seriesName,
             termMonths: lot.termMonths,
@@ -361,7 +381,7 @@ export function generateRealAnnualSummary({
       totalInvested > 0 ? (profitGrossTotal / totalInvested) * 100 : 0;
     const returnNetTotalPct =
       totalInvested > 0 ? (profitNetTotal / totalInvested) * 100 : 0;
-    const realProfitPct = hasMonthCpi ? returnNetTotalPct - monthInflation : 0;
+    const realProfitPct = inflationHurdle > 0 ? ((totalInvested + profitNetTotal) / inflationHurdle - 1) * 100 : 0;
 
     records.push({
       monthIndex: m,
@@ -376,7 +396,7 @@ export function generateRealAnnualSummary({
       returnNetPct: Number(returnNetTotalPct.toFixed(2)),
       profitNetMom: 0,
       returnNetMomPct: 0,
-      cpiInflation: hasMonthCpi ? Number(monthInflation.toFixed(1)) : 0,
+      cpiInflation: Number(monthInflation.toFixed(1)),
       realProfitPct: Number(realProfitPct.toFixed(2)),
       status: 'RECORDED',
       breakdown,
@@ -426,7 +446,18 @@ export function generateRealAnnualSummary({
     recordedWithCpi.length > 0
       ? recordedWithCpi.reduce((acc, r) => acc + r.cpiInflation, 0) / recordedWithCpi.length
       : 0;
-  const ytdRealReturnPct = avgCpi > 0 ? ytdReturnNetPct - avgCpi : ytdReturnNetPct;
+  const ytdRealReturnPct = latest ? latest.realProfitPct : 0;
+
+  const monthlySubPeriods = [];
+  for (let idx = 0; idx < recordedOnly.length; idx++) {
+    const cur = recordedOnly[idx];
+    const prev = idx > 0 ? recordedOnly[idx - 1] : null;
+    const startValue = prev ? prev.portfolioValue : 0;
+    const endValue = cur.portfolioValue;
+    const netCashFlow = prev ? cur.investedTotal - prev.investedTotal : cur.investedTotal;
+    monthlySubPeriods.push({ startValue, endValue, netCashFlow });
+  }
+  const ytdTwr = calculateTwr(monthlySubPeriods);
 
   return {
     year,
@@ -438,6 +469,7 @@ export function generateRealAnnualSummary({
     ytdProfitNet,
     ytdReturnNetPct: Number(ytdReturnNetPct.toFixed(2)),
     ytdRealReturnPct: Number(ytdRealReturnPct.toFixed(2)),
+    ytdTwr: Number((ytdTwr * 100).toFixed(2)),
     avgCpi: Number(avgCpi.toFixed(1)),
     baseCurrency,
   };

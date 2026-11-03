@@ -1,6 +1,6 @@
 import type { Currency } from './auth.ts';
 
-export type TransactionType = 'BUY' | 'SELL';
+export type TransactionType = 'BUY' | 'SELL' | 'DIVIDEND';
 
 export interface CreatePortfolioRequest {
   name: string;

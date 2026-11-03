@@ -47,6 +47,8 @@ class TestPortfolioStatsSeam(unittest.TestCase):
             self.assertIn("weightedTer", res)
             self.assertIn("weightedPe", res)
             self.assertIn("portfolioBeta", res)
+            self.assertEqual(res.get("currencyBasis"), "LOCAL")
+            self.assertEqual(res["instruments"][0].get("currency"), "USD")
 
             self.assertAlmostEqual(res["weightedTer"], 0.0016, places=4)
             self.assertAlmostEqual(res["weightedReturn"], 0.098, places=4)
@@ -269,6 +271,34 @@ class TestPostgresRepositorySeam(unittest.TestCase):
         self.assertNotIn("INSERT OR REPLACE", query.upper())
         self.assertIn("%s", query)
         self.assertNotIn("?", query)
+
+    def test_nbp_spot_rate_priority(self):
+        from unittest.mock import MagicMock
+        from app.services.yahoo_service import YahooService, _session
+        from app.services.cache_service import cache_service
+
+        cache_service.delete("rate:USD:PLN")
+        mock_resp = MagicMock()
+        mock_resp.status_code = 200
+        mock_resp.json.return_value = {"rates": [{"mid": 4.15}]}
+        with patch.object(_session, "get", return_value=mock_resp) as mock_get:
+            rate = YahooService.get_exchange_rate("USD", "PLN")
+            self.assertEqual(rate, 4.15)
+            mock_get.assert_called_once()
+            self.assertIn("api.nbp.pl", mock_get.call_args[0][0])
+
+    def test_single_price_raises_404_on_missing_symbol(self):
+        from fastapi import HTTPException
+        from app.routers.prices_router import get_price
+        from app.services.cache_service import cache_service
+
+        cache_service.delete("price:NONEXISTENT:base")
+        with patch("app.services.yahoo_service.YahooService.get_current_price", side_effect=HTTPException(status_code=404, detail="Not Found")):
+            with patch("app.services.market_history_repo.market_history_repo.get_max_date", return_value=None):
+                with self.assertRaises(HTTPException) as ctx:
+                    get_price("NONEXISTENT")
+                self.assertEqual(ctx.exception.status_code, 404)
+
 
 
 if __name__ == "__main__":

@@ -25,6 +25,7 @@ class InstrumentMetricItem(BaseModel):
     trailingPe: float
     dividendYield: float
     beta: float
+    currency: Optional[str] = "USD"
 
 class PortfolioStatsResponse(BaseModel):
     weightedReturn: float
@@ -33,6 +34,7 @@ class PortfolioStatsResponse(BaseModel):
     weightedPe: float
     weightedDividendYield: float = 0.0
     portfolioBeta: float
+    currencyBasis: Optional[str] = "LOCAL"
     instruments: List[InstrumentMetricItem] = []
 
 @router.post("/portfolio-stats", response_model=PortfolioStatsResponse)

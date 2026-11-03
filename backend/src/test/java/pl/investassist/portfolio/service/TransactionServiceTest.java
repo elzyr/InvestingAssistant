@@ -229,6 +229,50 @@ class TransactionServiceTest {
   }
 
   @Test
+  void createTransaction_whenDividendTransaction_createsAndProcessesDividend() {
+    InstrumentResponse instrument = new InstrumentResponse(
+        instrumentId, "AAPL", "Apple Inc", InstrumentType.STOCK, Currency.USD);
+    when(instrumentService.getInstrument(instrumentId)).thenReturn(instrument);
+    when(portfolioService.validateAndGetPortfolioEntity(userId, portfolioId)).thenReturn(portfolio);
+    when(marketDataClient.getExchangeRate(eq(Currency.USD), eq(Currency.PLN), any()))
+        .thenReturn(new BigDecimal("4.0000"));
+    when(transactionRepository.save(any(Transaction.class))).thenAnswer(i -> {
+      Transaction tx = i.getArgument(0);
+      tx.setId(UUID.randomUUID());
+      return tx;
+    });
+
+    TransactionType dividendType = TransactionType.valueOf("DIVIDEND");
+    CreateTransactionRequest request = new CreateTransactionRequest(
+        instrumentId,
+        dividendType,
+        new BigDecimal("10"),
+        new BigDecimal("5"),
+        BigDecimal.ZERO,
+        Currency.USD,
+        LocalDateTime.of(2025, 3, 1, 10, 0),
+        null,
+        null,
+        null,
+        null,
+        null);
+
+    TransactionResponse response = transactionService.createTransaction(userId, portfolioId, request);
+
+    assertThat(response).isNotNull();
+    assertThat(response.transactionType()).isEqualTo(dividendType);
+    assertThat(response.baseAmount()).isEqualByComparingTo("200.0000");
+
+    ArgumentCaptor<Transaction> captor = ArgumentCaptor.forClass(Transaction.class);
+    verify(transactionRepository).save(captor.capture());
+    Transaction saved = captor.getValue();
+    assertThat(saved.getTransactionType()).isEqualTo(dividendType);
+    assertThat(saved.getBaseAmount()).isEqualByComparingTo("200.0000");
+
+    verify(positionService).recalculatePosition(portfolio, instrumentId, Currency.USD, null);
+  }
+
+  @Test
   void getTransactions_whenForeignCurrency_returnsExchangeRateToBase() {
     UUID txId = UUID.randomUUID();
     Transaction tx = new Transaction();
@@ -420,5 +464,32 @@ class TransactionServiceTest {
     RegisterRequest regReq = new RegisterRequest(
         "test@example.com", longPassword, "First", "Last", Currency.PLN);
     assertThat(validator.validate(regReq)).isNotEmpty();
+  }
+
+  @Test
+  void getTransactions_withPageAndSize_usesDatabasePageable() {
+    when(portfolioService.validateAndGetPortfolioEntity(userId, portfolioId)).thenReturn(portfolio);
+
+    Transaction tx = new Transaction();
+    tx.setId(UUID.randomUUID());
+    tx.setPortfolio(portfolio);
+    tx.setInstrumentId(instrumentId);
+    tx.setTransactionType(TransactionType.BUY);
+    tx.setQuantity(new BigDecimal("10"));
+    tx.setPrice(new BigDecimal("100"));
+    tx.setCurrency(Currency.PLN);
+    tx.setExecutedAt(LocalDateTime.now());
+
+    org.springframework.data.domain.Page<Transaction> paged =
+        new org.springframework.data.domain.PageImpl<>(java.util.List.of(tx));
+
+    when(transactionRepository.findAllByPortfolioIdOrderByExecutedAtDesc(
+        eq(portfolioId), any(org.springframework.data.domain.Pageable.class)))
+        .thenReturn(paged);
+
+    java.util.List<TransactionResponse> result = transactionService.getTransactions(userId, portfolioId, 0, 10);
+    assertThat(result).hasSize(1);
+    verify(transactionRepository).findAllByPortfolioIdOrderByExecutedAtDesc(
+        eq(portfolioId), any(org.springframework.data.domain.Pageable.class));
   }
 }

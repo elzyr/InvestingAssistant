@@ -38,7 +38,7 @@ import type { TransactionResponse } from '../types/portfolio.ts';
 import type { PortfolioStatsResponse } from '../types/analytics.types.ts';
 
 export const DashboardPage = () => {
-  const { t, i18n } = useTranslation();
+  const { t } = useTranslation();
 
   const {
     dispatch,
@@ -94,8 +94,63 @@ export const DashboardPage = () => {
           : undefined;
       const fxRate = (isForeign ? rates[pos.currency] : 1) || fallbackFx || 1;
 
-      const currentPrice = isBond
-        ? calculateBondCurrentPrice({
+      let currentPrice = pos.averageBuyPrice;
+      let previousPrice = currentPrice;
+
+      if (isBond) {
+        const bondTxs = transactions
+          .filter((t) => t.instrumentId === pos.instrumentId && (t.seriesName || '') === (pos.seriesName || ''))
+          .sort((a, b) => new Date(a.executedAt).getTime() - new Date(b.executedAt).getTime());
+        const buyTxs = bondTxs.filter((t) => t.transactionType === 'BUY');
+        const sellTxs = bondTxs.filter((t) => t.transactionType === 'SELL');
+        let totalSold = sellTxs.reduce((sum, t) => sum + t.quantity, 0);
+
+        const activeLots: { qty: number; executedAt: string; rate?: number; margin?: number; termMonths?: number }[] = [];
+        for (const buyTx of buyTxs) {
+          if (totalSold >= buyTx.quantity) {
+            totalSold -= buyTx.quantity;
+            continue;
+          }
+          const rem = buyTx.quantity - totalSold;
+          totalSold = 0;
+          activeLots.push({
+            qty: rem,
+            executedAt: buyTx.executedAt,
+            rate: buyTx.bondRate ?? pos.bondRate,
+            margin: buyTx.bondMargin ?? pos.bondMargin,
+            termMonths: buyTx.termMonths ?? pos.termMonths,
+          });
+        }
+
+        if (activeLots.length > 0 && pos.quantity > 0) {
+          let sumNow = 0;
+          let sumPrev = 0;
+          for (const lot of activeLots) {
+            const pNow = calculateBondCurrentPrice({
+              purchaseDate: lot.executedAt,
+              bondRate: lot.rate,
+              bondMargin: lot.margin,
+              cpi,
+              targetDate: nowTimestamp,
+              seriesName: pos.seriesName,
+              termMonths: lot.termMonths,
+            });
+            const pPrev = calculateBondCurrentPrice({
+              purchaseDate: lot.executedAt,
+              bondRate: lot.rate,
+              bondMargin: lot.margin,
+              cpi,
+              targetDate: nowTimestamp - 86400000,
+              seriesName: pos.seriesName,
+              termMonths: lot.termMonths,
+            });
+            sumNow += lot.qty * pNow;
+            sumPrev += lot.qty * pPrev;
+          }
+          currentPrice = sumNow / pos.quantity;
+          previousPrice = sumPrev / pos.quantity;
+        } else {
+          currentPrice = calculateBondCurrentPrice({
             purchaseDate: pos.purchaseDate,
             bondRate: pos.bondRate,
             bondMargin: pos.bondMargin,
@@ -103,33 +158,34 @@ export const DashboardPage = () => {
             targetDate: nowTimestamp,
             seriesName: pos.seriesName,
             termMonths: pos.termMonths,
-          })
-        : (quotes[symbol]?.price && quotes[symbol].price > 0 ? quotes[symbol].price : pos.averageBuyPrice);
-
-      let previousPrice = currentPrice;
-      if (isBond) {
-        previousPrice = calculateBondCurrentPrice({
-          purchaseDate: pos.purchaseDate,
-          bondRate: pos.bondRate,
-          bondMargin: pos.bondMargin,
-          cpi,
-          targetDate: nowTimestamp - 86400000,
-          seriesName: pos.seriesName,
-          termMonths: pos.termMonths,
-        });
-      } else if (quotes[symbol]?.previousClose && quotes[symbol].previousClose! > 0) {
-        previousPrice = quotes[symbol].previousClose!;
-      } else if (historicalPrices && historicalSortedDates && inst?.symbol && historicalPrices[inst.symbol]) {
-        const dates = historicalSortedDates[inst.symbol];
-        const dateMap = historicalPrices[inst.symbol];
-        if (dates && dates.length > 0) {
-          const dNow = new Date(nowTimestamp);
-          const todayDateStr = `${dNow.getFullYear()}-${String(dNow.getMonth() + 1).padStart(2, '0')}-${String(dNow.getDate()).padStart(2, '0')}`;
-          const lastDate = dates[dates.length - 1];
-          if (lastDate >= todayDateStr && dates.length >= 2) {
-            previousPrice = dateMap[dates[dates.length - 2]] ?? currentPrice;
-          } else {
-            previousPrice = dateMap[lastDate] ?? currentPrice;
+          });
+          previousPrice = calculateBondCurrentPrice({
+            purchaseDate: pos.purchaseDate,
+            bondRate: pos.bondRate,
+            bondMargin: pos.bondMargin,
+            cpi,
+            targetDate: nowTimestamp - 86400000,
+            seriesName: pos.seriesName,
+            termMonths: pos.termMonths,
+          });
+        }
+      } else {
+        currentPrice = (quotes[symbol]?.price && quotes[symbol].price > 0 ? quotes[symbol].price : pos.averageBuyPrice);
+        previousPrice = currentPrice;
+        if (quotes[symbol]?.previousClose && quotes[symbol].previousClose! > 0) {
+          previousPrice = quotes[symbol].previousClose!;
+        } else if (historicalPrices && historicalSortedDates && inst?.symbol && historicalPrices[inst.symbol]) {
+          const dates = historicalSortedDates[inst.symbol];
+          const dateMap = historicalPrices[inst.symbol];
+          if (dates && dates.length > 0) {
+            const dNow = new Date(nowTimestamp);
+            const todayDateStr = `${dNow.getFullYear()}-${String(dNow.getMonth() + 1).padStart(2, '0')}-${String(dNow.getDate()).padStart(2, '0')}`;
+            const lastDate = dates[dates.length - 1];
+            if (lastDate >= todayDateStr && dates.length >= 2) {
+              previousPrice = dateMap[dates[dates.length - 2]] ?? currentPrice;
+            } else {
+              previousPrice = dateMap[lastDate] ?? currentPrice;
+            }
           }
         }
       }
@@ -165,11 +221,14 @@ export const DashboardPage = () => {
         profitPct,
         dailyChange,
         purchaseDate: pos.purchaseDate,
+        seriesName: pos.seriesName,
         bondRate: pos.bondRate,
         bondMargin: pos.bondMargin,
+        termMonths: pos.termMonths,
+        isPriceUnavailable: Boolean(!isBond && quotes[symbol]?.isUnavailable),
       };
     });
-  }, [positions, instruments, quotes, rates, baseCurrency, cpi, nowTimestamp, historicalPrices, historicalSortedDates, i18n.language]);
+  }, [positions, instruments, quotes, rates, baseCurrency, cpi, nowTimestamp, historicalPrices, historicalSortedDates, transactions]);
 
   const equityHoldings = useMemo(
     () =>
@@ -225,7 +284,7 @@ export const DashboardPage = () => {
     return () => {
       isCancelled = true;
     };
-  }, [equityHoldings, activePortfolioId, empiricalRequestKey]);
+  }, [activePortfolioId, empiricalRequestKey]);
 
   const totalPortfolioValue = useMemo(() => {
     return enrichedHoldings.reduce((sum, h) => sum + h.totalValue, 0);

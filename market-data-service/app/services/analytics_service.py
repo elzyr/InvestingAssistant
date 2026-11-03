@@ -61,7 +61,10 @@ class AnalyticsService:
 
         if needs_fetch:
             try:
-                stock = yf.Ticker(sym)
+                try:
+                    stock = yf.Ticker(sym)
+                except TypeError:
+                    stock = yf.Ticker(sym)
                 hist = stock.history(start=max_date) if max_date else stock.history(period="5y")
                 if not hist.empty:
                     hist = hist.reset_index().dropna(subset=["Close"])
@@ -93,7 +96,14 @@ class AnalyticsService:
 
                     info = {}
                     try:
-                        info = stock.info or {}
+                        fast = getattr(stock, "fast_info", None)
+                        if fast is not None:
+                            if isinstance(fast, dict):
+                                info = fast
+                            elif hasattr(fast, "items"):
+                                info = dict(fast.items())
+                            elif hasattr(fast, "__dict__"):
+                                info = dict(fast.__dict__)
                     except Exception:
                         pass
 
@@ -114,6 +124,7 @@ class AnalyticsService:
             profile = AnalyticsService.enrich_with_ucits_fallback(sym, {})
 
         prices = market_history_repo.get_historical_prices(sym)
+        currency = prices[-1].get("currency", "USD") if prices else "USD"
         if len(prices) >= 2:
             closes = np.array([p["closePrice"] for p in prices], dtype=np.float64)
             daily_returns = np.diff(closes) / closes[:-1]
@@ -138,6 +149,7 @@ class AnalyticsService:
             "dividendYield": profile["dividendYield"],
             "beta": profile["beta"],
             "dailyReturns": daily_returns_dict,
+            "currency": currency,
         }
 
     @staticmethod
@@ -150,6 +162,7 @@ class AnalyticsService:
                 "weightedPe": 0.0,
                 "weightedDividendYield": 0.0,
                 "portfolioBeta": 1.0,
+                "currencyBasis": "LOCAL",
                 "instruments": [],
             }
 
@@ -185,6 +198,7 @@ class AnalyticsService:
                 "trailingPe": m["trailingPe"],
                 "dividendYield": m["dividendYield"],
                 "beta": m["beta"],
+                "currency": m.get("currency", "USD"),
             })
 
         w_vec = np.array(normalized_weights, dtype=np.float64)
@@ -227,5 +241,6 @@ class AnalyticsService:
             "weightedPe": round(weighted_pe, 2),
             "weightedDividendYield": round(weighted_dividend_yield, 4),
             "portfolioBeta": round(portfolio_beta, 2),
+            "currencyBasis": "LOCAL",
             "instruments": instruments_metrics,
         }

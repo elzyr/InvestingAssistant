@@ -21,7 +21,13 @@ services:
       redis:
         condition: service_healthy
       market-data-service:
-        condition: service_started
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:8080/health || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 40s
     networks:
       - investassist-network
     restart: always
@@ -58,11 +64,17 @@ services:
       - DB_NAME=${DB_NAME}
       - DB_USER=${DB_USER}
       - DB_PASSWORD=${DB_PASSWORD}
+      - DB_SCHEMA=market_data
     depends_on:
       redis:
         condition: service_healthy
       postgres:
         condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8083/health')"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
     networks:
       - investassist-network
     restart: always
@@ -95,8 +107,10 @@ services:
     ports:
       - "3000:80"
     depends_on:
-      - backend
-      - market-data-service
+      backend:
+        condition: service_healthy
+      market-data-service:
+        condition: service_healthy
     networks:
       - investassist-network
     restart: always

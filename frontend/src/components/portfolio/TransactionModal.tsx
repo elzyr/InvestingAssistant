@@ -4,6 +4,7 @@ import { isAxiosError } from 'axios';
 import { X, ArrowDownRight, ArrowUpRight, Loader2, ShieldCheck, Sparkles, Trash2, Search, ChevronDown, Check } from 'lucide-react';
 import { instrumentService } from '../../services/instrument.service.ts';
 import { marketService } from '../../services/market.service.ts';
+import { standardizeDate } from '../../utils/dashboardCalculations.ts';
 import { partitionInstruments } from '../../utils/instrumentSearch.ts';
 import { useAppDispatch, useAppSelector } from '../../store/hooks.ts';
 import {
@@ -25,8 +26,7 @@ export interface TransactionModalProps {
 }
 
 const getTodayLocalDateStr = () => {
-  const d = new Date();
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+  return standardizeDate(new Date());
 };
 
 export const TransactionModal: React.FC<TransactionModalProps> = ({
@@ -173,7 +173,7 @@ export const TransactionModal: React.FC<TransactionModalProps> = ({
     setCommission(transaction.commission?.toString() || '0');
     setCurrency(transaction.currency || 'PLN');
     if (transaction.executedAt) {
-      setTransactionDate(transaction.executedAt.split('T')[0]);
+      setTransactionDate(standardizeDate(transaction.executedAt));
     }
     setSeriesName(transaction.seriesName || '');
     setInterestType(transaction.bondMargin ? 'INFLATION' : 'FIXED');
@@ -321,11 +321,16 @@ export const TransactionModal: React.FC<TransactionModalProps> = ({
 
   useEffect(() => {
     if (!isOpen || transaction) return;
+    if (!searchQuery.trim()) {
+      setCatalogInstruments([]);
+      setLoadingCatalog(false);
+      return;
+    }
     let active = true;
     setLoadingCatalog(true);
     const timer = setTimeout(async () => {
       try {
-        const data = await instrumentService.getInstruments(searchQuery.trim() || undefined);
+        const data = await instrumentService.getInstruments(searchQuery.trim());
         if (!active) return;
         const filtered = data.filter((i) => i.type === 'ETF' || i.type === 'BOND' || i.type === 'STOCK');
         setCatalogInstruments(filtered);
@@ -388,7 +393,7 @@ export const TransactionModal: React.FC<TransactionModalProps> = ({
     setSubmitting(true);
     setError(null);
 
-    const executedAt = transactionDate ? `${transactionDate}T12:00:00` : undefined;
+    const executedAt = transactionDate ? `${standardizeDate(transactionDate)}T12:00:00` : undefined;
     const requestPayload = {
       instrumentId: effectiveInstrumentId,
       transactionType,
@@ -692,7 +697,7 @@ export const TransactionModal: React.FC<TransactionModalProps> = ({
 
           <div>
             <label className="block text-xs text-zinc-400 mb-1.5">{t('transactionModal.typeLabel')}</label>
-            <div className="grid grid-cols-2 gap-2">
+            <div className={`grid ${isBond ? 'grid-cols-2' : 'grid-cols-3'} gap-2`}>
               <button
                 type="button"
                 onClick={() => setTransactionType('BUY')}
@@ -717,6 +722,20 @@ export const TransactionModal: React.FC<TransactionModalProps> = ({
                 <ArrowUpRight className="w-3.5 h-3.5" />
                 {t('transactionModal.typeSell')}
               </button>
+              {!isBond && (
+                <button
+                  type="button"
+                  onClick={() => setTransactionType('DIVIDEND')}
+                  className={`flex items-center justify-center gap-1.5 py-2 px-3 rounded text-xs font-semibold border transition ${
+                    transactionType === 'DIVIDEND'
+                      ? 'bg-blue-950/60 border-blue-600 text-blue-300'
+                      : 'bg-zinc-900 border-zinc-800 text-zinc-400 hover:border-zinc-700'
+                  }`}
+                >
+                  <Sparkles className="w-3.5 h-3.5" />
+                  {t('transactionModal.typeDividend', 'Dywidenda')}
+                </button>
+              )}
             </div>
           </div>
 
