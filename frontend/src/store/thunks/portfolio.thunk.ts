@@ -1,3 +1,4 @@
+import i18n from '../../i18n/config.ts';
 import { createAsyncThunk } from '@reduxjs/toolkit';
 import { isAxiosError } from 'axios';
 import { portfolioService } from '../../services/portfolio.service.ts';
@@ -5,6 +6,7 @@ import { instrumentService } from '../../services/instrument.service.ts';
 import { marketService, type PriceQuote } from '../../services/market.service.ts';
 import type {
   PortfolioResponse,
+  CreatePortfolioRequest,
   PositionResponse,
   TransactionResponse,
   CreateTransactionRequest,
@@ -29,14 +31,14 @@ export const fetchPortfolios = createAsyncThunk<
     const portfolios = await portfolioService.getPortfolios();
     if (portfolios.length === 0) {
       const defaultPortfolio = await portfolioService.createPortfolio({
-        name: 'Główny',
+        name: i18n.t('common.defaultPortfolioName'),
         baseCurrency: defaultCurrency,
       });
       return [defaultPortfolio];
     }
     return portfolios;
   } catch (error: unknown) {
-    return rejectWithValue(getErrorMessage(error, 'Nie udało się pobrać portfeli'));
+    return rejectWithValue(getErrorMessage(error, i18n.t('errors.fetchPortfolios')));
   }
 });
 
@@ -138,7 +140,7 @@ export const fetchPositions = createAsyncThunk<
         historicalSortedDates,
       };
     } catch (error: unknown) {
-      return rejectWithValue(getErrorMessage(error, 'Nie udało się pobrać pozycji'));
+      return rejectWithValue(getErrorMessage(error, i18n.t('errors.fetchPositions')));
     }
   },
   {
@@ -228,7 +230,7 @@ export const fetchTransactions = createAsyncThunk<
 
       return { transactions: txs, instruments: instrumentsMap, quotes: quotesMap, rates: ratesMap };
     } catch (error: unknown) {
-      return rejectWithValue(getErrorMessage(error, 'Nie udało się pobrać transakcji'));
+      return rejectWithValue(getErrorMessage(error, i18n.t('errors.fetchTransactions')));
     }
   },
   {
@@ -253,7 +255,7 @@ export const fetchInflation = createAsyncThunk<
     const data = await marketService.getInflation();
     return { cpi: data.currentCpi };
   } catch (error: unknown) {
-    return rejectWithValue(getErrorMessage(error, 'Nie udało się pobrać stopy inflacji'));
+    return rejectWithValue(getErrorMessage(error, i18n.t('errors.fetchInflation')));
   }
 });
 
@@ -270,7 +272,7 @@ export const createTransaction = createAsyncThunk<
       dispatch(fetchTransactions({ portfolioId, force: true }));
       return response;
     } catch (error: unknown) {
-      return rejectWithValue(getErrorMessage(error, 'Nie udało się zapisać transakcji'));
+      return rejectWithValue(getErrorMessage(error, i18n.t('errors.saveTransaction')));
     }
   }
 );
@@ -288,7 +290,7 @@ export const updateTransaction = createAsyncThunk<
       dispatch(fetchTransactions({ portfolioId, force: true }));
       return response;
     } catch (error: unknown) {
-      return rejectWithValue(getErrorMessage(error, 'Nie udało się zaktualizować transakcji'));
+      return rejectWithValue(getErrorMessage(error, i18n.t('errors.updateTransaction')));
     }
   }
 );
@@ -305,14 +307,15 @@ export const deleteTransaction = createAsyncThunk<
       dispatch(fetchPositions({ portfolioId, force: true }));
       dispatch(fetchTransactions({ portfolioId, force: true }));
     } catch (error: unknown) {
-      return rejectWithValue(getErrorMessage(error, 'Nie udało się usunąć transakcji'));
+      return rejectWithValue(getErrorMessage(error, i18n.t('errors.deleteTransaction')));
     }
   }
 );
 
 export const createPortfolio = createAsyncThunk<
   PortfolioResponse,
-  { name: string; description?: string; baseCurrency: Currency },
+  CreatePortfolioRequest,
+
   { rejectValue: string }
 >(
   'portfolio/createPortfolio',
@@ -320,7 +323,7 @@ export const createPortfolio = createAsyncThunk<
     try {
       return await portfolioService.createPortfolio(request);
     } catch (error: unknown) {
-      return rejectWithValue(getErrorMessage(error, 'Nie udało się utworzyć portfela'));
+      return rejectWithValue(getErrorMessage(error, i18n.t('errors.createPortfolio')));
     }
   }
 );
@@ -349,7 +352,7 @@ export const fetchHistoricalPrices = createAsyncThunk<
       }
       return { symbol, prices: dateMap, sortedDates: dates };
     } catch (error: unknown) {
-      return rejectWithValue(getErrorMessage(error, `Nie udało się pobrać historii dla ${symbol}`));
+      return rejectWithValue(getErrorMessage(error, i18n.t('errors.fetchHistory', { symbol })));
     }
   },
   {

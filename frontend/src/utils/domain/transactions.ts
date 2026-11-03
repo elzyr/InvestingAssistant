@@ -83,3 +83,59 @@ export function sumDividends(
   }
   return sum;
 }
+
+export interface MatchedTransactionLot {
+  tx: TransactionResponse;
+  remainingQty: number;
+  effectiveCost: number;
+}
+
+export function matchTransactionLotsFifo(
+  transactions: TransactionResponse[],
+  baseCurrency: string,
+  rates: Record<string, number>
+): MatchedTransactionLot[] {
+  let totalSoldQty = 0;
+  for (const t of transactions) {
+    if (t.transactionType === 'SELL') {
+      totalSoldQty += t.quantity;
+    }
+  }
+
+  const activeLots: MatchedTransactionLot[] = [];
+  for (const buyTx of transactions) {
+    if (buyTx.transactionType !== 'BUY') continue;
+    if (totalSoldQty >= buyTx.quantity) {
+      totalSoldQty -= buyTx.quantity;
+      continue;
+    }
+    const remainingQty = buyTx.quantity - totalSoldQty;
+    totalSoldQty = 0;
+    const { amount: originalCost } = getTransactionCashFlow(buyTx, baseCurrency, rates);
+    const effectiveCost = buyTx.quantity > 0 ? originalCost * (remainingQty / buyTx.quantity) : 0;
+    activeLots.push({ tx: buyTx, remainingQty, effectiveCost });
+  }
+  return activeLots;
+}
+
+export function filterHoldingTransactions(
+  transactions: TransactionResponse[],
+  holding: {
+    instrumentId: string;
+    isBond: boolean;
+    seriesName?: string | null;
+    ticker: string;
+    currency?: string;
+  }
+): TransactionResponse[] {
+  const targetSeries = holding.seriesName ?? (holding.ticker.startsWith('PL_BOND') ? '' : holding.ticker);
+  return transactions
+    .filter(
+      (t) =>
+        t.instrumentId === holding.instrumentId &&
+        (holding.isBond
+          ? (t.seriesName || '') === targetSeries
+          : !t.currency || !holding.currency || t.currency === holding.currency)
+    )
+    .sort((a, b) => new Date(a.executedAt).getTime() - new Date(b.executedAt).getTime());
+}

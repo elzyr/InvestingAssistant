@@ -1,5 +1,7 @@
 import { useState, useMemo, useEffect, useRef } from 'react';
 import { useTranslation } from 'react-i18next';
+import { CRISIS_SCENARIOS } from '../../utils/domain/crisisScenarios.ts';
+import { computeBelka } from '../../utils/domain/tax.ts';
 import { AlertTriangle, ShieldCheck, Flame, Zap, ArrowDownRight, CheckCircle2 } from 'lucide-react';
 import {
   createChart,
@@ -61,13 +63,13 @@ const normalizeDateStr = (time: Time | unknown): string => {
 };
 
 const formatMonths = (m: number, t: (k: string, opt?: any) => string): string => {
-  if (m === 1) return t('monteCarlo.month_one', '1 miesiąc');
+  if (m === 1) return t('monteCarlo.month_one');
   const rem10 = m % 10;
   const rem100 = m % 100;
   if (rem10 >= 2 && rem10 <= 4 && (rem100 < 10 || rem100 >= 20)) {
-    return t('monteCarlo.month_few', { count: m, defaultValue: `${m} miesiące` });
+    return t('monteCarlo.month_few', { count: m });
   }
-  return t('monteCarlo.month_many', { count: m, defaultValue: `${m} miesięcy` });
+  return t('monteCarlo.month_many', { count: m });
 };
 
 export const StressTestingView = ({
@@ -82,6 +84,8 @@ export const StressTestingView = ({
   defaultEtfDca = 0,
 }: StressTestingViewProps) => {
   const { t, i18n } = useTranslation();
+  const numLocale = i18n.language?.startsWith('pl') ? 'pl-PL' : 'en-US';
+
   
   const [selectedScenarioId, setSelectedScenarioId] = useState<string>('covid-2020');
   const [prevDefaults, setPrevDefaults] = useState({ defaultTosDca, defaultEdoDca, defaultEtfDca });
@@ -104,86 +108,21 @@ export const StressTestingView = ({
   const chartContainerRef = useRef<HTMLDivElement | null>(null);
   const chartRef = useRef<IChartApi | null>(null);
 
-  const scenarios: CrisisScenario[] = useMemo(() => [
-    {
-      id: 'covid-2020',
-      title: t('monteCarlo.scenarios.covid2020.title', 'Flash-Crash COVID-19 (Marzec 2020)'),
-      shortTitle: t('monteCarlo.scenarios.covid2020.shortTitle', 'COVID-19 (2020)'),
-      period: t('monteCarlo.scenarios.covid2020.period', '24 miesiące (2 lata)'),
-      durationMonths: 24,
-      description: t(
-        'monteCarlo.scenarios.covid2020.desc',
-        'Błyskawiczna panika pandemiczna: rynki akcji zanurkowały o -34% w 33 dni, po czym nastąpiło spektakularne odbicie w kształcie litery V.'
-      ),
-      icon: Zap,
-      color: '#38bdf8',
-      getMarketMultiplier: (m: number) => {
-        if (m === 0) return 1.0;
-        if (m === 1) return 0.78;
-        if (m === 2) return 0.66;
-        if (m <= 8) {
-          const rec = (m - 2) / 6;
-          return 0.66 + (1.02 - 0.66) * rec;
-        }
-        const bull = (m - 8) / (24 - 8);
-        return 1.02 + 0.28 * bull;
-      },
-      getInflationRate: () => 3.2,
-    },
-    {
-      id: 'gfc-2008',
-      title: t('monteCarlo.scenarios.gfc2008.title', 'Globalny Kryzys Finansowy (2007–2009)'),
-      shortTitle: t('monteCarlo.scenarios.gfc2008.shortTitle', 'GFC (2008)'),
-      period: t('monteCarlo.scenarios.gfc2008.period', '48 miesięcy (4 lata)'),
-      durationMonths: 48,
-      description: t(
-        'monteCarlo.scenarios.gfc2008.desc',
-        'Najgłębsza bessa nowoczesnej giełdy. Globalne akcje tąpnęły o -55% w ciągu 17 miesięcy, a powrót do szczytów zajął 4 lata. Obligacje skarbowe stabilizowały portfel.'
-      ),
-      icon: Flame,
-      color: '#fb7185',
-      getMarketMultiplier: (m: number) => {
-        if (m === 0) return 1.0;
-        if (m <= 17) {
-          return 1.0 - 0.555 * Math.sin((m / 17) * (Math.PI / 2));
-        }
-        const recoveryProgress = (m - 17) / (48 - 17);
-        return 0.445 + (1.15 - 0.445) * Math.pow(recoveryProgress, 0.85);
-      },
-      getInflationRate: (m: number) => {
-        if (m <= 12) return 4.0;
-        if (m <= 24) return 0.5;
-        return 2.5;
-      },
-    },
-    {
-      id: 'stagflation-2022',
-      title: t('monteCarlo.scenarios.stagflation2022.title', 'Szok Stagflacyjny & Wojna (2021–2023)'),
-      shortTitle: t('monteCarlo.scenarios.stagflation2022.shortTitle', 'Stagflacja (2022)'),
-      period: t('monteCarlo.scenarios.stagflation2022.period', '36 miesięcy (3 lata)'),
-      durationMonths: 36,
-      description: t(
-        'monteCarlo.scenarios.stagflation2022.desc',
-        'Gwałtowny skok inflacji w Polsce do 18.4% połączony z bessą technologiczną i spadkiem akcji o -28%. EDO indeksowane inflacją osiągały rekordowe stopy zwrotu.'
-      ),
-      icon: AlertTriangle,
-      color: '#fbbf24',
-      getMarketMultiplier: (m: number) => {
-        if (m === 0) return 1.0;
-        if (m <= 12) {
-          return 1.0 - 0.28 * Math.sin((m / 12) * (Math.PI / 2));
-        }
-        const rec = (m - 12) / (36 - 12);
-        return 0.72 + (1.12 - 0.72) * rec;
-      },
-      getInflationRate: (m: number) => {
-        if (m <= 6) return 5.0 + (m / 6) * 5.0;
-        if (m <= 15) return 10.0 + ((m - 6) / 9) * 8.4;
-        if (m <= 27) return 18.4 - ((m - 15) / 12) * 8.0;
-        return 10.4 - ((m - 27) / 9) * 4.0;
-      },
-    },
-  ], [t]);
+  const scenarios: CrisisScenario[] = useMemo(() => {
+    const iconMap = { 'covid-2020': Zap, 'gfc-2008': Flame, 'stagflation-2022': AlertTriangle };
+    return CRISIS_SCENARIOS.map((s) => ({
+      id: s.id,
+      title: t(`${s.translationKey}.title`),
+      shortTitle: t(`${s.translationKey}.shortTitle`),
+      period: t(`${s.translationKey}.period`),
+      durationMonths: s.durationMonths,
+      description: t(`${s.translationKey}.desc`),
+      icon: iconMap[s.id],
+      color: s.color,
+      getMarketMultiplier: s.getMarketMultiplier,
+      getInflationRate: s.getInflationRate,
+    }));
+  }, [t]);
 
   const currentScenario = scenarios.find((s) => s.id === selectedScenarioId) || scenarios[0];
 
@@ -210,8 +149,8 @@ export const StressTestingView = ({
     const troughMonth = mktTroughMonth > 0 ? mktTroughMonth : 1;
     const maxStockDrawdownPct = Math.max(0, (1 - minMktMult) * 100);
 
-    const initialBondRate = Math.pow(1 + (weightedBondRate || 6.5) / 100, dt) - 1;
-    const tosRate = Math.pow(1 + 0.065, dt) - 1;
+    const initialBondRate = Math.pow(1 + (weightedBondRate > 0 ? weightedBondRate / 100 : 0), dt) - 1;
+    const tosRate = Math.pow(1 + (weightedBondRate > 0 ? weightedBondRate / 100 : 0), dt) - 1;
 
     const bondAtTrough = bondBase * Math.pow(1 + initialBondRate, troughMonth);
     const stockAtTrough = equityBase * minMktMult;
@@ -257,17 +196,17 @@ export const StressTestingView = ({
       const userStock = equityBase * mkt + dcaEtfUnits * mkt;
       const userGross = userBonds + userStock;
       const userProfit = userGross - userCost;
-      const userBelka = isIkeAccount ? 0 : Math.max(0, userProfit * 0.19);
+      const userBelka = computeBelka(userProfit, isIkeAccount);
       const userNet = userGross - userBelka;
 
       const allStockGross = baseTotal * mkt + allStockDcaUnits * mkt;
       const allStockProfit = allStockGross - userCost;
-      const allStockBelka = isIkeAccount ? 0 : Math.max(0, allStockProfit * 0.19);
+      const allStockBelka = computeBelka(allStockProfit, isIkeAccount);
       const allStockNet = allStockGross - allStockBelka;
 
       const allBondGross = baseTotal * bondCompounded + allBondDca;
       const allBondProfit = allBondGross - userCost;
-      const allBondBelka = isIkeAccount ? 0 : Math.max(0, allBondProfit * 0.19);
+      const allBondBelka = computeBelka(allBondProfit, isIkeAccount);
       const allBondNet = allBondGross - allBondBelka;
 
       const dd = m <= troughMonth ? Math.max(0, ((baseTotal - userNet) / baseTotal) * 100) : 0;
@@ -374,7 +313,7 @@ export const StressTestingView = ({
       },
       localization: {
         priceFormatter: (val: number) =>
-          `${Math.round(val).toLocaleString('pl-PL')} ${baseCurrency}`,
+          `${Math.round(val).toLocaleString(numLocale)} ${baseCurrency}`,
       },
     });
 
@@ -386,7 +325,7 @@ export const StressTestingView = ({
       lineStyle: LineStyle.Dashed,
       lastValueVisible: false,
       priceLineVisible: false,
-      title: t('monteCarlo.ownDca', 'Wkład własny'),
+      title: t('monteCarlo.ownDca'),
     });
     costSeries.setData(
       simulation.timeline.map((pt) => ({
@@ -400,7 +339,7 @@ export const StressTestingView = ({
       lineWidth: 2,
       lastValueVisible: true,
       priceLineVisible: false,
-      title: t('monteCarlo.allStockLabel', '100% Akcje'),
+      title: t('monteCarlo.allStockLabel'),
     });
     stockSeries.setData(
       simulation.timeline.map((pt) => ({
@@ -414,7 +353,7 @@ export const StressTestingView = ({
       lineWidth: 2,
       lastValueVisible: true,
       priceLineVisible: false,
-      title: t('monteCarlo.allBondLabel', '100% Obligacje'),
+      title: t('monteCarlo.allBondLabel'),
     });
     bondSeries.setData(
       simulation.timeline.map((pt) => ({
@@ -428,7 +367,7 @@ export const StressTestingView = ({
       lineWidth: 2,
       lastValueVisible: true,
       priceLineVisible: false,
-      title: t('monteCarlo.yourPortfolioLabel', 'Twój Portfel'),
+      title: t('monteCarlo.yourPortfolioLabel'),
     });
     userSeries.setData(
       simulation.timeline.map((pt) => ({
@@ -444,7 +383,7 @@ export const StressTestingView = ({
         lineWidth: 1,
         lineStyle: LineStyle.Dashed,
         axisLabelVisible: true,
-        title: `${t('monteCarlo.trough', 'Dołek')} (M${simulation.troughMonth}) | ${Math.round(simulation.troughVal).toLocaleString(i18n.language.startsWith('pl') ? 'pl-PL' : 'en-US')} ${baseCurrency}`,
+        title: `${t('monteCarlo.trough')} (M${simulation.troughMonth}) | ${Math.round(simulation.troughVal).toLocaleString(numLocale)} ${baseCurrency}`,
       });
     }
 
@@ -578,7 +517,7 @@ export const StressTestingView = ({
                 <span className="text-zinc-400 text-[11px]">ETF =</span>
               </div>
               <div className="text-white font-bold text-xs whitespace-nowrap pl-1">
-                {totalMonthly.toLocaleString('pl-PL')} <span className="text-zinc-400 font-normal text-[11px]">{t('monteCarlo.perMonth', { currency: baseCurrency })}</span>
+                {totalMonthly.toLocaleString(numLocale)} <span className="text-zinc-400 font-normal text-[11px]">{t('monteCarlo.perMonth', { currency: baseCurrency })}</span>
               </div>
             </div>
           </div>
@@ -604,7 +543,7 @@ export const StressTestingView = ({
               <ArrowDownRight className="w-3.5 h-3.5 text-amber-400" />
             </div>
             <div className="text-xl font-bold text-amber-300 mt-1.5 font-mono">
-              {simulation.troughVal.toLocaleString('pl-PL', { maximumFractionDigits: 0 })} {baseCurrency}
+              {simulation.troughVal.toLocaleString(numLocale, { maximumFractionDigits: 0 })} {baseCurrency}
             </div>
             <div className="text-[10px] text-zinc-500 mt-1">
               {t('monteCarlo.worstMonth', { month: simulation.troughMonth })}
@@ -630,10 +569,10 @@ export const StressTestingView = ({
               <span className="w-2 h-2 rounded-full bg-indigo-400" />
             </div>
             <div className="text-xl font-bold text-white mt-1.5 font-mono">
-              {simulation.finalPt.userVal.toLocaleString('pl-PL', { maximumFractionDigits: 0 })} {baseCurrency}
+              {simulation.finalPt.userVal.toLocaleString(numLocale, { maximumFractionDigits: 0 })} {baseCurrency}
             </div>
             <div className="text-[10px] text-emerald-400 mt-1">
-              {t('monteCarlo.netProfit')} +{(simulation.finalPt.userVal - simulation.finalPt.userCost).toLocaleString('pl-PL', { maximumFractionDigits: 0 })} {baseCurrency}
+              {t('monteCarlo.netProfit')} +{(simulation.finalPt.userVal - simulation.finalPt.userCost).toLocaleString(numLocale, { maximumFractionDigits: 0 })} {baseCurrency}
             </div>
           </div>
         </div>
@@ -657,7 +596,7 @@ export const StressTestingView = ({
           <div className="text-[11px] font-mono text-zinc-400">
             {t('monteCarlo.testedCapital')}{' '}
             <strong className="text-white">
-              {(currentBondVal + currentEquityVal).toLocaleString('pl-PL', { maximumFractionDigits: 0 })} {baseCurrency}
+              {(currentBondVal + currentEquityVal).toLocaleString(numLocale, { maximumFractionDigits: 0 })} {baseCurrency}
             </strong>
           </div>
         </div>
@@ -672,19 +611,19 @@ export const StressTestingView = ({
               <div className="space-y-1 text-[11px]">
                 <div className="flex justify-between items-center text-sky-300">
                   <span>{t('monteCarlo.yourPortfolio')}:</span>
-                  <span className="font-bold">{hoveredPt.userVal.toLocaleString('pl-PL', { maximumFractionDigits: 0 })} {baseCurrency}</span>
+                  <span className="font-bold">{hoveredPt.userVal.toLocaleString(numLocale, { maximumFractionDigits: 0 })} {baseCurrency}</span>
                 </div>
                 <div className="flex justify-between items-center text-rose-400">
                   <span>{t('monteCarlo.allStock')}:</span>
-                  <span className="font-bold">{hoveredPt.allStockVal.toLocaleString('pl-PL', { maximumFractionDigits: 0 })} {baseCurrency}</span>
+                  <span className="font-bold">{hoveredPt.allStockVal.toLocaleString(numLocale, { maximumFractionDigits: 0 })} {baseCurrency}</span>
                 </div>
                 <div className="flex justify-between items-center text-amber-300">
                   <span>{t('monteCarlo.allBond')}:</span>
-                  <span className="font-bold">{hoveredPt.allBondVal.toLocaleString('pl-PL', { maximumFractionDigits: 0 })} {baseCurrency}</span>
+                  <span className="font-bold">{hoveredPt.allBondVal.toLocaleString(numLocale, { maximumFractionDigits: 0 })} {baseCurrency}</span>
                 </div>
                 <div className="flex justify-between items-center text-zinc-400 pt-1 border-t border-zinc-800/60">
                   <span>{t('monteCarlo.ownDca')}:</span>
-                  <span>{hoveredPt.userCost.toLocaleString('pl-PL', { maximumFractionDigits: 0 })} {baseCurrency}</span>
+                  <span>{hoveredPt.userCost.toLocaleString(numLocale, { maximumFractionDigits: 0 })} {baseCurrency}</span>
                 </div>
               </div>
             </div>

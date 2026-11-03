@@ -147,7 +147,7 @@ export function useActivePortfolioData(
     }
   }, [dispatch, activePortfolioId, selectedYear, options?.skipPositions, options?.skipHistory, positions, instruments]);
 
-  const resolvedCpi = cpi ?? 3.6;
+
 
   return {
     dispatch,
@@ -161,7 +161,7 @@ export function useActivePortfolioData(
     rates,
     historicalPrices,
     historicalSortedDates,
-    cpi: resolvedCpi,
+    cpi,
     rawCpi: cpi,
     monthlyCpi,
     monthlyCpiByYear,

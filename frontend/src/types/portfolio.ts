@@ -2,10 +2,13 @@ import type { Currency } from './auth.ts';
 
 export type TransactionType = 'BUY' | 'SELL' | 'DIVIDEND';
 
+export type AccountType = 'STANDARD' | 'IKE' | 'IKZE';
+
 export interface CreatePortfolioRequest {
   name: string;
   description?: string;
   baseCurrency: Currency;
+  accountType?: AccountType;
 }
 
 export interface PortfolioResponse {
@@ -14,6 +17,7 @@ export interface PortfolioResponse {
   name: string;
   description?: string;
   baseCurrency: Currency;
+  accountType?: AccountType;
   createdAt: string;
 }
 

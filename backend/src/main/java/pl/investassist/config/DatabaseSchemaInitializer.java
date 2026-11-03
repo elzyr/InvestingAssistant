@@ -51,6 +51,12 @@ public class DatabaseSchemaInitializer implements ApplicationRunner {
       jdbcTemplate.execute("ALTER TABLE portfolio ALTER COLUMN user_id SET NOT NULL");
       jdbcTemplate.execute("ALTER TABLE portfolio ALTER COLUMN name SET NOT NULL");
       jdbcTemplate.execute("ALTER TABLE portfolio ALTER COLUMN base_currency SET NOT NULL");
+      jdbcTemplate.execute("ALTER TABLE portfolio ADD COLUMN IF NOT EXISTS account_type VARCHAR(20) DEFAULT 'STANDARD' NOT NULL");
+      jdbcTemplate.execute("UPDATE portfolio SET account_type = 'IKE' WHERE account_type = 'STANDARD' AND LOWER(name) LIKE '%ike%'");
+      jdbcTemplate.execute("UPDATE portfolio SET account_type = 'IKZE' WHERE account_type = 'STANDARD' AND LOWER(name) LIKE '%ikze%'");
+      jdbcTemplate.execute("ALTER TABLE portfolio DROP CONSTRAINT IF EXISTS chk_portfolio_account_type");
+      jdbcTemplate.execute("ALTER TABLE portfolio ADD CONSTRAINT chk_portfolio_account_type CHECK (account_type IN ('STANDARD', 'IKE', 'IKZE'))");
+      jdbcTemplate.execute("CREATE INDEX IF NOT EXISTS idx_portfolio_account_type ON portfolio(account_type);");
 
       jdbcTemplate.execute("UPDATE position SET total_cost_base = quantity * average_buy_price WHERE total_cost_base IS NULL");
       jdbcTemplate.execute("ALTER TABLE position ALTER COLUMN portfolio_id SET NOT NULL");

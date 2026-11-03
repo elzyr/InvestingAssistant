@@ -6,6 +6,8 @@ import {
   getTransactionCashFlow,
   sumDividends,
   mapDividendsByInstrument,
+  matchTransactionLotsFifo,
+  filterHoldingTransactions,
 } from './transactions.ts';
 
 describe('domain/transactions', () => {
@@ -61,5 +63,30 @@ describe('domain/transactions', () => {
     const map = mapDividendsByInstrument(txs, 'PLN', rates);
     assert.strictEqual(map.get('instA'), 30);
     assert.strictEqual(map.get('instB'), 50);
+  });
+
+  it('matches transaction lots in FIFO order', () => {
+    const txs = [
+      { id: 'buy1', transactionType: 'BUY', quantity: 10, price: 100, currency: 'PLN', executedAt: '2025-01-01' },
+      { id: 'buy2', transactionType: 'BUY', quantity: 5, price: 120, currency: 'PLN', executedAt: '2025-02-01' },
+      { id: 'sell1', transactionType: 'SELL', quantity: 12, price: 150, currency: 'PLN', executedAt: '2025-03-01' },
+    ];
+    const lots = matchTransactionLotsFifo(txs, 'PLN', rates);
+    assert.strictEqual(lots.length, 1);
+    assert.strictEqual(lots[0].tx.id, 'buy2');
+    assert.strictEqual(lots[0].remainingQty, 3);
+    assert.strictEqual(lots[0].effectiveCost, 360);
+  });
+
+  it('filters holding transactions accurately', () => {
+    const txs = [
+      { id: '1', instrumentId: 'inst1', currency: 'USD', executedAt: '2025-02-01' },
+      { id: '2', instrumentId: 'inst1', currency: 'USD', executedAt: '2025-01-01' },
+      { id: '3', instrumentId: 'inst2', currency: 'EUR', executedAt: '2025-01-01' },
+    ];
+    const res = filterHoldingTransactions(txs, { instrumentId: 'inst1', isBond: false, ticker: 'TEST', currency: 'USD' });
+    assert.strictEqual(res.length, 2);
+    assert.strictEqual(res[0].id, '2');
+    assert.strictEqual(res[1].id, '1');
   });
 });

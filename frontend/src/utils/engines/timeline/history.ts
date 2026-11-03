@@ -2,6 +2,7 @@ import type { ChartPoint } from '../../../types/dashboard.ts';
 import { standardizeDate } from '../../domain/dates.ts';
 import { getBondFamily, isBondItem } from '../../domain/assets.ts';
 import { calculateBondCurrentPrice } from '../../domain/bondPricing.ts';
+import { reduceBondLotsFifo, valueBondLots, type BondLot } from '../../domain/bondLots.ts';
 import { getHistoricalPrice } from '../../domain/prices.ts';
 import { computeBelka } from '../../domain/tax.ts';
 import type { UnifiedEngineParams, TimelineState, RawContributor } from './types.ts';
@@ -47,35 +48,26 @@ export function buildHistoryPoints(
   const rawStepContributors: Map<string, RawContributor>[] = [];
   const keyMetaMap = new Map<string, { label: string; assetType: 'ETF' | 'BOND' | 'STOCK' | 'OTHER' }>();
 
+  const holdings = new Map<string, {
+    instrumentId: string;
+    currentQty: number;
+    costBasis: number;
+    isBond: boolean;
+    symbol: string;
+    fallbackPrice: number;
+    fx: number;
+    lots: BondLot[];
+  }>();
+  let txIdx = 0;
+
   for (let i = 0; i <= totalHistorySteps; i++) {
     const isToday = i === totalHistorySteps;
     const tMs = isToday ? now : Math.min(now - 1000, startMs + Math.round(i * stepMs));
     const dDay = new Date(tMs);
     const dayDateStr = standardizeDate(dDay);
 
-    const holdings = new Map<string, {
-      instrumentId: string;
-      currentQty: number;
-      costBasis: number;
-      isBond: boolean;
-      symbol: string;
-      fallbackPrice: number;
-      fx: number;
-      lots: {
-        quantity: number;
-        executedAt: string | Date | number;
-        bondRate?: number | null;
-        bondMargin?: number | null;
-        seriesName?: string | null;
-        termMonths?: number | null;
-        fx: number;
-      }[];
-    }>();
-
-    for (let k = 0; k < preparedTxs.length; k++) {
-      const tx = preparedTxs[k];
-      if (tx.timeMs > tMs) break;
-
+    while (txIdx < preparedTxs.length && preparedTxs[txIdx].timeMs <= tMs) {
+      const tx = preparedTxs[txIdx++];
       const key = tx.isBond
         ? `${tx.instrumentId}_${tx.seriesName || ''}`
         : `${tx.instrumentId}_${tx.currency}`;
@@ -109,27 +101,16 @@ export function buildHistoryPoints(
             fx: tx.fx,
           });
         }
-      } else if (tx.transactionType === 'SELL') {
-        if (h.currentQty > 0) {
-          const sellQty = Math.min(tx.quantity, h.currentQty);
-          h.costBasis -= h.costBasis * (sellQty / h.currentQty);
-          h.currentQty -= sellQty;
-          if (h.currentQty <= 0) {
-            h.costBasis = 0;
-            h.currentQty = 0;
-            h.lots = [];
-          } else if (tx.isBond) {
-            let toReduce = sellQty;
-            while (toReduce > 0 && h.lots.length > 0) {
-              if (h.lots[0].quantity <= toReduce) {
-                toReduce -= h.lots[0].quantity;
-                h.lots.shift();
-              } else {
-                h.lots[0].quantity -= toReduce;
-                toReduce = 0;
-              }
-            }
-          }
+      } else if (tx.transactionType === 'SELL' && h.currentQty > 0) {
+        const sellQty = Math.min(tx.quantity, h.currentQty);
+        h.costBasis -= h.costBasis * (sellQty / h.currentQty);
+        h.currentQty -= sellQty;
+        if (h.currentQty <= 0) {
+          h.costBasis = 0;
+          h.currentQty = 0;
+          h.lots = [];
+        } else if (tx.isBond) {
+          reduceBondLotsFifo(h.lots, sellQty);
         }
       }
     }
@@ -153,21 +134,8 @@ export function buildHistoryPoints(
       if (h.currentQty <= 0) continue;
       if (h.isBond) {
         bondCostAtT += h.costBasis;
-        let hVal = 0;
-        for (const lot of h.lots) {
-          const unitPrice = calculateBondCurrentPrice({
-            purchaseDate: lot.executedAt,
-            bondRate: lot.bondRate,
-            bondMargin: lot.bondMargin,
-            cpi,
-            targetDate: tMs,
-            seriesName: lot.seriesName,
-            termMonths: lot.termMonths,
-          });
-          const lotVal = lot.quantity * unitPrice * lot.fx;
-          bondValAtT += lotVal;
-          hVal += lotVal;
-        }
+        const hVal = valueBondLots(h.lots, { cpi, targetDate: tMs });
+        bondValAtT += hVal;
         const bondKey = getBondFamily(h.lots[0]?.seriesName || h.symbol, h.lots[0]?.termMonths, h.lots[0]?.bondMargin);
         const bondAssetType: 'ETF' | 'BOND' | 'STOCK' | 'OTHER' = 'BOND';
         keyMetaMap.set(bondKey, { label: bondKey, assetType: bondAssetType });
@@ -314,20 +282,13 @@ export function buildHistoryPoints(
     const nonBondProfit = Math.max(0, nonBondValAtT - nonBondCostAtT);
     const totalProfitGross = rawValuation - finalCost;
 
-    let profit = totalProfitGross;
-    let valuation = rawValuation;
+    const skipBelka = taxMode !== 'NETTO' || isIkeAccount;
+    const bondBelkaAmt = computeBelka(bondProfit, skipBelka);
+    const nonBondBelkaAmt = computeBelka(nonBondProfit, skipBelka);
+    const totalBelka = bondBelkaAmt + nonBondBelkaAmt;
 
-    if (taxMode === 'NETTO') {
-      const bondBelka = computeBelka(bondProfit, isIkeAccount);
-      const nonBondBelka = computeBelka(nonBondProfit, isIkeAccount);
-      const totalBelka = bondBelka + nonBondBelka;
-
-      profit = totalProfitGross - totalBelka;
-      valuation = rawValuation - totalBelka;
-    }
-
-    const bondBelkaAmt = computeBelka(bondProfit, taxMode !== 'NETTO' || isIkeAccount);
-    const nonBondBelkaAmt = computeBelka(nonBondProfit, taxMode !== 'NETTO' || isIkeAccount);
+    const profit = totalProfitGross - totalBelka;
+    const valuation = rawValuation - totalBelka;
 
     let sumPosGrossBond = 0;
     let sumPosGrossNonBond = 0;
@@ -342,7 +303,7 @@ export function buildHistoryPoints(
     for (const c of stepContribMap.values()) {
       const g = c.valuation - c.cost;
       let belka = 0;
-      if (taxMode === 'NETTO' && !isIkeAccount && g > 0) {
+      if (!skipBelka && g > 0) {
         if (c.isBond && sumPosGrossBond > 0) {
           belka = bondBelkaAmt * (g / sumPosGrossBond);
         } else if (!c.isBond && sumPosGrossNonBond > 0) {
@@ -355,8 +316,7 @@ export function buildHistoryPoints(
     rawStepContributors.push(stepContribMap);
 
     const returnPct = finalCost > 0 ? (profit / finalCost) * 100 : 0;
-    const dateObj = new Date(tMs);
-    const dateLabel = dateObj.toLocaleDateString(locale, {
+    const dateLabel = dDay.toLocaleDateString(locale, {
       day: 'numeric',
       month: 'short',
       year: 'numeric',

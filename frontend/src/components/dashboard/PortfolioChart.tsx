@@ -24,6 +24,7 @@ import type {
 } from '../../types/dashboard.ts';
 import type { PortfolioStatsResponse } from '../../types/analytics.types.ts';
 import { formatNumberWithSpaces, formatSignedNumberWithSpaces } from '../../utils/reportsFormatters.ts';
+import { getShortMonthName } from '../../utils/domain/dates.ts';
 
 interface PortfolioChartProps {
   data: ChartPoint[];
@@ -56,8 +57,7 @@ const TIMEFRAMES: TimeframeOption[] = ['1M', '3M', 'YTD', '1R', 'MAX'];
 const PROJECTIONS: ProjectionHorizonOption[] = ['3Y', '5Y', '10Y', '20Y'];
 const CONTRIBUTOR_COLORS = ['#f59e0b', '#38bdf8', '#a855f7', '#f43f5e', '#14b8a6', '#94a3b8'];
 
-const POLISH_MONTHS = ['sty', 'lut', 'mar', 'kwi', 'maj', 'cze', 'lip', 'sie', 'wrz', 'paź', 'lis', 'gru'];
-const ENGLISH_MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+
 
 export const PortfolioChart: React.FC<PortfolioChartProps> = ({
   data,
@@ -92,7 +92,7 @@ export const PortfolioChart: React.FC<PortfolioChartProps> = ({
     onShowAttributionChange?.(val);
   };
   const getContributorLabel = (c: { key: string; label: string }) =>
-    c.key === 'OTHER' ? t('chart.otherContributors', c.label) : c.label;
+    c.key === 'OTHER' ? t('chart.otherContributors') : c.label;
   const { t, i18n } = useTranslation();
   const chartContainerRef = useRef<HTMLDivElement | null>(null);
   const chartRef = useRef<IChartApi | null>(null);
@@ -142,9 +142,9 @@ export const PortfolioChart: React.FC<PortfolioChartProps> = ({
   const firstFuturePoint = useMemo(() => {
     return data.find((d) => d.isFuture);
   }, [data]);
-  const weightedTer = firstFuturePoint?.weightedTer ?? 0.20;
-  const weightedWhtDrag = firstFuturePoint?.weightedWhtDrag ?? 0.25;
-  const diversifiedVol = firstFuturePoint?.diversifiedVolatility ?? 15.0;
+  const weightedTer = firstFuturePoint?.weightedTer;
+  const weightedWhtDrag = firstFuturePoint?.weightedWhtDrag;
+  const diversifiedVol = firstFuturePoint?.diversifiedVolatility;
 
   useEffect(() => {
     if (!chartContainerRef.current || processedData.length === 0 || isCollapsed) return;
@@ -203,14 +203,12 @@ export const PortfolioChart: React.FC<PortfolioChartProps> = ({
             if (d.getMonth() === 0) {
               return `${d.getFullYear()}`;
             }
-            const months = i18n.language.startsWith('pl') ? POLISH_MONTHS : ENGLISH_MONTHS;
-            return months[d.getMonth()] || '';
+            return getShortMonthName(d.getMonth(), i18n.language);
           }
           if (tickMarkType === 2) {
             return '';
           }
-          const months = i18n.language.startsWith('pl') ? POLISH_MONTHS : ENGLISH_MONTHS;
-          return d.getMonth() === 0 ? `${d.getFullYear()}` : months[d.getMonth()] || null;
+          return d.getMonth() === 0 ? `${d.getFullYear()}` : getShortMonthName(d.getMonth(), i18n.language);
         },
       },
       rightPriceScale: {
@@ -253,7 +251,7 @@ export const PortfolioChart: React.FC<PortfolioChartProps> = ({
       lineWidth: 2,
       lastValueVisible: false,
       priceLineVisible: false,
-      title: showAttribution ? t('chart.totalProfitSeries', 'Całkowity zysk') : '',
+      title: showAttribution ? t('chart.totalProfitSeries') : '',
       priceFormat: {
         type: 'custom',
         formatter: (val: number) => {
@@ -335,7 +333,7 @@ export const PortfolioChart: React.FC<PortfolioChartProps> = ({
         priceLineVisible: true,
         priceLineColor: '#38bdf8',
         priceLineStyle: LineStyle.Dashed,
-        title: t('chart.medianP50', 'Mediana P50'),
+        title: t('chart.medianP50'),
       });
       medianSeries.setData(
         futureData.map((d) => ({
@@ -387,7 +385,7 @@ export const PortfolioChart: React.FC<PortfolioChartProps> = ({
           lineWidth: 1,
           lineStyle: LineStyle.Dashed,
           axisLabelVisible: true,
-          title: t('chart.goal', 'Cel'),
+          title: t('chart.goal'),
         });
       }
     } else if (targetGoal && targetGoal > 0 && metricMode === 'PLN' && !showAttribution) {
@@ -397,7 +395,7 @@ export const PortfolioChart: React.FC<PortfolioChartProps> = ({
         lineWidth: 1,
         lineStyle: LineStyle.Dashed,
         axisLabelVisible: true,
-        title: t('chart.goal', 'Cel'),
+        title: t('chart.goal'),
       });
     }
 
@@ -481,10 +479,10 @@ export const PortfolioChart: React.FC<PortfolioChartProps> = ({
           <div className="flex flex-wrap items-center gap-2">
             <LineChart className="w-4 h-4 text-emerald-400" />
             <span className="text-xs font-bold text-zinc-200">
-              {isProjectionActive ? t('chart.titleProjection', 'Historia & Prognoza Portfela (Monte Carlo)') : t('chart.titleHistory', 'Historia wyceny portfela')}
+              {isProjectionActive ? t('chart.titleProjection') : t('chart.titleHistory')}
             </span>
             <span className="text-[10px] font-mono text-zinc-400 bg-zinc-800/80 px-1.5 py-0.5 rounded border border-zinc-700/60">
-              {taxMode === 'NETTO' ? t('chart.taxNettoBadge', 'Netto (Belka 19%)') : t('chart.taxBruttoBadge', 'Brutto')}
+              {taxMode === 'NETTO' ? t('chart.taxNettoBadge') : t('chart.taxBruttoBadge')}
             </span>
             {inflationAdjustMode === 'REAL' && (
               <span className="text-[10px] font-mono text-amber-300 bg-amber-950/70 px-1.5 py-0.5 rounded border border-amber-800/60">
@@ -515,30 +513,30 @@ export const PortfolioChart: React.FC<PortfolioChartProps> = ({
                 <button
                   type="button"
                   className="text-zinc-500 hover:text-zinc-300 transition cursor-pointer p-0.5"
-                  aria-label="Informacje o parametrach ETF"
+                  aria-label={t('chart.equityParams')}
                 >
                   <Info className="w-3.5 h-3.5" />
                 </button>
                 <div className="absolute left-0 top-full mt-1.5 hidden group-hover:flex flex-col gap-1 z-50 bg-zinc-900 border border-zinc-700/80 rounded-lg p-2.5 shadow-2xl text-[11px] font-mono text-zinc-300 w-64 backdrop-blur-md pointer-events-none">
-                  <span className="font-semibold text-white border-b border-zinc-800 pb-1">Parametry części akcyjnej</span>
+                  <span className="font-semibold text-white border-b border-zinc-800 pb-1">{t('chart.equityParams')}</span>
                   <div className="flex justify-between">
-                    <span className="text-zinc-400">Średni ważony TER:</span>
-                    <span className="font-semibold text-sky-300">{weightedTer.toFixed(2)}%</span>
+                    <span className="text-zinc-400">{t('chart.weightedTer')}</span>
+                    <span className="font-semibold text-sky-300">{weightedTer != null ? `${weightedTer.toFixed(2)}%` : '—'}</span>
                   </div>
                   <div className="flex justify-between">
-                    <span className="text-zinc-400">Podatek u źródła (WHT):</span>
-                    <span className="font-semibold text-amber-300">{weightedWhtDrag.toFixed(2)}%</span>
+                    <span className="text-zinc-400">{t('chart.whtTax')}</span>
+                    <span className="font-semibold text-amber-300">{weightedWhtDrag != null ? `${weightedWhtDrag.toFixed(2)}%` : '—'}</span>
                   </div>
                   <div className="flex justify-between">
-                    <span className="text-zinc-400">Łączny drag kosztowy:</span>
-                    <span className="font-semibold text-rose-300">{(weightedTer + weightedWhtDrag).toFixed(2)}%</span>
+                    <span className="text-zinc-400">{t('chart.totalDrag')}</span>
+                    <span className="font-semibold text-rose-300">{weightedTer != null && weightedWhtDrag != null ? `${(weightedTer + weightedWhtDrag).toFixed(2)}%` : '—'}</span>
                   </div>
                   <div className="flex justify-between pt-1 border-t border-zinc-800">
-                    <span className="text-zinc-400">Zmienność (Kowariancja):</span>
-                    <span className="font-semibold text-emerald-300">{diversifiedVol.toFixed(1)}%</span>
+                    <span className="text-zinc-400">{t('chart.volatility')}</span>
+                    <span className="font-semibold text-emerald-300">{diversifiedVol != null ? `${diversifiedVol.toFixed(1)}%` : '—'}</span>
                   </div>
                   <span className="text-[10px] text-zinc-500 mt-0.5 leading-tight">
-                    {t('chart.equityParamsHelp', 'Wyliczane automatycznie na podstawie posiadanych ETF i macierzy korelacji.')}
+                    {t('chart.equityParamsHelp')}
                   </span>
                 </div>
               </div>
@@ -550,7 +548,7 @@ export const PortfolioChart: React.FC<PortfolioChartProps> = ({
               <div className="flex items-baseline gap-1.5 shrink-0">
                 {metricMode === 'PERCENT' ? (
                   <>
-                    <span className="text-[10px] font-mono uppercase text-zinc-400 font-medium">{t('chart.currentReturn', 'BIEŻĄCA STOPA ZWROTU:')}</span>
+                    <span className="text-[10px] font-mono uppercase text-zinc-400 font-medium">{t('chart.currentReturn')}</span>
                     <span className={`text-base font-bold font-mono ${latestHistoricalPoint.returnPct >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
                       {latestHistoricalPoint.returnPct >= 0 ? '+' : ''}{latestHistoricalPoint.returnPct.toFixed(2)}%
                     </span>
@@ -560,7 +558,7 @@ export const PortfolioChart: React.FC<PortfolioChartProps> = ({
                   </>
                 ) : (
                   <>
-                    <span className="text-[10px] font-mono uppercase text-zinc-400 font-medium">{t('chart.currentValuation', 'BIEŻĄCA WYCENA:')}</span>
+                    <span className="text-[10px] font-mono uppercase text-zinc-400 font-medium">{t('chart.currentValuation')}</span>
                     <span className="text-base font-bold font-mono text-white">
                       {formatNumberWithSpaces(latestHistoricalPoint.valuation)} {baseCurrency}
                     </span>
@@ -577,13 +575,13 @@ export const PortfolioChart: React.FC<PortfolioChartProps> = ({
             {hoveredPoint && (
               <div className="flex items-baseline gap-2 bg-[#1c2233] px-2 py-0.5 rounded-md border border-sky-800/80 text-xs font-mono shrink-0">
                 <span className="text-sky-300 font-semibold text-[11px]">
-                  {hoveredPoint.isFuture ? `${t('chart.projection', 'Prognoza:')} ` : ''}{hoveredPoint.dateLabel}
+                  {hoveredPoint.isFuture ? `${t('chart.projection')} ` : ''}{hoveredPoint.dateLabel}
                 </span>
                 <span className="text-white font-bold">
                   {formatNumberWithSpaces(hoveredPoint.valuation)} {baseCurrency}
                 </span>
                 <span className="text-zinc-400 text-[11px]">
-                  ({t('chart.costBasisLabel', 'wkład')}: {formatNumberWithSpaces(hoveredPoint.cost)})
+                  ({t('chart.costBasisLabel')}: {formatNumberWithSpaces(hoveredPoint.cost)})
                 </span>
               </div>
             )}
@@ -612,14 +610,14 @@ export const PortfolioChart: React.FC<PortfolioChartProps> = ({
                   : 'text-zinc-400 hover:text-zinc-200'
               }`}
             >
-              {t('chart.metricReturn', '% Zwrot')}
+              {t('chart.metricReturn')}
             </button>
           </div>
 
           <button
             type="button"
             onClick={() => setShowAttribution(!showAttribution)}
-            title={t('chart.profitAttributionTitle', 'Rozbicie zysku na poszczególne pozycje portfela')}
+            title={t('chart.profitAttributionTitle')}
             className={`px-2 py-1 rounded-lg border text-xs font-mono font-medium transition cursor-pointer flex items-center gap-1.5 ${
               showAttribution
                 ? 'bg-amber-500/20 text-amber-300 font-bold border-amber-500/50 shadow-xs'
@@ -627,7 +625,7 @@ export const PortfolioChart: React.FC<PortfolioChartProps> = ({
             }`}
           >
             <Layers className="w-3.5 h-3.5" />
-            <span>{t('chart.profitAttribution', 'Kontrybucja')}</span>
+            <span>{t('chart.profitAttribution')}</span>
           </button>
 
           {isProjectionActive && (
@@ -641,7 +639,7 @@ export const PortfolioChart: React.FC<PortfolioChartProps> = ({
                     : 'text-zinc-400 hover:text-zinc-200'
                 }`}
               >
-                {t('chart.nominalMode', 'Nominalnie')}
+                {t('chart.nominalMode')}
               </button>
               <button
                 type="button"
@@ -651,9 +649,9 @@ export const PortfolioChart: React.FC<PortfolioChartProps> = ({
                     ? 'bg-amber-950 text-amber-300 font-bold border border-amber-800/80 shadow-xs'
                     : 'text-zinc-400 hover:text-zinc-200'
                 }`}
-                title={t('chart.realModeTitle', 'Wartości przyszłe zdyskontowane o inflację (siła nabywcza)')}
+                title={t('chart.realModeTitle')}
               >
-                {t('chart.realMode', 'Po inflacji')}
+                {t('chart.realMode')}
               </button>
             </div>
           )}
@@ -688,7 +686,7 @@ export const PortfolioChart: React.FC<PortfolioChartProps> = ({
                   key={h}
                   type="button"
                   onClick={() => onProjectionHorizonChange(active ? 'OFF' : h)}
-                  title={active ? t('chart.turnOffProjection', 'Kliknij, aby wyłączyć prognozę') : t('chart.enableProjection', { label, defaultValue: `Włącz prognozę na ${label}` })}
+                  title={active ? t('chart.turnOffProjection') : t('chart.enableProjection', { label })}
                   className={`px-2 py-0.5 rounded-md text-[11px] font-medium transition cursor-pointer ${
                     active
                       ? 'bg-sky-500 text-zinc-950 font-bold shadow-xs'
@@ -704,7 +702,7 @@ export const PortfolioChart: React.FC<PortfolioChartProps> = ({
           <button
             type="button"
             onClick={() => chartRef.current?.timeScale().fitContent()}
-            title={t('chart.fitContent', 'Dopasuj wykres do ekranu (Reset zoom)')}
+            title={t('chart.fitContent')}
             className="p-1 rounded-lg bg-zinc-900 border border-zinc-800 text-zinc-400 hover:text-zinc-200 transition cursor-pointer"
           >
             <Maximize2 className="w-3.5 h-3.5" />
@@ -713,7 +711,7 @@ export const PortfolioChart: React.FC<PortfolioChartProps> = ({
           <button
             type="button"
             onClick={() => setIsCollapsed(!isCollapsed)}
-            title={isCollapsed ? t('chart.expandChart', 'Rozwiń wykres') : t('chart.collapseChart', 'Zwiń wykres')}
+            title={isCollapsed ? t('chart.expandChart') : t('chart.collapseChart')}
             className="p-1 rounded-lg bg-zinc-900 border border-zinc-800 text-zinc-400 hover:text-zinc-200 transition cursor-pointer"
           >
             {isCollapsed ? <ChevronDown className="w-3.5 h-3.5" /> : <ChevronUp className="w-3.5 h-3.5" />}
@@ -728,7 +726,7 @@ export const PortfolioChart: React.FC<PortfolioChartProps> = ({
           <div className="px-4 py-2 bg-[#0c0e14] border-b border-zinc-800/80 text-xs font-mono">
             <div className="flex items-center justify-between text-[11px] mb-1.5">
               <span className="text-zinc-400 font-medium">
-                {t('chart.profitAttributionBreakdown', 'Składniki zysku')} ({activePt.dateLabel}):
+                {t('chart.profitAttributionBreakdown')} ({activePt.dateLabel}):
               </span>
               <span className={`font-semibold ${activePt.profit >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
                 {metricMode === 'PLN'
@@ -782,7 +780,7 @@ export const PortfolioChart: React.FC<PortfolioChartProps> = ({
         <div className="px-4 py-2 bg-[#0e1017] border-b border-zinc-800/80 text-xs font-mono flex flex-wrap items-center justify-between gap-3">
           <div className="flex flex-wrap items-center gap-3 sm:gap-4">
             <div className="flex items-center gap-1.5">
-              <span className="text-zinc-400 text-[11px] font-medium select-none">{t('chart.contributionLabel', 'Dopłata:')}</span>
+              <span className="text-zinc-400 text-[11px] font-medium select-none">{t('chart.contributionLabel')}</span>
               <div className="flex items-center rounded-md border border-zinc-750 bg-zinc-900/90 focus-within:border-sky-500 focus-within:ring-1 focus-within:ring-sky-500/20 transition">
                 <input
                   type="number"
@@ -800,15 +798,15 @@ export const PortfolioChart: React.FC<PortfolioChartProps> = ({
             </div>
 
             <div className="flex items-center gap-1.5">
-              <span className="text-zinc-400 text-[11px] font-medium select-none">{t('chart.allocationLabel', 'Alokacja:')}</span>
+              <span className="text-zinc-400 text-[11px] font-medium select-none">{t('chart.allocationLabel')}</span>
               <div className="flex items-center gap-2 bg-zinc-900/90 border border-zinc-750 px-2.5 py-1 rounded-md">
                 <button
                   type="button"
                   onClick={() => onDcaBondShareChange(1)}
-                  title={t('chart.bonds100', '100% Obligacje')}
+                  title={t('chart.bonds100')}
                   className="text-amber-400 hover:text-amber-300 transition font-semibold text-[10px] min-w-[48px] text-right select-none"
                 >
-                  {t('chart.bondsPct', { pct: Math.round(dcaBondShare * 100), defaultValue: `Obl. ${Math.round(dcaBondShare * 100)}%` })}
+                  {t('chart.bondsPct', { pct: Math.round(dcaBondShare * 100) })}
                 </button>
                 <input
                   type="range"
@@ -825,7 +823,7 @@ export const PortfolioChart: React.FC<PortfolioChartProps> = ({
                 <button
                   type="button"
                   onClick={() => onDcaBondShareChange(0)}
-                  title={t('chart.etf100', '100% ETF')}
+                  title={t('chart.etf100')}
                   className="text-emerald-400 hover:text-emerald-300 transition font-semibold text-[10px] min-w-[48px] select-none text-left"
                 >
                   ETF {Math.round((1 - dcaBondShare) * 100)}%
@@ -836,13 +834,13 @@ export const PortfolioChart: React.FC<PortfolioChartProps> = ({
             <div className="flex items-center gap-1.5">
               <div className="flex items-center rounded-md border border-purple-900/60 bg-zinc-900/90 focus-within:border-purple-400 transition">
                 <span className="pl-2 pr-1 text-[11px] text-purple-300 flex items-center gap-1.5 select-none font-medium">
-                  <Target className="w-3.5 h-3.5 text-purple-400" /> {t('chart.targetLabel', 'Cel:')}
+                  <Target className="w-3.5 h-3.5 text-purple-400" /> {t('chart.targetLabel')}
                 </span>
                 <input
                   type="text"
                   inputMode="numeric"
                   value={targetGoal != null ? formatNumberWithSpaces(targetGoal) : ''}
-                  placeholder={t('chart.targetOptional', 'opcjonalny')}
+                  placeholder={t('chart.targetOptional')}
                   onChange={(e) => {
                     const digits = e.target.value.replace(/\D/g, '');
                     onTargetGoalChange?.(digits ? Number(digits) : null);
@@ -856,7 +854,7 @@ export const PortfolioChart: React.FC<PortfolioChartProps> = ({
                   <button
                     type="button"
                     onClick={() => onTargetGoalChange?.(null)}
-                    title={t('chart.removeTarget', 'Usuń cel')}
+                    title={t('chart.removeTarget')}
                     className="px-1.5 py-1 text-zinc-400 hover:text-white transition cursor-pointer"
                   >
                     <X className="w-3 h-3" />
@@ -866,32 +864,32 @@ export const PortfolioChart: React.FC<PortfolioChartProps> = ({
             </div>
 
             <div className="flex items-center gap-1.5">
-              <span className="text-zinc-400 text-[11px] font-medium select-none">{t('chart.etfCagrLabel', 'CAGR ETF:')}</span>
+              <span className="text-zinc-400 text-[11px] font-medium select-none">{t('chart.etfCagrLabel')}</span>
               <div className="relative">
                 <select
                   value={expectedEtfReturn}
                   onChange={(e) => onExpectedEtfReturnChange(Number(e.target.value))}
                   className="bg-zinc-900/90 border border-zinc-750 text-emerald-400 font-bold text-xs rounded-md px-2 py-1 pr-6 focus:outline-none focus:border-emerald-500 cursor-pointer appearance-none"
                 >
-                  {empiricalStats && (
+                  {empiricalStats && empiricalStats.weightedReturn != null && (
                     <option
                       value={Math.round(empiricalStats.weightedReturn * 1000) / 10}
                       className="bg-zinc-900 text-zinc-200"
                     >
-                      {(empiricalStats.weightedReturn * 100).toFixed(1)}% ({t('chart.portfolioCagr', 'Portfel')})
+                      {(empiricalStats.weightedReturn * 100).toFixed(1)}% ({t('chart.portfolioCagr')})
                     </option>
                   )}
-                  {(!empiricalStats || Math.round(empiricalStats.weightedReturn * 1000) / 10 !== expectedEtfReturn) &&
+                  {(!empiricalStats || empiricalStats.weightedReturn == null || Math.round(empiricalStats.weightedReturn * 1000) / 10 !== expectedEtfReturn) &&
                     ![6.0, 7.5, 8.5, 10.0, 12.0].includes(expectedEtfReturn) && (
                       <option value={expectedEtfReturn} className="bg-zinc-900 text-zinc-200">
-                        {expectedEtfReturn.toFixed(1)}% ({t('chart.customCagr', 'Własny')})
+                        {expectedEtfReturn.toFixed(1)}% ({t('chart.customCagr')})
                       </option>
                     )}
-                  <option value={6.0} className="bg-zinc-900 text-zinc-200">6.0% ({t('chart.conservativeCagr', 'Konserwatywny')})</option>
-                  <option value={7.5} className="bg-zinc-900 text-zinc-200">7.5% ({t('chart.balancedCagr', 'Zrównoważony')})</option>
-                  <option value={8.5} className="bg-zinc-900 text-zinc-200">8.5% ({t('chart.msciWorldCagr', 'MSCI World')})</option>
-                  <option value={10.0} className="bg-zinc-900 text-zinc-200">10.0% ({t('chart.sp500Cagr', 'S&P 500')})</option>
-                  <option value={12.0} className="bg-zinc-900 text-zinc-200">12.0% ({t('chart.dynamicCagr', 'Dynamiczny')})</option>
+                  <option value={6.0} className="bg-zinc-900 text-zinc-200">6.0% ({t('chart.conservativeCagr')})</option>
+                  <option value={7.5} className="bg-zinc-900 text-zinc-200">7.5% ({t('chart.balancedCagr')})</option>
+                  <option value={8.5} className="bg-zinc-900 text-zinc-200">8.5% ({t('chart.msciWorldCagr')})</option>
+                  <option value={10.0} className="bg-zinc-900 text-zinc-200">10.0% ({t('chart.sp500Cagr')})</option>
+                  <option value={12.0} className="bg-zinc-900 text-zinc-200">12.0% ({t('chart.dynamicCagr')})</option>
                 </select>
                 <ChevronDown className="w-3 h-3 text-zinc-400 absolute right-1.5 top-1/2 -translate-y-1/2 pointer-events-none" />
               </div>
@@ -900,11 +898,21 @@ export const PortfolioChart: React.FC<PortfolioChartProps> = ({
             {empiricalStats && (
               <div className="px-2 py-0.5 rounded-md bg-zinc-900 border border-zinc-750 text-[10px] text-zinc-300 font-mono flex items-center gap-1.5 select-none">
                 <span>ETF:</span>
-                <span className="text-zinc-400">TER {(empiricalStats.weightedTer * 100).toFixed(2)}%</span>
-                <span>·</span>
-                <span className="text-zinc-400">σ {(empiricalStats.weightedVolatility * 100).toFixed(1)}%</span>
-                <span>·</span>
-                <span className="text-zinc-400">P/E {empiricalStats.weightedPe.toFixed(1)}</span>
+                {empiricalStats.weightedTer != null && (
+                  <span className="text-zinc-400">TER {(empiricalStats.weightedTer * 100).toFixed(2)}%</span>
+                )}
+                {empiricalStats.weightedVolatility != null && (
+                  <>
+                    <span>·</span>
+                    <span className="text-zinc-400">σ {(empiricalStats.weightedVolatility * 100).toFixed(1)}%</span>
+                  </>
+                )}
+                {empiricalStats.weightedPe != null && (
+                  <>
+                    <span>·</span>
+                    <span className="text-zinc-400">P/E {empiricalStats.weightedPe.toFixed(1)}</span>
+                  </>
+                )}
               </div>
             )}
           </div>
@@ -918,16 +926,16 @@ export const PortfolioChart: React.FC<PortfolioChartProps> = ({
                   ? 'bg-zinc-800 border-zinc-600 text-white'
                   : 'bg-zinc-900/90 border-zinc-750 text-zinc-400 hover:text-zinc-200'
               }`}
-              title={t('chart.advancedTooltip', 'Opcje zaawansowane symulacji')}
+              title={t('chart.advancedTooltip')}
             >
               <Settings2 className="w-3 h-3" />
-              <span className="text-[10px]">{t('chart.advancedAssumptions', 'Zaawansowane')}</span>
+              <span className="text-[10px]">{t('chart.advancedAssumptions')}</span>
             </button>
 
             {showAdvanced && (
               <div className="absolute right-0 top-full mt-1.5 z-40 bg-zinc-900 border border-zinc-750 rounded-lg p-3 shadow-2xl text-xs font-mono min-w-[260px]">
                 <span className="text-[10px] text-zinc-400 font-semibold uppercase tracking-wider block mb-2">
-                  {t('chart.advancedOptions', 'Opcje zaawansowane')}
+                  {t('chart.advancedOptions')}
                 </span>
                 <label className="flex items-center gap-2 cursor-pointer select-none">
                   <input
@@ -945,10 +953,10 @@ export const PortfolioChart: React.FC<PortfolioChartProps> = ({
                   >
                     {bondRollover && <Check className="w-2.5 h-2.5 stroke-[3]" />}
                   </div>
-                  <span className="text-[11px] text-zinc-200">{t('chart.bondRolloverLabel', 'Automatyczny rollover obligacji')}</span>
+                  <span className="text-[11px] text-zinc-200">{t('chart.bondRolloverLabel')}</span>
                 </label>
                 <p className="text-[10px] text-zinc-500 mt-1 leading-normal">
-                  {t('chart.bondRolloverHelp', 'Reinwestycja kapitału po zapadnięciu (3 lata TOS / 10 lat EDO) w nową serię obligacji.')}
+                  {t('chart.bondRolloverHelp')}
                 </p>
               </div>
             )}
@@ -962,7 +970,7 @@ export const PortfolioChart: React.FC<PortfolioChartProps> = ({
             <div className="absolute top-4 left-4 z-30 pointer-events-none bg-zinc-950/95 border border-zinc-750/90 rounded-lg p-2.5 shadow-2xl text-xs font-mono backdrop-blur-md min-w-[230px]">
               <div className="flex items-center justify-between border-b border-zinc-800 pb-1 mb-1.5 text-zinc-300">
                 <span className="font-semibold text-sky-400">
-                  {hoveredPoint.isFuture ? `${t('chart.projection', 'Prognoza:')} ` : ''}{hoveredPoint.dateLabel}
+                  {hoveredPoint.isFuture ? `${t('chart.projection')} ` : ''}{hoveredPoint.dateLabel}
                 </span>
                 {hoveredPoint.isFuture && (
                   <span className="text-[10px] text-zinc-500 uppercase">Monte Carlo</span>
@@ -972,7 +980,7 @@ export const PortfolioChart: React.FC<PortfolioChartProps> = ({
               <div className="space-y-1 text-[11px]">
                 <div className="flex justify-between items-center text-white">
                   <span className="text-zinc-400">
-                    {hoveredPoint.isFuture ? t('chart.medianLabel', 'Mediana (P50):') : t('chart.portfolioValuation', 'Wycena portfela:')}
+                    {hoveredPoint.isFuture ? t('chart.medianLabel') : t('chart.portfolioValuation')}
                   </span>
                   <span className="font-bold text-sm text-sky-300">
                     {metricMode === 'PLN'
@@ -982,14 +990,14 @@ export const PortfolioChart: React.FC<PortfolioChartProps> = ({
                 </div>
 
                 <div className="flex justify-between items-center text-zinc-400">
-                  <span>{t('chart.ownContributionDca', 'Wkład własny (DCA):')}</span>
+                  <span>{t('chart.ownContributionDca')}</span>
                   <span className="font-mono text-zinc-300">
                     {formatNumberWithSpaces(hoveredPoint.cost)} {baseCurrency}
                   </span>
                 </div>
 
                 <div className="flex justify-between items-center pt-1 border-t border-zinc-800/60">
-                  <span className="text-zinc-400">{t('chart.netProfitLabel', 'Zysk netto:')}</span>
+                  <span className="text-zinc-400">{t('chart.netProfitLabel')}</span>
                   <span
                     className={`font-semibold ${
                       hoveredPoint.profit >= 0 ? 'text-emerald-400' : 'text-rose-400'
@@ -1004,7 +1012,7 @@ export const PortfolioChart: React.FC<PortfolioChartProps> = ({
                 {showAttribution && !hoveredPoint.isFuture && hoveredPoint.contributors && hoveredPoint.contributors.length > 0 && (
                   <div className="pt-1.5 mt-1 border-t border-zinc-800/80 space-y-1 text-[10px]">
                     <div className="text-[10px] text-zinc-400 font-medium pb-0.5 border-b border-zinc-800/40">
-                      {t('chart.profitAttributionBreakdown', 'Składniki zysku')}:
+                      {t('chart.profitAttributionBreakdown')}:
                     </div>
                     {hoveredPoint.contributors
                       .map((c, originalIdx) => ({ c, originalIdx }))
@@ -1036,7 +1044,7 @@ export const PortfolioChart: React.FC<PortfolioChartProps> = ({
                 {hoveredPoint.isFuture && (
                   <div className="pt-1.5 mt-1 border-t border-zinc-800/80 space-y-0.5 text-[10px]">
                     <div className="flex justify-between text-sky-300/80">
-                      <span>{t('chart.bullMarket', 'Hossa (P90):')}</span>
+                      <span>{t('chart.bullMarket')}</span>
                       <span className="font-mono font-medium">
                         {metricMode === 'PLN'
                           ? `${formatNumberWithSpaces(hoveredPoint.netP90 ?? 0)} ${baseCurrency}`
@@ -1044,7 +1052,7 @@ export const PortfolioChart: React.FC<PortfolioChartProps> = ({
                       </span>
                     </div>
                     <div className="flex justify-between text-sky-400/70">
-                      <span>{t('chart.bearMarket', 'Bessa (P10):')}</span>
+                      <span>{t('chart.bearMarket')}</span>
                       <span className="font-mono font-medium">
                         {metricMode === 'PLN'
                           ? `${formatNumberWithSpaces(hoveredPoint.netP10 ?? 0)} ${baseCurrency}`
@@ -1071,7 +1079,7 @@ export const PortfolioChart: React.FC<PortfolioChartProps> = ({
                   style={{ left: `${todayXCoord}px` }}
                 >
                   <span className="text-[9px] font-mono font-bold text-sky-300 bg-[#0c1e30] px-1 py-0.5 rounded border border-sky-500/70 shadow-xs">
-                    {t('chart.today', 'Dziś')}
+                    {t('chart.today')}
                   </span>
                 </div>
               </div>
@@ -1084,7 +1092,7 @@ export const PortfolioChart: React.FC<PortfolioChartProps> = ({
                 <>
                   <div className="flex items-center gap-1.5">
                     <span className="w-2.5 h-0.5 bg-emerald-400 inline-block rounded-full"></span>
-                    <span>{t('chart.totalProfitSeries', 'Całkowity zysk')}</span>
+                    <span>{t('chart.totalProfitSeries')}</span>
                   </div>
                   {latestHistoricalPoint?.contributors?.map((c, idx) => {
                     const color = CONTRIBUTOR_COLORS[idx % CONTRIBUTOR_COLORS.length];
@@ -1099,7 +1107,7 @@ export const PortfolioChart: React.FC<PortfolioChartProps> = ({
               ) : (
                 <div className="flex items-center gap-1.5">
                   <span className="w-2.5 h-0.5 bg-emerald-400 inline-block rounded-full"></span>
-                  <span>{t('chart.valuationHistory', 'Historia wyceny')}</span>
+                  <span>{t('chart.valuationHistory')}</span>
                 </div>
               )}
 
@@ -1107,11 +1115,11 @@ export const PortfolioChart: React.FC<PortfolioChartProps> = ({
                 <>
                   <div className="flex items-center gap-1.5">
                     <span className="w-2.5 h-0.5 bg-sky-400 inline-block rounded-full"></span>
-                    <span>{t('chart.medianP50', 'Mediana P50')}</span>
+                    <span>{t('chart.medianP50')}</span>
                   </div>
                   <div className="flex items-center gap-1.5">
                     <span className="w-2.5 h-0.5 border-b border-sky-400 border-dotted inline-block"></span>
-                    <span>{t('chart.bandP10P90', 'Wstęga P10-P90')}</span>
+                    <span>{t('chart.bandP10P90')}</span>
                   </div>
                 </>
               )}
@@ -1119,14 +1127,14 @@ export const PortfolioChart: React.FC<PortfolioChartProps> = ({
               {metricMode === 'PLN' && !showAttribution && (
                 <div className="flex items-center gap-1.5">
                   <span className="w-2.5 h-0.5 border-b border-zinc-400 border-dashed inline-block"></span>
-                  <span>{isProjectionActive ? t('chart.contributionWithDca', 'Wkład (+DCA)') : t('chart.contributionCapital', 'Wkład (kapitał)')}</span>
+                  <span>{isProjectionActive ? t('chart.contributionWithDca') : t('chart.contributionCapital')}</span>
                 </div>
               )}
 
               {targetGoal && metricMode === 'PLN' && !showAttribution && (
                 <div className="flex items-center gap-1.5">
                   <span className="w-2.5 h-0.5 border-b border-purple-400 border-dashed inline-block"></span>
-                  <span className="text-purple-300 font-medium">{t('chart.targetGoalLabel', { val: formatNumberWithSpaces(targetGoal / 1000), currency: baseCurrency, defaultValue: `Cel (${formatNumberWithSpaces(targetGoal / 1000)}k ${baseCurrency})` })}</span>
+                  <span className="text-purple-300 font-medium">{t('chart.targetGoalLabel', { val: formatNumberWithSpaces(targetGoal / 1000), currency: baseCurrency })}</span>
                 </div>
               )}
             </div>

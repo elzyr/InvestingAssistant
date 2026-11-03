@@ -25,8 +25,8 @@ export interface MonthlyReportRecord {
   returnNetPct: number;
   profitNetMom: number;
   returnNetMomPct: number;
-  cpiInflation: number;
-  realProfitPct: number;
+  cpiInflation: number | null;
+  realProfitPct: number | null;
   status: ReportMonthStatus;
   breakdown: MonthlyCategoryBreakdown[];
   baseCurrency?: string;
@@ -41,9 +41,9 @@ export interface AnnualSummaryData {
   ytdReturnGrossPct: number;
   ytdProfitNet: number;
   ytdReturnNetPct: number;
-  ytdRealReturnPct: number;
+  ytdRealReturnPct: number | null;
   ytdTwr?: number;
-  avgCpi: number;
+  avgCpi: number | null;
   baseCurrency?: string;
 }
 

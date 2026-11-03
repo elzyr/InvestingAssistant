@@ -36,6 +36,11 @@ export interface EtfProfile {
   category: EtfCategory;
 }
 
+export function isBondInstrument(inst?: { type?: string; symbol?: string } | null): boolean {
+  if (!inst) return false;
+  return inst.type === 'BOND' || Boolean(inst.symbol?.startsWith('PL_BOND'));
+}
+
 export function isBondItem(
   item: {
     bondRate?: number | null;

@@ -14,6 +14,8 @@ import { PositionsTable } from '../components/dashboard/PositionsTable.tsx';
 import { generateUnifiedPortfolioTimeline } from '../utils/engines/timeline/index.ts';
 import { calculateBondCurrentPrice } from '../utils/domain/bondPricing.ts';
 import { isBondItem } from '../utils/domain/assets.ts';
+import { isIkePortfolio } from '../utils/domain/tax.ts';
+import { standardizeDate } from '../utils/domain/dates.ts';
 import {
   buildDashboardPositions,
   buildDashboardSummary,
@@ -34,7 +36,7 @@ import type { TransactionResponse } from '../types/portfolio.ts';
 import type { PortfolioStatsResponse } from '../types/analytics.types.ts';
 
 export const DashboardPage = () => {
-  const { t } = useTranslation();
+  const { t, i18n } = useTranslation();
 
   const {
     dispatch,
@@ -174,8 +176,7 @@ export const DashboardPage = () => {
           const dates = historicalSortedDates[inst.symbol];
           const dateMap = historicalPrices[inst.symbol];
           if (dates && dates.length > 0) {
-            const dNow = new Date(nowTimestamp);
-            const todayDateStr = `${dNow.getFullYear()}-${String(dNow.getMonth() + 1).padStart(2, '0')}-${String(dNow.getDate()).padStart(2, '0')}`;
+            const todayDateStr = standardizeDate(nowTimestamp);
             const lastDate = dates[dates.length - 1];
             if (lastDate >= todayDateStr && dates.length >= 2) {
               previousPrice = dateMap[dates[dates.length - 2]] ?? currentPrice;
@@ -271,7 +272,7 @@ export const DashboardPage = () => {
           setRawEmpiricalStats({ requestKey: empiricalRequestKey, data: stats });
           if (activePortfolioId && populatedPortfolioRef.current !== activePortfolioId) {
             populatedPortfolioRef.current = activePortfolioId;
-            setExpectedEtfReturn(Math.round(stats.weightedReturn * 1000) / 10);
+            if (stats.weightedReturn != null) { setExpectedEtfReturn(Math.round(stats.weightedReturn * 1000) / 10); }
           }
         }
       })
@@ -298,12 +299,12 @@ export const DashboardPage = () => {
       const avgMonthly = totalPortfolioCost / monthsElapsed;
       return Math.max(100, Math.round(avgMonthly / 100) * 100);
     }
-    return 2000;
+    return 0;
   }, [transactions, totalPortfolioCost, nowTimestamp]);
 
   const monthlyDca = userMonthlyDca ?? defaultDca;
 
-  const isIkeAccount = activePortfolio?.name.toLowerCase().includes('ike') || false;
+  const isIkeAccount = isIkePortfolio(activePortfolio);
   const shouldApplyTax = taxMode === 'NETTO' && !isIkeAccount;
 
   const dashboardPositions = useMemo(
@@ -316,8 +317,10 @@ export const DashboardPage = () => {
         rates,
         shouldApplyTax,
         nowTimestamp,
+        t,
+        locale: i18n.language,
       }),
-    [enrichedHoldings, transactions, totalPortfolioValue, baseCurrency, rates, shouldApplyTax, nowTimestamp]
+    [enrichedHoldings, transactions, totalPortfolioValue, baseCurrency, rates, shouldApplyTax, nowTimestamp, t, i18n.language]
   );
 
   const dashboardSummary = useMemo(
@@ -376,14 +379,16 @@ export const DashboardPage = () => {
       monthlyDca,
       dcaBondShare,
       expectedEtfReturn,
-      etfVolatility: empiricalStats ? Math.round(empiricalStats.weightedVolatility * 1000) / 10 : 15.0,
-      empiricalTer: empiricalStats ? Math.round(empiricalStats.weightedTer * 10000) / 100 : undefined,
+      etfVolatility: empiricalStats?.weightedVolatility != null ? Math.round(empiricalStats.weightedVolatility * 1000) / 10 : undefined,
+      empiricalTer: empiricalStats?.weightedTer != null ? Math.round(empiricalStats.weightedTer * 10000) / 100 : undefined,
+      correlationMatrix: empiricalStats?.correlationMatrix,
       bondRollover,
       isIkeAccount,
       historicalPrices,
       historicalSortedDates,
       inflationAdjustMode,
       targetGoal,
+      locale: i18n.language,
     });
   }, [
     transactions,
@@ -408,6 +413,7 @@ export const DashboardPage = () => {
     inflationAdjustMode,
     targetGoal,
     empiricalStats,
+    i18n.language,
   ]);
 
   const filteredPositions = useMemo(() => {

@@ -14,7 +14,14 @@
     "atPrice": "po",
     "costBasis": "Wkład",
     "capital": "kapitał",
-    "today": "dzisiaj"
+    "today": "dzisiaj",
+    "user": "Użytkownik",
+    "defaultPortfolioName": "Główny",
+    "currencies": {
+      "pln": "PLN (Polski złoty)",
+      "eur": "EUR (Euro)",
+      "usd": "USD (Dolar amerykański)"
+    }
   },
   "nav": {
     "overview": "Przegląd",
@@ -113,6 +120,7 @@
     "vintage": "Rocznik",
     "ofPortfolio": "portfela",
     "interest": "Oprocentowanie",
+    "interestAccrued": "Odsetki",
     "inflationIndexed": "Indeksowane",
     "antiInflation": "Antyinflacyjne",
     "fixedRate": "Stałe oprocentowanie",
@@ -122,7 +130,15 @@
     "fourYear": "COI (4-letnie)",
     "threeYear": "TOS (3-letnie)",
     "bondsFamily": "{{family}} Obligacje",
-    "ikeTaxFree": "IKE (zwolnione z Belki)"
+    "ikeTaxFree": "IKE (zwolnione z Belki)",
+    "net": "Netto",
+    "gross": "Brutto",
+    "priceUnavailable": "Brak aktualnej wyceny rynkowej (użyto ceny zakupu)",
+    "sortName": "Nazwa",
+    "sortValue": "Wartość",
+    "sortProfit": "Zysk nominalny",
+    "sortReturn": "Stopa zwrotu %",
+    "sortWeight": "Waga w portfelu"
   },
   "monteCarlo": {
     "title": "Stress-Testing Portfela: „Wehikuł Czasu”",
@@ -231,7 +247,9 @@
     "catPlStocks": "Akcje PL",
     "catUsStocks": "Akcje US",
     "catEmerging": "ETF Rozwijające",
-    "catOther": "Inne aktywa"
+    "catOther": "Inne aktywa",
+    "selectPortfolioAria": "Wybierz portfel",
+    "selectYearAria": "Wybierz rok raportu"
   },
   "transactionHistory": {
     "title": "Historia Transakcji",
@@ -320,7 +338,8 @@
     "errorCreateFailed": "Nie udało się zapisać transakcji",
     "errorDeleteFailed": "Nie udało się usunąć transakcji",
     "errorLoadingInstruments": "Błąd ładowania instrumentów",
-    "optional": "opcjonalnie"
+    "optional": "opcjonalnie",
+    "typeDividend": "Dywidenda"
   },
   "chart": {
     "profitAttribution": "Kontrybucja",
@@ -399,6 +418,22 @@
     "currencyLabel": "Waluta bazowa",
     "submit": "Utwórz portfel",
     "nameRequired": "Nazwa portfela jest wymagana",
-    "createError": "Błąd tworzenia portfela"
+    "createError": "Błąd tworzenia portfela",
+    "accountTypeLabel": "Typ konta",
+    "accountTypeStandard": "Standardowe",
+    "accountTypeIke": "IKE",
+    "accountTypeIkze": "IKZE"
+  },
+  "errors": {
+    "fetchPortfolios": "Nie udało się pobrać portfeli",
+    "fetchPositions": "Nie udało się pobrać pozycji",
+    "fetchTransactions": "Nie udało się pobrać transakcji",
+    "fetchInflation": "Nie udało się pobrać stopy inflacji",
+    "saveTransaction": "Nie udało się zapisać transakcji",
+    "updateTransaction": "Nie udało się zaktualizować transakcji",
+    "deleteTransaction": "Nie udało się usunąć transakcji",
+    "createPortfolio": "Nie udało się utworzyć portfela",
+    "fetchHistory": "Nie udało się pobrać historii dla {{symbol}}",
+    "generalError": "Wystąpił błąd podczas przetwarzania"
   }
 }

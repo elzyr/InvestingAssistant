@@ -1,6 +1,7 @@
 import React, { useState, useMemo } from 'react';
 import { useTranslation } from 'react-i18next';
 import type { ReportViewMode } from '../types/reports.types.ts';
+import { isIkePortfolio } from '../utils/domain/tax.ts';
 import {
   extractAvailableYears,
   generateRealAnnualSummary,
@@ -51,9 +52,7 @@ export const MonthlyReportsPage: React.FC = () => {
     ? availableYears[0]
     : selectedYear;
 
-  const isIkeAccount = useMemo(() => {
-    return activePortfolio?.name?.toLowerCase().includes('ike') ?? false;
-  }, [activePortfolio]);
+  const isIkeAccount = useMemo(() => isIkePortfolio(activePortfolio), [activePortfolio]);
 
   
   const summary = useMemo(() => {
@@ -125,7 +124,7 @@ export const MonthlyReportsPage: React.FC = () => {
               <select
                 value={activePortfolioId || ''}
                 onChange={(e) => dispatch(setActivePortfolioId(e.target.value))}
-                aria-label="Wybierz portfel"
+                aria-label={t('reports.selectPortfolioAria')}
                 className="appearance-none bg-zinc-900 border border-zinc-700/80 text-zinc-200 text-xs sm:text-sm font-semibold rounded-lg pl-8 pr-8 py-2 cursor-pointer hover:border-zinc-500 focus:outline-none focus:ring-1 focus:ring-emerald-500"
               >
                 {portfolios.map((p) => (
@@ -146,7 +145,7 @@ export const MonthlyReportsPage: React.FC = () => {
                 setSelectedYear(Number(e.target.value));
                 setUserSelectedMonthIndex(null);
               }}
-              aria-label="Wybierz rok raportu"
+              aria-label={t('reports.selectYearAria')}
               className="appearance-none bg-zinc-900 border border-zinc-700/80 text-zinc-200 text-xs sm:text-sm font-semibold rounded-lg pl-3 pr-8 py-2 cursor-pointer hover:border-zinc-500 focus:outline-none focus:ring-1 focus:ring-emerald-500"
             >
               {availableYears.map((y) => (
@@ -264,7 +263,7 @@ export const MonthlyReportsPage: React.FC = () => {
                       {selectedRecord.monthName} {selectedRecord.year}
                     </h2>
                     <span className="text-xs text-zinc-400">
-                      {t('reports.sheetSubtitle')} &bull; {activePortfolio?.name || 'Główny'}
+                      {t('reports.sheetSubtitle')} &bull; {activePortfolio?.name || t('common.defaultPortfolioName')}
                     </span>
                   </div>
                 </div>

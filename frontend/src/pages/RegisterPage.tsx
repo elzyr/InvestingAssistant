@@ -146,9 +146,9 @@ export const RegisterPage = () => {
                 onChange={handleChange}
                 className="w-full bg-zinc-900 border border-zinc-800 rounded px-3 py-2 text-sm text-zinc-100 focus:outline-none focus:border-zinc-500 transition cursor-pointer"
               >
-                <option value="PLN">PLN (Polski Złoty)</option>
-                <option value="EUR">EUR (Euro)</option>
-                <option value="USD">USD (Dolar Amerykański)</option>
+                <option value="PLN">{t('common.currencies.pln')}</option>
+                <option value="EUR">{t('common.currencies.eur')}</option>
+                <option value="USD">{t('common.currencies.usd')}</option>
               </select>
             </div>
 

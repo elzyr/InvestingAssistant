@@ -61,55 +61,45 @@ public class GlobalExceptionHandler extends ResponseEntityExceptionHandler {
     return messageOrKey != null ? messageOrKey : "";
   }
 
+  private ResponseEntity<ErrorResponse> buildError(HttpStatusCode status, String message) {
+    return ResponseEntity.status(status).body(new ErrorResponse(message, Instant.now().toEpochMilli()));
+  }
+
   @ExceptionHandler(ResourceNotFoundException.class)
   public ResponseEntity<ErrorResponse> handleResourceNotFound(ResourceNotFoundException ex) {
-    String message = resolveMessage(ex.getMessage(), "error.resource_not_found");
-    return ResponseEntity.status(HttpStatus.NOT_FOUND)
-        .body(new ErrorResponse(message, Instant.now().toEpochMilli()));
+    return buildError(HttpStatus.NOT_FOUND, resolveMessage(ex.getMessage(), "error.resource_not_found"));
   }
 
   @ExceptionHandler(AccessDeniedException.class)
   public ResponseEntity<ErrorResponse> handleAccessDenied(AccessDeniedException ex) {
-    String message = resolveMessage(ex.getMessage(), "error.access_denied");
-    return ResponseEntity.status(HttpStatus.FORBIDDEN)
-        .body(new ErrorResponse(message, Instant.now().toEpochMilli()));
+    return buildError(HttpStatus.FORBIDDEN, resolveMessage(ex.getMessage(), "error.access_denied"));
   }
 
   @ExceptionHandler(InsufficientPositionException.class)
   public ResponseEntity<ErrorResponse> handleInsufficientPosition(InsufficientPositionException ex) {
-    String message = resolveMessage(ex.getMessage(), "error.insufficient_position");
-    return ResponseEntity.status(HttpStatus.BAD_REQUEST)
-        .body(new ErrorResponse(message, Instant.now().toEpochMilli()));
+    return buildError(HttpStatus.BAD_REQUEST, resolveMessage(ex.getMessage(), "error.insufficient_position"));
   }
 
   @ExceptionHandler(IllegalArgumentException.class)
   public ResponseEntity<ErrorResponse> handleIllegalArgument(IllegalArgumentException ex) {
-    String message = resolveMessage(ex.getMessage(), "error.bad_request");
-    return ResponseEntity.status(HttpStatus.BAD_REQUEST)
-        .body(new ErrorResponse(message, Instant.now().toEpochMilli()));
+    return buildError(HttpStatus.BAD_REQUEST, resolveMessage(ex.getMessage(), "error.bad_request"));
   }
 
   @ExceptionHandler(DataIntegrityViolationException.class)
   public ResponseEntity<ErrorResponse> handleDataIntegrityViolation(DataIntegrityViolationException ex) {
-    String message = resolveMessage(null, "error.database_integrity");
-    return ResponseEntity.status(HttpStatus.CONFLICT)
-        .body(new ErrorResponse(message, Instant.now().toEpochMilli()));
+    return buildError(HttpStatus.CONFLICT, resolveMessage(null, "error.database_integrity"));
   }
 
   @ExceptionHandler(MarketDataUnavailableException.class)
   public ResponseEntity<ErrorResponse> handleMarketDataUnavailable(MarketDataUnavailableException ex) {
     log.error("Market data service error:", ex);
-    String message = resolveMessage(ex.getMessage(), "error.market_data_unavailable");
-    return ResponseEntity.status(HttpStatus.SERVICE_UNAVAILABLE)
-        .body(new ErrorResponse(message, Instant.now().toEpochMilli()));
+    return buildError(HttpStatus.SERVICE_UNAVAILABLE, resolveMessage(ex.getMessage(), "error.market_data_unavailable"));
   }
 
   @ExceptionHandler(ResponseStatusException.class)
   public ResponseEntity<ErrorResponse> handleResponseStatus(ResponseStatusException ex) {
     String raw = ex.getReason() != null ? ex.getReason() : ex.getMessage();
-    String message = resolveMessage(raw, null);
-    return ResponseEntity.status(ex.getStatusCode())
-        .body(new ErrorResponse(message, Instant.now().toEpochMilli()));
+    return buildError(ex.getStatusCode(), resolveMessage(raw, null));
   }
 
   @Override
@@ -141,9 +131,7 @@ public class GlobalExceptionHandler extends ResponseEntityExceptionHandler {
   @ExceptionHandler(Exception.class)
   public ResponseEntity<ErrorResponse> handleGeneralException(Exception ex) {
     log.error("Unhandled exception:", ex);
-    String message = resolveMessage(null, "error.unexpected");
-    return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
-        .body(new ErrorResponse(message, Instant.now().toEpochMilli()));
+    return buildError(HttpStatus.INTERNAL_SERVER_ERROR, resolveMessage(null, "error.unexpected"));
   }
 
   @JsonInclude(JsonInclude.Include.NON_NULL)

@@ -33,7 +33,7 @@ export const DashboardHeader = ({
   onOpenTransactionHistory,
 }: DashboardHeaderProps) => {
   const { t } = useTranslation();
-  const displayTitle = title || t('dashboard.title', 'Pulpit Portfela');
+  const displayTitle = title || t('dashboard.title');
 
   return (
     <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-zinc-800/80 pb-3.5">
@@ -71,7 +71,7 @@ export const DashboardHeader = ({
           {t('dashboard.positionCount', { count: positionCount })}
         </span>
 
-        <div className="flex items-center bg-[#161922] border border-zinc-800 rounded-lg p-0.5 text-xs font-mono">
+        <div className="flex items-center bg-zinc-900 border border-zinc-750 border-zinc-700/80 rounded-lg p-0.5 ml-1 font-mono">
           <button
             type="button"
             onClick={() => onTaxModeChange('NETTO')}
@@ -82,7 +82,7 @@ export const DashboardHeader = ({
                 : 'text-zinc-400 hover:text-zinc-200'
             }`}
           >
-            {t('dashboard.net', 'Netto')}
+            {t('dashboard.net')}
           </button>
           <button
             type="button"
@@ -94,7 +94,7 @@ export const DashboardHeader = ({
                 : 'text-zinc-400 hover:text-zinc-200'
             }`}
           >
-            {t('dashboard.gross', 'Brutto')}
+            {t('dashboard.gross')}
           </button>
         </div>
       </div>

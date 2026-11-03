@@ -49,10 +49,13 @@ class MarketHistoryRepository:
         except Exception:
             pass
 
+    @property
+    def _ph(self) -> str:
+        return "%s" if self.is_postgres else "?"
+
     def _ensure_pool(self) -> None:
         if self.is_postgres and self.conn is None and self.pool is None and self.database_url:
             try:
-                import psycopg2
                 from psycopg2 import pool
                 self.pool = pool.ThreadedConnectionPool(1, 10, dsn=self.database_url)
                 self.init_db()
@@ -110,50 +113,40 @@ class MarketHistoryRepository:
         conn, is_external = self._get_connection()
         try:
             cursor = conn.cursor()
+            vol_type = "BIGINT" if self.is_postgres else "INTEGER"
             if self.is_postgres:
                 cursor.execute(f"CREATE SCHEMA IF NOT EXISTS {self.schema};")
                 cursor.execute(f"SET search_path TO {self.schema}, public;")
-                cursor.execute("""
-                    CREATE TABLE IF NOT EXISTS daily_price_history (
-                        symbol TEXT,
-                        date TEXT,
-                        close_price REAL,
-                        currency TEXT,
-                        volume BIGINT,
-                        PRIMARY KEY (symbol, date)
-                    );
-                """)
-                cursor.execute("""
-                    CREATE TABLE IF NOT EXISTS etf_profile_metrics (
-                        symbol TEXT PRIMARY KEY,
-                        ter REAL,
-                        trailing_pe REAL,
-                        dividend_yield REAL,
-                        beta REAL,
-                        last_updated TEXT
-                    );
-                """)
-            else:
-                cursor.execute("""
-                    CREATE TABLE IF NOT EXISTS daily_price_history (
-                        symbol TEXT,
-                        date TEXT,
-                        close_price REAL,
-                        currency TEXT,
-                        volume INTEGER,
-                        PRIMARY KEY (symbol, date)
-                    );
-                """)
-                cursor.execute("""
-                    CREATE TABLE IF NOT EXISTS etf_profile_metrics (
-                        symbol TEXT PRIMARY KEY,
-                        ter REAL,
-                        trailing_pe REAL,
-                        dividend_yield REAL,
-                        beta REAL,
-                        last_updated TEXT
-                    );
-                """)
+
+            cursor.execute(f"""
+                CREATE TABLE IF NOT EXISTS daily_price_history (
+                    symbol TEXT,
+                    date TEXT,
+                    close_price REAL,
+                    currency TEXT,
+                    volume {vol_type},
+                    PRIMARY KEY (symbol, date)
+                );
+            """)
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS etf_profile_metrics (
+                    symbol TEXT PRIMARY KEY,
+                    ter REAL,
+                    trailing_pe REAL,
+                    dividend_yield REAL,
+                    beta REAL,
+                    last_updated TEXT
+                );
+            """)
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS macro_cpi (
+                    year INTEGER,
+                    month INTEGER,
+                    rate REAL,
+                    source TEXT,
+                    PRIMARY KEY (year, month)
+                );
+            """)
             conn.commit()
         finally:
             self._release_connection(conn, is_external)
@@ -232,22 +225,20 @@ class MarketHistoryRepository:
             self._release_connection(conn, is_external)
 
     def delete_symbol_prices(self, symbol: str) -> None:
-        ph = "%s" if self.is_postgres else "?"
         conn, is_external = self._get_connection()
         try:
             cursor = conn.cursor()
-            cursor.execute(f"DELETE FROM daily_price_history WHERE symbol = {ph}", (symbol,))
+            cursor.execute(f"DELETE FROM daily_price_history WHERE symbol = {self._ph}", (symbol,))
             conn.commit()
         finally:
             self._release_connection(conn, is_external)
 
     def get_price_on_date(self, symbol: str, date: str) -> Optional[float]:
-        ph = "%s" if self.is_postgres else "?"
         conn, is_external = self._get_connection()
         try:
             cursor = conn.cursor()
             cursor.execute(
-                f"SELECT close_price FROM daily_price_history WHERE symbol = {ph} AND date = {ph}",
+                f"SELECT close_price FROM daily_price_history WHERE symbol = {self._ph} AND date = {self._ph}",
                 (symbol, date[:10])
             )
             row = cursor.fetchone()
@@ -256,17 +247,16 @@ class MarketHistoryRepository:
             self._release_connection(conn, is_external)
 
     def get_historical_prices(self, symbol: str, start_date: Optional[str] = None, end_date: Optional[str] = None) -> List[Dict[str, Any]]:
-        ph = "%s" if self.is_postgres else "?"
         conn, is_external = self._get_connection()
         try:
             cursor = conn.cursor()
-            query = f"SELECT symbol, date, close_price, currency, volume FROM daily_price_history WHERE symbol = {ph}"
+            query = f"SELECT symbol, date, close_price, currency, volume FROM daily_price_history WHERE symbol = {self._ph}"
             params: list = [symbol]
             if start_date:
-                query += f" AND date >= {ph}"
+                query += f" AND date >= {self._ph}"
                 params.append(start_date)
             if end_date:
-                query += f" AND date <= {ph}"
+                query += f" AND date <= {self._ph}"
                 params.append(end_date)
             query += " ORDER BY date ASC"
             cursor.execute(query, params)
@@ -286,11 +276,10 @@ class MarketHistoryRepository:
             self._release_connection(conn, is_external)
 
     def get_max_date(self, symbol: str) -> Optional[str]:
-        ph = "%s" if self.is_postgres else "?"
         conn, is_external = self._get_connection()
         try:
             cursor = conn.cursor()
-            cursor.execute(f"SELECT MAX(date) FROM daily_price_history WHERE symbol = {ph}", (symbol,))
+            cursor.execute(f"SELECT MAX(date) FROM daily_price_history WHERE symbol = {self._ph}", (symbol,))
             row = cursor.fetchone()
             return row[0] if row and row[0] else None
         finally:
@@ -330,11 +319,10 @@ class MarketHistoryRepository:
             self._release_connection(conn, is_external)
 
     def get_profile_metrics(self, symbol: str) -> Optional[Dict[str, Any]]:
-        ph = "%s" if self.is_postgres else "?"
         conn, is_external = self._get_connection()
         try:
             cursor = conn.cursor()
-            cursor.execute(f"SELECT ter, trailing_pe, dividend_yield, beta, last_updated FROM etf_profile_metrics WHERE symbol = {ph}", (symbol,))
+            cursor.execute(f"SELECT ter, trailing_pe, dividend_yield, beta, last_updated FROM etf_profile_metrics WHERE symbol = {self._ph}", (symbol,))
             row = cursor.fetchone()
             if not row:
                 return None
@@ -346,6 +334,69 @@ class MarketHistoryRepository:
                 "beta": float(row[3]),
                 "lastUpdated": row[4],
             }
+        finally:
+            self._release_connection(conn, is_external)
+
+    def save_cpi_records(self, records: List[Dict[str, Any]], allow_overwrite_authoritative: bool = False) -> int:
+        if not records:
+            return 0
+        conn, is_external = self._get_connection()
+        try:
+            cursor = conn.cursor()
+            if self.is_postgres:
+                if allow_overwrite_authoritative:
+                    query = """
+                        INSERT INTO macro_cpi (year, month, rate, source)
+                        VALUES (%s, %s, %s, %s)
+                        ON CONFLICT (year, month) DO UPDATE SET
+                            rate = EXCLUDED.rate,
+                            source = EXCLUDED.source
+                    """
+                else:
+                    query = """
+                        INSERT INTO macro_cpi (year, month, rate, source)
+                        VALUES (%s, %s, %s, %s)
+                        ON CONFLICT (year, month) DO UPDATE SET
+                            rate = EXCLUDED.rate,
+                            source = EXCLUDED.source
+                        WHERE macro_cpi.source NOT IN ('GUS', 'NBP', 'GUS (szacunek)') OR EXCLUDED.source IN ('GUS', 'NBP', 'GUS (szacunek)')
+                    """
+                data = [(int(r["year"]), int(r["month"]), float(r["rate"]), str(r.get("source", "Eurostat"))) for r in records]
+                cursor.executemany(query, data)
+            else:
+                for r in records:
+                    y, m, rate, src = int(r["year"]), int(r["month"]), float(r["rate"]), str(r.get("source", "Eurostat"))
+                    if allow_overwrite_authoritative or src in ("GUS", "NBP", "GUS (szacunek)"):
+                        cursor.execute("INSERT OR REPLACE INTO macro_cpi (year, month, rate, source) VALUES (?, ?, ?, ?)", (y, m, rate, src))
+                    else:
+                        cursor.execute("INSERT OR IGNORE INTO macro_cpi (year, month, rate, source) VALUES (?, ?, ?, ?)", (y, m, rate, src))
+            conn.commit()
+            return len(records)
+        finally:
+            self._release_connection(conn, is_external)
+
+    def get_cpi_records(self, year: Optional[int] = None) -> List[Dict[str, Any]]:
+        conn, is_external = self._get_connection()
+        try:
+            cursor = conn.cursor()
+            if year is not None:
+                cursor.execute(f"SELECT year, month, rate, source FROM macro_cpi WHERE year = {self._ph} ORDER BY year ASC, month ASC", (int(year),))
+            else:
+                cursor.execute("SELECT year, month, rate, source FROM macro_cpi ORDER BY year ASC, month ASC")
+            rows = cursor.fetchall()
+            return [{"year": int(r[0]), "month": int(r[1]), "rate": float(r[2]), "source": r[3]} for r in rows]
+        finally:
+            self._release_connection(conn, is_external)
+
+    def get_latest_cpi(self) -> Optional[Dict[str, Any]]:
+        conn, is_external = self._get_connection()
+        try:
+            cursor = conn.cursor()
+            cursor.execute("SELECT year, month, rate, source FROM macro_cpi ORDER BY year DESC, month DESC LIMIT 1")
+            row = cursor.fetchone()
+            if not row:
+                return None
+            return {"year": int(row[0]), "month": int(row[1]), "rate": float(row[2]), "source": row[3]}
         finally:
             self._release_connection(conn, is_external)
 

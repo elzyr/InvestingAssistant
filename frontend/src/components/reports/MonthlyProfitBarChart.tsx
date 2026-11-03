@@ -19,8 +19,6 @@ interface MonthlyProfitBarChartProps {
   selectedMonthIndex?: number;
 }
 
-const POLISH_MONTHS = ['Sty', 'Lut', 'Mar', 'Kwi', 'Maj', 'Cze', 'Lip', 'Sie', 'Wrz', 'Paź', 'Lis', 'Gru'];
-
 const normalizeDateStr = (time: Time | unknown): string => {
   if (!time) return '';
   if (typeof time === 'string') return time;
@@ -89,7 +87,7 @@ export const MonthlyProfitBarChart: React.FC<MonthlyProfitBarChartProps> = ({
         tickMarkFormatter: (time: Time) => {
           const dateStr = normalizeDateStr(time);
           const d = new Date(dateStr);
-          return POLISH_MONTHS[d.getMonth()] || '';
+          return d.toLocaleDateString(i18n.language, { month: 'short' });
         },
       },
       rightPriceScale: {
@@ -107,7 +105,7 @@ export const MonthlyProfitBarChart: React.FC<MonthlyProfitBarChartProps> = ({
       base: 0,
       priceFormat: {
         type: 'custom',
-        formatter: (val: number) => `${val >= 0 ? '+' : ''}${Math.round(val).toLocaleString('pl-PL')} PLN`,
+        formatter: (val: number) => `${val >= 0 ? '+' : ''}${Math.round(val).toLocaleString(i18n.language)} PLN`,
       },
     });
     seriesRef.current = series;

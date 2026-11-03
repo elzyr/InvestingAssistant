@@ -26,7 +26,7 @@ export function reduceBondLotsFifo(lots: BondLot[], quantity: number): void {
 export function valueBondLots(
   lots: BondLot[],
   params: {
-    cpi: number;
+    cpi?: number | null;
     targetDate: number | string | Date;
     fallbackFx?: number;
     fallback?: {

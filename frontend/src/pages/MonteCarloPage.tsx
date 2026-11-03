@@ -2,6 +2,7 @@ import { useMemo, useState } from 'react';
 import { useActivePortfolioData } from '../hooks/useActivePortfolioData.ts';
 import { calculateBondCurrentPrice } from '../utils/domain/bondPricing.ts';
 import { getBondFamily, isBondItem } from '../utils/domain/assets.ts';
+import { isIkePortfolio } from '../utils/domain/tax.ts';
 import { StressTestingView } from '../components/analytics/StressTestingView.tsx';
 
 export const MonteCarloPage = () => {
@@ -18,9 +19,7 @@ export const MonteCarloPage = () => {
 
   const [nowTimestamp] = useState(() => Date.now());
 
-  const isIkeAccount = useMemo(() => {
-    return activePortfolio?.name?.toLowerCase().includes('ike') ?? false;
-  }, [activePortfolio]);
+  const isIkeAccount = useMemo(() => isIkePortfolio(activePortfolio), [activePortfolio]);
 
   const enrichedHoldings = useMemo(() => {
     return positions.map((pos) => {
@@ -58,34 +57,37 @@ export const MonteCarloPage = () => {
     });
   }, [positions, instruments, quotes, rates, baseCurrency, cpi]);
 
-  const currentBondVal = useMemo(
-    () => enrichedHoldings.filter((h) => h.isBond).reduce((s, h) => s + h.totalValue, 0),
-    [enrichedHoldings]
-  );
+  const { currentBondVal, currentEquityVal, currentCostVal, weightedBondRate } = useMemo(() => {
+    let bondVal = 0;
+    let equityVal = 0;
+    let costVal = 0;
+    let sumRateVal = 0;
+    let ratedBondVal = 0;
 
-  const currentEquityVal = useMemo(
-    () => enrichedHoldings.filter((h) => !h.isBond).reduce((s, h) => s + h.totalValue, 0),
-    [enrichedHoldings]
-  );
-
-  const currentCostVal = useMemo(
-    () => enrichedHoldings.reduce((s, h) => s + h.totalCost, 0),
-    [enrichedHoldings]
-  );
-
-  const weightedBondRate = useMemo(() => {
-    if (currentBondVal <= 0) return 5.43;
-    const sumRateVal = enrichedHoldings
-      .filter((h) => h.isBond)
-      .reduce((sum, b) => {
-        let r = b.bondRate ?? 5.43;
-        if (b.bondMargin && b.bondMargin > 0) {
-          r = Math.max(0, cpi) + b.bondMargin;
+    for (const h of enrichedHoldings) {
+      costVal += h.totalCost;
+      if (h.isBond) {
+        bondVal += h.totalValue;
+        let r: number | null = h.bondRate ?? null;
+        if (h.bondMargin != null && h.bondMargin > 0 && cpi != null) {
+          r = cpi + h.bondMargin;
         }
-        return sum + r * b.totalValue;
-      }, 0);
-    return sumRateVal / currentBondVal;
-  }, [enrichedHoldings, currentBondVal, cpi]);
+        if (r != null) {
+          sumRateVal += r * h.totalValue;
+          ratedBondVal += h.totalValue;
+        }
+      } else {
+        equityVal += h.totalValue;
+      }
+    }
+
+    return {
+      currentBondVal: bondVal,
+      currentEquityVal: equityVal,
+      currentCostVal: costVal,
+      weightedBondRate: ratedBondVal > 0 ? sumRateVal / ratedBondVal : 0,
+    };
+  }, [enrichedHoldings, cpi]);
 
   const calculatedDca = useMemo(() => {
     if (transactions.length === 0) return { tos: 0, edo: 0, etf: 0, total: 0 };

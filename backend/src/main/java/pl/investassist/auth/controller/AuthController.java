@@ -36,20 +36,12 @@ public class AuthController {
 
   @PostMapping("/register")
   public ResponseEntity<AuthResponse> register(@Valid @RequestBody RegisterRequest request) {
-    AuthResponse response = authService.register(request);
-    ResponseCookie cookie = createRefreshTokenCookie(response.refreshToken(), refreshExpirationSeconds);
-    return ResponseEntity.status(HttpStatus.CREATED)
-        .header(HttpHeaders.SET_COOKIE, cookie.toString())
-        .body(response);
+    return responseWithCookie(HttpStatus.CREATED, authService.register(request));
   }
 
   @PostMapping("/login")
   public ResponseEntity<AuthResponse> login(@Valid @RequestBody LoginRequest request) {
-    AuthResponse response = authService.login(request);
-    ResponseCookie cookie = createRefreshTokenCookie(response.refreshToken(), refreshExpirationSeconds);
-    return ResponseEntity.ok()
-        .header(HttpHeaders.SET_COOKIE, cookie.toString())
-        .body(response);
+    return responseWithCookie(HttpStatus.OK, authService.login(request));
   }
 
   @PostMapping("/refresh")
@@ -57,17 +49,12 @@ public class AuthController {
       @CookieValue(name = "refreshToken", required = false) String cookieToken,
       @RequestBody(required = false) RefreshTokenRequest request) {
 
-    String token = cookieToken != null ? cookieToken : (request != null ? request.refreshToken() : null);
+    String token = extractToken(cookieToken, request);
     if (token == null || token.isBlank()) {
       return ResponseEntity.status(HttpStatus.UNAUTHORIZED).build();
     }
 
-    AuthResponse response = authService.refreshToken(new RefreshTokenRequest(token));
-    ResponseCookie cookie = createRefreshTokenCookie(response.refreshToken(), refreshExpirationSeconds);
-
-    return ResponseEntity.ok()
-        .header(HttpHeaders.SET_COOKIE, cookie.toString())
-        .body(response);
+    return responseWithCookie(HttpStatus.OK, authService.refreshToken(new RefreshTokenRequest(token)));
   }
 
   @PostMapping("/logout")
@@ -75,7 +62,7 @@ public class AuthController {
       @CookieValue(name = "refreshToken", required = false) String cookieToken,
       @RequestBody(required = false) RefreshTokenRequest request) {
 
-    String token = cookieToken != null ? cookieToken : (request != null ? request.refreshToken() : null);
+    String token = extractToken(cookieToken, request);
     if (token != null && !token.isBlank()) {
       authService.logout(token);
     }
@@ -84,6 +71,17 @@ public class AuthController {
     return ResponseEntity.noContent()
         .header(HttpHeaders.SET_COOKIE, cleanCookie.toString())
         .build();
+  }
+
+  private String extractToken(String cookieToken, RefreshTokenRequest request) {
+    return cookieToken != null ? cookieToken : (request != null ? request.refreshToken() : null);
+  }
+
+  private ResponseEntity<AuthResponse> responseWithCookie(HttpStatus status, AuthResponse response) {
+    ResponseCookie cookie = createRefreshTokenCookie(response.refreshToken(), refreshExpirationSeconds);
+    return ResponseEntity.status(status)
+        .header(HttpHeaders.SET_COOKIE, cookie.toString())
+        .body(response);
   }
 
   private ResponseCookie createRefreshTokenCookie(String token, long maxAgeSeconds) {

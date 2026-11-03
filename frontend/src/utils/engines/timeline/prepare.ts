@@ -138,12 +138,14 @@ export function prepareTimelineState({
     if (isBond) {
       currentBondCapital += val;
       currentBondCost += cost;
-      let r = pos.bondRate ?? 5.5;
-      if (pos.bondMargin != null && pos.bondMargin > 0) {
-        r = Math.max(0, cpi) + pos.bondMargin;
+      let r: number | undefined = pos.bondRate != null ? pos.bondRate : undefined;
+      if (pos.bondMargin != null && pos.bondMargin > 0 && cpi != null) {
+        r = cpi + pos.bondMargin;
       }
-      userBondValSum += val;
-      userBondWeightedRateSum += val * r;
+      if (r !== undefined) {
+        userBondValSum += val;
+        userBondWeightedRateSum += val * r;
+      }
     } else {
       currentEquityCapital += val;
       currentEquityCost += cost;
