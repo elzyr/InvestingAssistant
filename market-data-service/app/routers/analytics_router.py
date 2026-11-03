@@ -1,4 +1,4 @@
-from typing import List, Optional
+from typing import List, Optional, Dict
 from fastapi import APIRouter
 from fastapi.concurrency import run_in_threadpool
 from pydantic import BaseModel, Field
@@ -19,23 +19,24 @@ class InstrumentMetricItem(BaseModel):
     symbol: str
     weight: float
     value: Optional[float] = None
-    annualReturn: float
-    annualVolatility: float
-    ter: float
-    trailingPe: float
-    dividendYield: float
-    beta: float
+    annualReturn: Optional[float] = None
+    annualVolatility: Optional[float] = None
+    ter: Optional[float] = None
+    trailingPe: Optional[float] = None
+    dividendYield: Optional[float] = None
+    beta: Optional[float] = None
     currency: Optional[str] = "USD"
 
 class PortfolioStatsResponse(BaseModel):
-    weightedReturn: float
-    weightedVolatility: float
-    weightedTer: float
-    weightedPe: float
-    weightedDividendYield: float = 0.0
-    portfolioBeta: float
+    weightedReturn: Optional[float] = None
+    weightedVolatility: Optional[float] = None
+    weightedTer: Optional[float] = None
+    weightedPe: Optional[float] = None
+    weightedDividendYield: Optional[float] = None
+    portfolioBeta: Optional[float] = None
     currencyBasis: Optional[str] = "LOCAL"
     instruments: List[InstrumentMetricItem] = []
+    correlationMatrix: Dict[str, Dict[str, float]] = {}
 
 @router.post("/portfolio-stats", response_model=PortfolioStatsResponse)
 async def calculate_portfolio_stats(request: PortfolioStatsRequest) -> PortfolioStatsResponse:

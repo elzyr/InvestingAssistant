@@ -11,8 +11,6 @@ interface FilterBarProps {
   onSortChange: (sort: SortOption) => void;
 }
 
-
-
 export const FilterBar = ({
   searchQuery,
   onSearchChange,
@@ -23,10 +21,10 @@ export const FilterBar = ({
 }: FilterBarProps) => {
   const { t } = useTranslation();
   const filterLabels: Array<{ id: AssetFilterType; label: string }> = [
-    { id: 'ALL', label: t('dashboard.filterAll', 'Wszystkie') },
-    { id: 'ETF', label: t('dashboard.filterEtf', 'ETF') },
-    { id: 'BOND', label: t('dashboard.filterBond', 'Obligacje') },
-    { id: 'STOCK', label: t('dashboard.filterStock', 'Akcje') },
+    { id: 'ALL', label: t('dashboard.filterAll') },
+    { id: 'ETF', label: t('dashboard.filterEtf') },
+    { id: 'BOND', label: t('dashboard.filterBond') },
+    { id: 'STOCK', label: t('dashboard.filterStock') },
   ];
 
   return (
@@ -38,7 +36,7 @@ export const FilterBar = ({
             type="text"
             value={searchQuery}
             onChange={(e) => onSearchChange(e.target.value)}
-            placeholder={t('dashboard.searchPlaceholder', 'Szukaj pozycji...')}
+            placeholder={t('dashboard.searchPlaceholder')}
             className="bg-[#161922] border border-zinc-800 rounded-lg pl-8 pr-3 py-1.5 text-xs text-zinc-200 placeholder-zinc-400 focus:outline-none focus:border-emerald-400 w-44 transition"
           />
         </div>
@@ -71,11 +69,11 @@ export const FilterBar = ({
             onChange={(e) => onSortChange(e.target.value as SortOption)}
             className="appearance-none bg-[#161922] border border-zinc-800 hover:border-zinc-700 rounded-lg px-2.5 py-1.5 pr-6 text-xs text-zinc-300 hover:text-white focus:outline-none focus:border-emerald-400 transition cursor-pointer"
           >
-            <option value="value" className="bg-zinc-900">{t('dashboard.sortByValue', 'Sortuj po: Wartości')}</option>
-            <option value="profit" className="bg-zinc-900">{t('dashboard.sortByProfit', 'Sortuj po: Zysku')}</option>
-            <option value="share" className="bg-zinc-900">{t('dashboard.sortByShare', 'Sortuj po: Udziału')}</option>
-            <option value="name" className="bg-zinc-900">{t('dashboard.sortByName', 'Sortuj po: Nazwy')}</option>
-            <option value="xirr" className="bg-zinc-900">{t('dashboard.sortByXirr', 'Sortuj po: XIRR')}</option>
+            <option value="value" className="bg-zinc-900">{t('dashboard.sortByValue')}</option>
+            <option value="profit" className="bg-zinc-900">{t('dashboard.sortByProfit')}</option>
+            <option value="share" className="bg-zinc-900">{t('dashboard.sortByShare')}</option>
+            <option value="name" className="bg-zinc-900">{t('dashboard.sortByName')}</option>
+            <option value="xirr" className="bg-zinc-900">{t('dashboard.sortByXirr')}</option>
           </select>
           <ChevronDown className="w-3.5 h-3.5 text-zinc-400 absolute right-2 top-1/2 -translate-y-1/2 pointer-events-none" />
         </div>

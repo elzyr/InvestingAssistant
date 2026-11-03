@@ -4,6 +4,7 @@ import jakarta.persistence.*;
 import java.time.LocalDateTime;
 import java.util.UUID;
 import org.hibernate.annotations.CreationTimestamp;
+import pl.investassist.common.enums.AccountType;
 import pl.investassist.common.enums.Currency;
 
 @Entity
@@ -26,6 +27,10 @@ public class Portfolio {
   @Enumerated(EnumType.STRING)
   @Column(nullable = false)
   private Currency baseCurrency;
+
+  @Enumerated(EnumType.STRING)
+  @Column(nullable = false)
+  private AccountType accountType = AccountType.STANDARD;
 
   @CreationTimestamp
   private LocalDateTime createdAt;
@@ -70,6 +75,14 @@ public class Portfolio {
 
   public void setBaseCurrency(Currency baseCurrency) {
     this.baseCurrency = baseCurrency;
+  }
+
+  public AccountType getAccountType() {
+    return accountType;
+  }
+
+  public void setAccountType(AccountType accountType) {
+    this.accountType = accountType;
   }
 
   public LocalDateTime getCreatedAt() {

@@ -25,7 +25,7 @@ export const TransactionHistoryModal: React.FC<TransactionHistoryModalProps> = (
   baseCurrency,
   onEditTransaction,
 }) => {
-  const { t } = useTranslation();
+  const { t, i18n } = useTranslation();
   const dispatch = useAppDispatch();
   const [searchQuery, setSearchQuery] = useState('');
   const [filterType, setFilterType] = useState<'ALL' | 'BUY' | 'SELL'>('ALL');
@@ -212,7 +212,7 @@ export const TransactionHistoryModal: React.FC<TransactionHistoryModalProps> = (
                         </td>
                         <td className="py-2.5 px-3 text-right font-bold text-white">
                           {tx.baseAmount != null
-                            ? `${tx.baseAmount.toLocaleString('pl-PL', { maximumFractionDigits: 2 })} ${baseCurrency}`
+                            ? `${tx.baseAmount.toLocaleString(i18n.language, { maximumFractionDigits: 2 })} ${baseCurrency}`
                             : '—'}
                         </td>
                         <td className="py-2.5 px-3 text-right text-zinc-400">

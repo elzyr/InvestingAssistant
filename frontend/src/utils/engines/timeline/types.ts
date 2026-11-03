@@ -18,7 +18,7 @@ export interface UnifiedEngineParams {
   taxMode: TaxMode;
   timeframe: TimeframeOption;
   projectionHorizon: ProjectionHorizonOption;
-  cpi: number;
+  cpi: number | null;
   rates: Record<string, number>;
   baseCurrency: string;
   instrumentPrices?: Record<string, number>;
@@ -34,6 +34,7 @@ export interface UnifiedEngineParams {
   historicalSortedDates?: Record<string, string[]>;
   inflationAdjustMode?: InflationAdjustMode;
   targetGoal?: number | null;
+  correlationMatrix?: Record<string, Record<string, number>>;
   locale?: string;
 }
 

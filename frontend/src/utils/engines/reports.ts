@@ -1,3 +1,4 @@
+import i18n from '../../i18n/config.ts';
 import type { TransactionResponse } from '../../types/portfolio.ts';
 import type { InstrumentResponse } from '../../types/instrument.ts';
 import type { PriceQuote } from '../../services/market.service.ts';
@@ -8,13 +9,12 @@ import type {
 } from '../../types/reports.types.ts';
 import { isBondItem } from '../domain/assets.ts';
 import { getHistoricalPrice } from '../domain/prices.ts';
+import { standardizeDate } from '../domain/dates.ts';
 import { calculateTwr } from './twr.ts';
 import { computeBelka } from '../domain/tax.ts';
 import { resolveTxFx, resolveTxCost } from '../domain/transactions.ts';
-import { reduceBondLotsFifo, valueBondLots } from '../domain/bondLots.ts';
+import { reduceBondLotsFifo, valueBondLots, type BondLot } from '../domain/bondLots.ts';
 import { compoundHurdle } from '../domain/inflation.ts';
-
-
 
 export interface RealReportsParams {
   transactions: TransactionResponse[];
@@ -23,7 +23,7 @@ export interface RealReportsParams {
   rates: Record<string, number>;
   historicalPrices?: Record<string, Record<string, number>>;
   historicalSortedDates?: Record<string, string[]>;
-  cpi?: number;
+  cpi?: number | null;
   monthlyCpi?: Record<number, number>;
   baseCurrency: string;
   isIkeAccount: boolean;
@@ -43,9 +43,10 @@ function resolveCategory(
   instruments: Record<string, InstrumentResponse>,
   t?: (key: string, options?: any) => string
 ): CategoryInfo {
+  const translate = t || i18n.t.bind(i18n);
   const inst = instruments[tx.instrumentId];
   if (isBondItem(tx, inst)) {
-    return { name: t ? t('reports.catTreasuryBonds', 'Obligacje Skarbowe') : 'Obligacje Skarbowe', color: '#3b82f6' };
+    return { name: translate('reports.catTreasuryBonds'), color: '#3b82f6' };
   }
 
   const symbol = (inst?.symbol || tx.seriesName || '').toUpperCase();
@@ -61,16 +62,16 @@ function resolveCategory(
     return { name: 'ETF World', color: '#06b6d4' };
   }
   if (symbol.includes('AMEM') || symbol.includes('EIMI') || symbol.includes('EM') || name.includes('EMERGING')) {
-    return { name: t ? t('reports.catEmerging', 'ETF Rozwijające') : 'ETF Rozwijające', color: '#f59e0b' };
+    return { name: translate('reports.catEmerging'), color: '#f59e0b' };
   }
   if (symbol.includes('PKO') || inst?.currency === 'PLN') {
-    return { name: t ? t('reports.catPlStocks', 'Akcje PL') : 'Akcje PL', color: '#ec4899' };
+    return { name: translate('reports.catPlStocks'), color: '#ec4899' };
   }
   if (inst?.currency === 'USD' || symbol.includes('AAPL')) {
-    return { name: t ? t('reports.catUsStocks', 'Akcje US') : 'Akcje US', color: '#6366f1' };
+    return { name: translate('reports.catUsStocks'), color: '#6366f1' };
   }
 
-  return { name: inst?.name || symbol || (t ? t('reports.catOther', 'Inne aktywa') : 'Inne aktywa'), color: '#14b8a6' };
+  return { name: inst?.name || symbol || translate('reports.catOther'), color: '#14b8a6' };
 }
 
 export function extractAvailableYears(transactions: TransactionResponse[]): number[] {
@@ -90,6 +91,33 @@ export function extractAvailableYears(transactions: TransactionResponse[]): numb
   return Array.from(yearsSet).sort((a, b) => b - a);
 }
 
+function createUpcomingMonthRecord(
+  m: number,
+  year: number,
+  locale: string,
+  monthInflation: number | null
+): MonthlyReportRecord {
+  const d = new Date(year, m, 1);
+  return {
+    monthIndex: m,
+    monthName: d.toLocaleDateString(locale, { month: 'long' }).replace(/^./, (str) => str.toUpperCase()),
+    shortName: d.toLocaleDateString(locale, { month: 'short' }).replace(/^./, (str) => str.toUpperCase()),
+    year,
+    portfolioValue: 0,
+    investedTotal: 0,
+    profitGross: 0,
+    returnGrossPct: 0,
+    profitNet: 0,
+    returnNetPct: 0,
+    profitNetMom: 0,
+    returnNetMomPct: 0,
+    cpiInflation: monthInflation != null ? Number(monthInflation.toFixed(1)) : null,
+    realProfitPct: null,
+    status: 'UPCOMING',
+    breakdown: [],
+  };
+}
+
 export function generateRealAnnualSummary({
   transactions,
   instruments,
@@ -97,7 +125,7 @@ export function generateRealAnnualSummary({
   rates,
   historicalPrices = {},
   historicalSortedDates = {},
-  cpi = 3.6,
+  cpi = null,
   monthlyCpi = {},
   baseCurrency,
   isIkeAccount,
@@ -140,7 +168,20 @@ export function generateRealAnnualSummary({
     })
     .sort((a, b) => a.timeMs - b.timeMs);
 
-  let lastKnownCpi = cpi ?? 3.6;
+  const holdings = new Map<string, {
+    currentQty: number;
+    costBasis: number;
+    isBond: boolean;
+    symbol: string;
+    fallbackPrice: number;
+    fx: number;
+    cat: CategoryInfo;
+    costLots: { cost: number; timeMs: number }[];
+    lots: BondLot[];
+  }>();
+  let txIdx = 0;
+
+  let lastKnownCpi: number | null = cpi ?? null;
   for (let m = 0; m < 12; m++) {
     const monthStartMs = new Date(year, m, 1, 0, 0, 0, 0).getTime();
     const monthEndMs = new Date(year, m + 1, 0, 23, 59, 59, 999).getTime();
@@ -151,76 +192,20 @@ export function generateRealAnnualSummary({
     }
 
     if (monthStartMs > now) {
-      records.push({
-        monthIndex: m,
-        monthName: new Date(year, m, 1).toLocaleDateString(locale, { month: 'long' }).replace(/^./, (str) => str.toUpperCase()),
-        shortName: new Date(year, m, 1).toLocaleDateString(locale, { month: 'short' }).replace(/^./, (str) => str.toUpperCase()),
-        year,
-        portfolioValue: 0,
-        investedTotal: 0,
-        profitGross: 0,
-        returnGrossPct: 0,
-        profitNet: 0,
-        returnNetPct: 0,
-        profitNetMom: 0,
-        returnNetMomPct: 0,
-        cpiInflation: Number(monthInflation.toFixed(1)),
-        realProfitPct: 0,
-        status: 'UPCOMING',
-        breakdown: [],
-      });
+      records.push(createUpcomingMonthRecord(m, year, locale, monthInflation));
       continue;
     }
 
     const tMs = Math.min(now, monthEndMs);
     if (preparedTxs.length === 0 || preparedTxs[0].timeMs > tMs) {
-      records.push({
-        monthIndex: m,
-        monthName: new Date(year, m, 1).toLocaleDateString(locale, { month: 'long' }).replace(/^./, (str) => str.toUpperCase()),
-        shortName: new Date(year, m, 1).toLocaleDateString(locale, { month: 'short' }).replace(/^./, (str) => str.toUpperCase()),
-        year,
-        portfolioValue: 0,
-        investedTotal: 0,
-        profitGross: 0,
-        returnGrossPct: 0,
-        profitNet: 0,
-        returnNetPct: 0,
-        profitNetMom: 0,
-        returnNetMomPct: 0,
-        cpiInflation: Number(monthInflation.toFixed(1)),
-        realProfitPct: 0,
-        status: 'UPCOMING',
-        breakdown: [],
-      });
+      records.push(createUpcomingMonthRecord(m, year, locale, monthInflation));
       continue;
     }
 
-    const dMonth = new Date(tMs);
-    const monthEndStr = `${dMonth.getFullYear()}-${String(dMonth.getMonth() + 1).padStart(2, '0')}-${String(dMonth.getDate()).padStart(2, '0')}`;
-    const holdings = new Map<string, {
-      currentQty: number;
-      costBasis: number;
-      isBond: boolean;
-      symbol: string;
-      fallbackPrice: number;
-      fx: number;
-      cat: { name: string; color: string };
-      costLots: { cost: number; timeMs: number }[];
-      lots: {
-        quantity: number;
-        executedAt: string | Date | number;
-        bondRate?: number | null;
-        bondMargin?: number | null;
-        seriesName?: string | null;
-        termMonths?: number | null;
-        fx: number;
-      }[];
-    }>();
+    const monthEndStr = standardizeDate(tMs);
 
-    for (let k = 0; k < preparedTxs.length; k++) {
-      const tx = preparedTxs[k];
-      if (tx.timeMs > tMs) break;
-
+    while (txIdx < preparedTxs.length && preparedTxs[txIdx].timeMs <= tMs) {
+      const tx = preparedTxs[txIdx++];
       const key = tx.isBond
         ? `${tx.instrumentId}_${tx.seriesName || ''}`
         : `${tx.instrumentId}_${tx.currency}`;
@@ -256,21 +241,19 @@ export function generateRealAnnualSummary({
             fx: tx.fx,
           });
         }
-      } else if (tx.transactionType === 'SELL') {
-        if (h.currentQty > 0) {
-          const sellQty = Math.min(tx.quantity, h.currentQty);
-          const keepRatio = 1 - sellQty / h.currentQty;
-          h.costBasis *= keepRatio;
-          h.costLots.forEach((l) => { l.cost *= keepRatio; });
-          h.currentQty -= sellQty;
-          if (h.currentQty <= 0) {
-            h.costBasis = 0;
-            h.currentQty = 0;
-            h.lots = [];
-            h.costLots = [];
-          } else if (tx.isBond) {
-            reduceBondLotsFifo(h.lots, sellQty);
-          }
+      } else if (tx.transactionType === 'SELL' && h.currentQty > 0) {
+        const sellQty = Math.min(tx.quantity, h.currentQty);
+        const keepRatio = 1 - sellQty / h.currentQty;
+        h.costBasis *= keepRatio;
+        h.costLots.forEach((l) => { l.cost *= keepRatio; });
+        h.currentQty -= sellQty;
+        if (h.currentQty <= 0) {
+          h.costBasis = 0;
+          h.currentQty = 0;
+          h.lots = [];
+          h.costLots = [];
+        } else if (tx.isBond) {
+          reduceBondLotsFifo(h.lots, sellQty);
         }
       }
     }
@@ -297,7 +280,7 @@ export function generateRealAnnualSummary({
         };
       }
       categoryMap[h.cat.name].invested += h.costBasis;
-      inflationHurdle += compoundHurdle(h.costLots, monthInflation, tMs);
+      if (monthInflation != null) { inflationHurdle += compoundHurdle(h.costLots, monthInflation, tMs); }
 
       if (h.isBond) {
         categoryMap[h.cat.name].currentValue += valueBondLots(h.lots, {
@@ -360,7 +343,7 @@ export function generateRealAnnualSummary({
       totalInvested > 0 ? (profitGrossTotal / totalInvested) * 100 : 0;
     const returnNetTotalPct =
       totalInvested > 0 ? (profitNetTotal / totalInvested) * 100 : 0;
-    const realProfitPct = inflationHurdle > 0 ? ((totalInvested + profitNetTotal) / inflationHurdle - 1) * 100 : 0;
+    const realProfitPct = monthInflation != null && inflationHurdle > 0 ? ((totalInvested + profitNetTotal) / inflationHurdle - 1) * 100 : null;
 
     records.push({
       monthIndex: m,
@@ -375,8 +358,8 @@ export function generateRealAnnualSummary({
       returnNetPct: Number(returnNetTotalPct.toFixed(2)),
       profitNetMom: 0,
       returnNetMomPct: 0,
-      cpiInflation: Number(monthInflation.toFixed(1)),
-      realProfitPct: Number(realProfitPct.toFixed(2)),
+      cpiInflation: monthInflation != null ? Number(monthInflation.toFixed(1)) : null,
+      realProfitPct: realProfitPct != null ? Number(realProfitPct.toFixed(2)) : null,
       status: 'RECORDED',
       breakdown,
       baseCurrency,
@@ -420,12 +403,10 @@ export function generateRealAnnualSummary({
     ytdInvested > 0 ? (ytdProfitGross / ytdInvested) * 100 : 0;
   const ytdReturnNetPct =
     ytdInvested > 0 ? (ytdProfitNet / ytdInvested) * 100 : 0;
-  const recordedWithCpi = recordedOnly.filter((r) => r.cpiInflation > 0);
+  const recordedWithCpi = recordedOnly.filter((r) => r.cpiInflation != null);
   const avgCpi =
-    recordedWithCpi.length > 0
-      ? recordedWithCpi.reduce((acc, r) => acc + r.cpiInflation, 0) / recordedWithCpi.length
-      : 0;
-  const ytdRealReturnPct = latest ? latest.realProfitPct : 0;
+    recordedWithCpi.length > 0 ? Number((recordedWithCpi.reduce((acc, r) => acc + (r.cpiInflation ?? 0), 0) / recordedWithCpi.length).toFixed(1)) : null;
+  const ytdRealReturnPct = latest?.realProfitPct ?? null;
 
   const monthlySubPeriods = [];
   for (let idx = 0; idx < recordedOnly.length; idx++) {
@@ -447,9 +428,9 @@ export function generateRealAnnualSummary({
     ytdReturnGrossPct: Number(ytdReturnGrossPct.toFixed(2)),
     ytdProfitNet,
     ytdReturnNetPct: Number(ytdReturnNetPct.toFixed(2)),
-    ytdRealReturnPct: Number(ytdRealReturnPct.toFixed(2)),
+    ytdRealReturnPct: ytdRealReturnPct != null ? Number(ytdRealReturnPct.toFixed(2)) : null,
     ytdTwr: Number((ytdTwr * 100).toFixed(2)),
-    avgCpi: Number(avgCpi.toFixed(1)),
+    avgCpi,
     baseCurrency,
   };
 }

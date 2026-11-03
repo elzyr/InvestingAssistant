@@ -30,4 +30,5 @@ export interface PortfolioStatsResponse {
   weightedDividendYield: number;
   portfolioBeta: number;
   instruments: InstrumentMetric[];
+  correlationMatrix?: Record<string, Record<string, number>>;
 }

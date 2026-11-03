@@ -36,3 +36,8 @@ export function standardizeDate(dateInput: string | Date | number): string {
   }
   return String(dateInput);
 }
+
+export function getShortMonthName(monthIndex: number, locale = 'pl'): string {
+  const dt = new Date(2026, monthIndex, 1);
+  return new Intl.DateTimeFormat(locale, { month: 'short' }).format(dt);
+}

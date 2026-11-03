@@ -1,8 +1,8 @@
-import redis
 import json
 import logging
 import threading
 import time
+import redis
 from app.config import settings
 
 _redis_client = redis.Redis(
@@ -12,6 +12,8 @@ _redis_client = redis.Redis(
     socket_connect_timeout=1.0,
     socket_timeout=1.0
 )
+
+MAX_CACHE_ENTRIES = 1024
 
 class CacheService:
     def __init__(self):
@@ -24,6 +26,8 @@ class CacheService:
     def get_lock(self, key: str) -> threading.Lock:
         with self._meta_lock:
             if key not in self._locks:
+                if len(self._locks) >= MAX_CACHE_ENTRIES:
+                    self._locks.pop(next(iter(self._locks)), None)
                 self._locks[key] = threading.Lock()
             return self._locks[key]
 
@@ -46,16 +50,22 @@ class CacheService:
 
     def set(self, key: str, value: object, expire: int = 300):
         try:
-            self.redis_client.setex(
+            self.redis_client.set(
                 key,
-                expire,
-                json.dumps(value)
+                json.dumps(value),
+                ex=expire
             )
         except Exception as e:
             logging.warning(f"Redis set error: {e}, storing in in-memory fallback")
             with self._mem_lock:
-                expires_at = time.time() + expire
-                self._memory_cache[key] = (value, expires_at)
+                now = time.time()
+                if len(self._memory_cache) >= MAX_CACHE_ENTRIES:
+                    expired = [k for k, (_, exp) in self._memory_cache.items() if exp <= now]
+                    for k in expired:
+                        del self._memory_cache[k]
+                    if len(self._memory_cache) >= MAX_CACHE_ENTRIES:
+                        self._memory_cache.pop(next(iter(self._memory_cache)), None)
+                self._memory_cache[key] = (value, now + expire)
 
     def delete(self, key: str):
         try:

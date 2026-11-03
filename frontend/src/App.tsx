@@ -1,3 +1,4 @@
+import i18n from './i18n/config.ts';
 import { lazy, Suspense, useEffect } from 'react';
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 import { useAppDispatch } from './store/hooks.ts';
@@ -21,7 +22,7 @@ function App() {
 
   return (
     <BrowserRouter>
-      <Suspense fallback={<div className="min-h-screen bg-slate-950 flex items-center justify-center text-slate-400">Ładowanie...</div>}>
+      <Suspense fallback={<div className="min-h-screen bg-slate-950 flex items-center justify-center text-slate-400">{i18n.t('common.loading')}</div>}>
         <Routes>
           <Route path="/login" element={<LoginPage />} />
           <Route path="/register" element={<RegisterPage />} />

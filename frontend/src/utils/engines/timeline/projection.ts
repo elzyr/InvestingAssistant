@@ -53,12 +53,11 @@ export function appendProjection(
   const targetFuturePoints = Math.max(1, Math.round((horizonYears * 365.25) / stepDays));
   const dtYears = horizonYears / targetFuturePoints;
 
-  const defaultBondRate = 5.43;
-  const weightedBondRateAnnual = userBondValSum > 0 ? userBondWeightedRateSum / userBondValSum : defaultBondRate;
+  const weightedBondRateAnnual = userBondValSum > 0 ? userBondWeightedRateSum / userBondValSum : 0;
 
-  let weightedTer = empiricalTer !== undefined ? empiricalTer : 0.20;
-  let weightedWhtDrag = whtDrag ?? 0.25;
-  let portfolioEquityVol = (etfVolatility ?? 15.0) / 100;
+  let weightedTer = empiricalTer !== undefined ? empiricalTer : undefined;
+  let weightedWhtDrag = whtDrag !== undefined ? whtDrag : undefined;
+  let portfolioEquityVol = etfVolatility !== undefined ? etfVolatility / 100 : undefined;
 
   if (equityHoldings.length > 0 && currentEquityCapital > 0) {
     let sumTer = 0;
@@ -91,7 +90,9 @@ export function appendProjection(
           const sigI = weights[i].profile.volatility / 100;
           const sigJ = weights[j].profile.volatility / 100;
           const rho =
-            CORRELATION_MATRIX[weights[i].profile.category]?.[weights[j].profile.category] ?? 0.85;
+            params.correlationMatrix?.[weights[i].profile.symbol]?.[weights[j].profile.symbol] ??
+            CORRELATION_MATRIX[weights[i].profile.category]?.[weights[j].profile.category] ??
+            (i === j ? 1.0 : 0.85);
           portVariance += wI * wJ * sigI * sigJ * rho;
         }
       }
@@ -99,9 +100,11 @@ export function appendProjection(
     }
   }
 
-  const totalCostDrag = weightedTer + weightedWhtDrag;
+  const resolvedTer = weightedTer ?? 0;
+  const resolvedWhtDrag = weightedWhtDrag ?? 0;
+  const totalCostDrag = resolvedTer + resolvedWhtDrag;
   const effectiveEtfCagr = Math.max(0, expectedEtfReturn - totalCostDrag) / 100;
-  const sigmaAnnual = portfolioEquityVol;
+  const sigmaAnnual = portfolioEquityVol ?? 0;
 
   const bondGrowthPerStep = Math.pow(1 + weightedBondRateAnnual / 100, dtYears);
   const stockGrowthPerStep = Math.pow(1 + effectiveEtfCagr, dtYears);
@@ -157,7 +160,7 @@ export function appendProjection(
     const netP10 = futureBondNet + (stockP10 - belkaP10);
     const floorNet = Math.max(currentBondCapital, futureBondNet);
 
-    const infDeflator = Math.pow(1 + (cpi || 3.6) / 100, tYears);
+    const infDeflator = cpi != null ? Math.pow(1 + cpi / 100, tYears) : 1;
     const isReal = inflationAdjustMode === 'REAL';
     const deflator = isReal ? infDeflator : 1;
 
@@ -224,9 +227,9 @@ export function appendProjection(
       netP90: Math.round(adjNetP90),
       netP10: Math.round(adjNetP10),
       goalProbability,
-      weightedTer: Number(weightedTer.toFixed(2)),
-      weightedWhtDrag: Number(weightedWhtDrag.toFixed(2)),
-      diversifiedVolatility: Number((portfolioEquityVol * 100).toFixed(1)),
+      weightedTer: weightedTer != null ? Number(weightedTer.toFixed(2)) : undefined,
+      weightedWhtDrag: weightedWhtDrag != null ? Number(weightedWhtDrag.toFixed(2)) : undefined,
+      diversifiedVolatility: portfolioEquityVol != null ? Number((portfolioEquityVol * 100).toFixed(1)) : undefined,
     });
   }
 }

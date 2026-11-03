@@ -37,18 +37,18 @@ export const MonthDetailView: React.FC<MonthDetailViewProps> = ({
     );
   }
 
-  const totalInvested = record.breakdown.reduce((sum, item) => sum + item.invested, 0);
-  const totalValue = record.breakdown.reduce((sum, item) => sum + item.currentValue, 0);
-  const totalProfitGross = record.breakdown.reduce((sum, item) => sum + item.profitGross, 0);
-  const totalProfitNet = record.breakdown.reduce((sum, item) => sum + item.profitNet, 0);
-  const totalReturnGross = totalInvested > 0 ? (totalProfitGross / totalInvested) * 100 : 0;
-  const totalReturnNet = totalInvested > 0 ? (totalProfitNet / totalInvested) * 100 : 0;
+  const totalInvested = record.investedTotal;
+  const totalValue = record.portfolioValue;
+  const totalProfitGross = record.profitGross;
+  const totalProfitNet = record.profitNet;
+  const totalReturnGross = record.returnGrossPct;
+  const totalReturnNet = record.returnNetPct;
   const currency = record.baseCurrency || 'PLN';
 
   return (
     <div className="space-y-6">
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-                <div className="bg-zinc-900/60 border border-zinc-800/80 rounded-xl p-4 flex flex-col justify-between">
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+        <div className="bg-zinc-900/60 border border-zinc-800/80 rounded-xl p-4 flex flex-col justify-between">
           <div className="flex items-center justify-between text-zinc-400">
             <span className="text-xs font-medium">{t('reports.valuation')}</span>
             <Wallet className="w-4 h-4 text-emerald-400" />
@@ -64,7 +64,7 @@ export const MonthDetailView: React.FC<MonthDetailViewProps> = ({
           </div>
         </div>
 
-                <div className="bg-zinc-900/60 border border-zinc-800/80 rounded-xl p-4 flex flex-col justify-between">
+        <div className="bg-zinc-900/60 border border-zinc-800/80 rounded-xl p-4 flex flex-col justify-between">
           <div className="flex items-center justify-between text-zinc-400">
             <span className="text-xs font-medium">{t('reports.netProfitBelka')}</span>
             <ShieldCheck className="w-4 h-4 text-emerald-400" />
@@ -86,7 +86,7 @@ export const MonthDetailView: React.FC<MonthDetailViewProps> = ({
           </div>
         </div>
 
-                <div className="bg-zinc-900/60 border border-zinc-800/80 rounded-xl p-4 flex flex-col justify-between">
+        <div className="bg-zinc-900/60 border border-zinc-800/80 rounded-xl p-4 flex flex-col justify-between">
           <div className="flex items-center justify-between text-zinc-400">
             <span className="text-xs font-medium">{t('reports.netReturnRate')}</span>
             <Percent className="w-4 h-4 text-cyan-400" />
@@ -108,7 +108,7 @@ export const MonthDetailView: React.FC<MonthDetailViewProps> = ({
           </div>
         </div>
 
-                <div className="bg-zinc-900/60 border border-zinc-800/80 rounded-xl p-4 flex flex-col justify-between">
+        <div className="bg-zinc-900/60 border border-zinc-800/80 rounded-xl p-4 flex flex-col justify-between">
           <div className="flex items-center justify-between text-zinc-400">
             <span className="text-xs font-medium">{t('reports.momProfit')}</span>
             <TrendingUp className="w-4 h-4 text-amber-400" />
@@ -131,8 +131,8 @@ export const MonthDetailView: React.FC<MonthDetailViewProps> = ({
         </div>
       </div>
 
-            <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
-                <div className="lg:col-span-8 bg-zinc-900/50 border border-zinc-800/80 rounded-xl overflow-hidden">
+      <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
+        <div className="lg:col-span-8 bg-zinc-900/50 border border-zinc-800/80 rounded-xl overflow-hidden">
           <div className="p-4 sm:p-5 border-b border-zinc-800/80 flex items-center justify-between">
             <div>
               <span className="text-xs font-semibold text-zinc-400 uppercase tracking-wider">
@@ -210,7 +210,7 @@ export const MonthDetailView: React.FC<MonthDetailViewProps> = ({
                 ))}
               </tbody>
 
-                            <tfoot className="bg-[#0b0c10] border-t-2 border-zinc-700/80 font-mono text-xs">
+              <tfoot className="bg-[#0b0c10] border-t-2 border-zinc-700/80 font-mono text-xs">
                 <tr className="font-semibold text-zinc-200">
                   <td className="py-3 px-3 font-sans text-xs sm:text-sm text-zinc-100 whitespace-nowrap">
                     {t('reports.total')}
@@ -255,10 +255,11 @@ export const MonthDetailView: React.FC<MonthDetailViewProps> = ({
           </div>
         </div>
 
-                <div className="lg:col-span-4">
+        <div className="lg:col-span-4">
           <MonthDonutChart
             breakdown={record.breakdown}
             totalValue={record.portfolioValue}
+            currency={currency}
           />
         </div>
       </div>

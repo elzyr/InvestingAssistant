@@ -1,13 +1,8 @@
-const formatters: Record<string, Intl.NumberFormat> = {
-  PLN: new Intl.NumberFormat('pl-PL', { style: 'currency', currency: 'PLN', minimumFractionDigits: 2, maximumFractionDigits: 2 }),
-  USD: new Intl.NumberFormat('pl-PL', { style: 'currency', currency: 'USD', minimumFractionDigits: 2, maximumFractionDigits: 2 }),
-  EUR: new Intl.NumberFormat('pl-PL', { style: 'currency', currency: 'EUR', minimumFractionDigits: 2, maximumFractionDigits: 2 }),
-};
+import i18n from '../i18n/config.ts';
 
-const pctFormatter = new Intl.NumberFormat('pl-PL', {
-  minimumFractionDigits: 2,
-  maximumFractionDigits: 2,
-});
+function getLocale(): string {
+  return i18n?.language?.startsWith('en') ? 'en-US' : 'pl-PL';
+}
 
 export function formatNumberWithSpaces(val: number): string {
   return Math.round(val).toString().replace(/\B(?=(\d{3})+(?!\d))/g, ' ');
@@ -25,7 +20,12 @@ export function formatMoney(amount: number, currency: string, showSign = false):
 }
 
 export function formatPLN(amount: number, forceSign = false, currency = 'PLN'): string {
-  const fmt = formatters[currency] || formatters['PLN'];
+  const fmt = new Intl.NumberFormat(getLocale(), {
+    style: 'currency',
+    currency,
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  });
   const formatted = fmt.format(Math.abs(amount));
   if (amount < 0) return `-${formatted}`;
   if (forceSign && amount > 0) return `+${formatted}`;
@@ -33,7 +33,11 @@ export function formatPLN(amount: number, forceSign = false, currency = 'PLN'): 
 }
 
 export function formatPercent(pct: number, forceSign = false): string {
-  const formatted = `${pctFormatter.format(Math.abs(pct))}%`;
+  const fmt = new Intl.NumberFormat(getLocale(), {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  });
+  const formatted = `${fmt.format(Math.abs(pct))}%`;
   if (pct < 0) return `-${formatted}`;
   if (forceSign && pct > 0) return `+${formatted}`;
   return formatted;
