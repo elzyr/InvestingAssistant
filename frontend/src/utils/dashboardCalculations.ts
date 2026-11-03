@@ -26,8 +26,11 @@ export interface EnrichedHolding {
   profitPct: number;
   dailyChange: number;
   purchaseDate?: string | Date | number;
+  seriesName?: string | null;
   bondRate?: number | null;
   bondMargin?: number | null;
+  termMonths?: number | null;
+  isPriceUnavailable?: boolean;
 }
 
 export function getTransactionCashFlow(
@@ -36,17 +39,23 @@ export function getTransactionCashFlow(
   rates: Record<string, number>
 ): { amount: number; isOutflow: boolean } {
   const isForeign = tx.currency !== baseCurrency;
+  const rawProduct = (tx.quantity != null && tx.price != null) ? tx.quantity * tx.price : ((tx as any).amount ?? 0);
   const txFxFallback =
     tx.exchangeRateToBase ||
-    (tx.baseAmount && tx.quantity * tx.price > 0
-      ? tx.baseAmount / (tx.quantity * tx.price)
-      : 1);
-  const fx = isForeign ? (rates[tx.currency] || txFxFallback) : 1;
-  if (tx.transactionType === 'BUY') {
-    const cost = tx.baseAmount ?? (tx.quantity * tx.price + (tx.commission || 0)) * fx;
+    (tx.baseAmount && rawProduct > 0
+      ? tx.baseAmount / rawProduct
+      : undefined);
+  const fx = isForeign ? (txFxFallback || rates[tx.currency] || 1) : 1;
+  const txType = (tx.transactionType || (tx as any).type);
+  if (txType === 'BUY') {
+    const cost = tx.baseAmount ?? ((tx.quantity * tx.price) + (tx.commission || 0)) * fx;
     return { amount: cost, isOutflow: true };
+  } else if (txType === 'DIVIDEND') {
+    const rawDiv = (tx as any).amount ?? ((tx.price ?? 0) * (tx.quantity || 1));
+    const dividendAmount = tx.baseAmount ?? (rawDiv - (tx.commission || 0)) * fx;
+    return { amount: dividendAmount, isOutflow: false };
   } else {
-    const proceeds = tx.baseAmount ?? (tx.quantity * tx.price - (tx.commission || 0)) * fx;
+    const proceeds = tx.baseAmount ?? ((tx.quantity * tx.price) - (tx.commission || 0)) * fx;
     return { amount: proceeds, isOutflow: false };
   }
 }
@@ -82,7 +91,7 @@ export function buildDashboardPositions({
   const nonBonds = enrichedHoldings.filter((h) => !h.isBond);
   for (const h of nonBonds) {
     const allHoldingTransactions = transactions
-      .filter((t) => t.instrumentId === h.instrumentId)
+      .filter((t) => t.instrumentId === h.instrumentId && (h.isBond ? (t.seriesName || '') === (h.seriesName ?? (h.ticker.startsWith('PL_BOND') ? '' : h.ticker)) : !t.currency || !h.currency || t.currency === h.currency))
       .sort((a, b) => new Date(a.executedAt).getTime() - new Date(b.executedAt).getTime());
 
     const buyTransactions = allHoldingTransactions.filter((t) => t.transactionType === 'BUY');
@@ -169,7 +178,15 @@ export function buildDashboardPositions({
       };
     });
 
-    const posProfitGross = h.profit;
+    const dividendTxs = allHoldingTransactions.filter(
+      (t) => (t.transactionType || (t as any).type) === 'DIVIDEND'
+    );
+    const totalDividends = dividendTxs.reduce(
+      (sum, dTx) => sum + getTransactionCashFlow(dTx, baseCurrency, rates).amount,
+      0
+    );
+
+    const posProfitGross = h.profit + totalDividends;
     const posTax = shouldApplyTax && posProfitGross > 0 ? posProfitGross * 0.19 : 0;
     const posProfit = posProfitGross - posTax;
     const posProfitPct = h.totalCost > 0 ? (posProfit / h.totalCost) * 100 : 0;
@@ -221,6 +238,7 @@ export function buildDashboardPositions({
       xirr: posHoldingResult.xirr,
       isXirrFallback: posHoldingResult.isSimpleFallback,
       fxDecomposition: parentDecomp,
+      isPriceUnavailable: h.isPriceUnavailable,
     });
   }
 
@@ -233,6 +251,16 @@ export function buildDashboardPositions({
     else if (bh.ticker.startsWith('COI')) family = 'COI';
     else if (bh.ticker.startsWith('ROR')) family = 'ROR';
     else if (bh.ticker.startsWith('DOR')) family = 'DOR';
+    else if (bh.ticker.startsWith('OTS')) family = 'OTS';
+    else if (bh.ticker.startsWith('EDO')) family = 'EDO';
+    else if (!bh.seriesName) {
+      if (bh.termMonths === 36) family = 'TOS';
+      else if (bh.termMonths === 48) family = 'COI';
+      else if (bh.termMonths === 12) family = 'ROR';
+      else if (bh.termMonths === 24) family = 'DOR';
+      else if (bh.termMonths === 3) family = 'OTS';
+      else if (bh.bondMargin == null || bh.bondMargin === 0) family = 'TOS';
+    }
 
     if (!bondFamilies[family]) {
       bondFamilies[family] = [];
@@ -305,19 +333,20 @@ export function buildDashboardPositions({
         const yShare = totalPortfolioValue > 0 ? (yVal / totalPortfolioValue) * 100 : 0;
         const purchaseYear = Number(year);
         const yearInstrumentIds = [...new Set(yearItems.map((i) => i.instrumentId))];
-        const yearSeriesNames = new Set(yearItems.map((i) => i.ticker).filter(Boolean));
+        const yearSeriesKeys = new Set(
+          yearItems.map((i) => i.seriesName ?? (i.ticker.startsWith('PL_BOND') ? '' : i.ticker))
+        );
 
         const cohortTxs = transactions
           .filter((t) => {
             if (!yearInstrumentIds.includes(t.instrumentId) || !t.executedAt) return false;
+            const txSeriesKey = t.seriesName ?? '';
+            if (!yearSeriesKeys.has(txSeriesKey)) return false;
             const tYear = new Date(t.executedAt).getFullYear();
             if (t.transactionType === 'BUY') {
               return tYear === purchaseYear;
             }
             if (t.transactionType === 'SELL') {
-              if (t.seriesName) {
-                return yearSeriesNames.has(t.seriesName);
-              }
               return tYear >= purchaseYear;
             }
             return false;
@@ -359,7 +388,7 @@ export function buildDashboardPositions({
           yearItems.forEach((item) => {
             yearFlows.push({
               amount: -item.totalCost,
-              date: item.purchaseDate || `${year}-01-01`,
+              date: item.purchaseDate ? standardizeDate(item.purchaseDate) : `${year}-01-01`,
             });
           });
         }
@@ -446,13 +475,29 @@ export function buildDashboardSummary({
   nowTimestamp,
   t,
 }: BuildDashboardSummaryParams): PortfolioSummary {
-  const grossProfit = totalPortfolioValue - totalPortfolioCost;
+  const dividendTxs = transactions.filter(
+    (t) => (t.transactionType || (t as any).type) === 'DIVIDEND'
+  );
+  const totalDividends = dividendTxs.reduce(
+    (sum, dTx) => sum + getTransactionCashFlow(dTx, baseCurrency, rates).amount,
+    0
+  );
+
+  const grossProfit = totalPortfolioValue - totalPortfolioCost + totalDividends;
 
   let totalBelkaTax = 0;
   if (shouldApplyTax) {
     enrichedHoldings.forEach((h) => {
-      if (h.profit > 0) {
-        totalBelkaTax += h.profit * 0.19;
+      const hDivs = transactions
+        .filter(
+          (t) =>
+            t.instrumentId === h.instrumentId &&
+            ((t.transactionType || (t as any).type) === 'DIVIDEND')
+        )
+        .reduce((sum, dTx) => sum + getTransactionCashFlow(dTx, baseCurrency, rates).amount, 0);
+      const hProfit = h.profit + hDivs;
+      if (hProfit > 0) {
+        totalBelkaTax += hProfit * 0.19;
       }
     });
   }
@@ -480,19 +525,32 @@ export function buildDashboardSummary({
 
   const activeHoldings = enrichedHoldings.filter((h) => h.quantity > 0 && h.totalCost > 0);
   for (const h of activeHoldings) {
-    const holdingBuyTxs = transactions.filter(
-      (t) => t.instrumentId === h.instrumentId && t.transactionType === 'BUY'
-    );
-    if (holdingBuyTxs.length > 0) {
-      const totalBuyCost = holdingBuyTxs.reduce((sum, tx) => {
-        const { amount } = getTransactionCashFlow(tx, baseCurrency, rates);
-        return sum + amount;
-      }, 0);
-      const scale = totalBuyCost > 0 ? Math.min(1, h.totalCost / totalBuyCost) : 1;
-      holdingBuyTxs.forEach((tx) => {
-        const { amount } = getTransactionCashFlow(tx, baseCurrency, rates);
-        hurdleTransactions.push({ cost: amount * scale, executedAt: tx.executedAt });
-      });
+    const allHoldingTransactions = transactions
+      .filter((t) => t.instrumentId === h.instrumentId && (h.isBond ? (t.seriesName || '') === (h.seriesName ?? (h.ticker.startsWith('PL_BOND') ? '' : h.ticker)) : !t.currency || !h.currency || t.currency === h.currency))
+      .sort((a, b) => new Date(a.executedAt).getTime() - new Date(b.executedAt).getTime());
+    const buyTransactions = allHoldingTransactions.filter((t) => t.transactionType === 'BUY');
+    const sellTransactions = allHoldingTransactions.filter((t) => t.transactionType === 'SELL');
+    if (buyTransactions.length > 0) {
+      let totalSoldQty = sellTransactions.reduce((sum, t) => sum + t.quantity, 0);
+      let lotPushed = false;
+      for (const buyTx of buyTransactions) {
+        if (totalSoldQty >= buyTx.quantity) {
+          totalSoldQty -= buyTx.quantity;
+          continue;
+        }
+        const remainingQty = buyTx.quantity - totalSoldQty;
+        totalSoldQty = 0;
+        const { amount: originalCost } = getTransactionCashFlow(buyTx, baseCurrency, rates);
+        const effectiveCost = originalCost * (remainingQty / buyTx.quantity);
+        hurdleTransactions.push({ cost: effectiveCost, executedAt: buyTx.executedAt });
+        lotPushed = true;
+      }
+      if (!lotPushed && h.totalCost > 0) {
+        hurdleTransactions.push({
+          cost: h.totalCost,
+          executedAt: h.purchaseDate || nowTimestamp,
+        });
+      }
     } else {
       hurdleTransactions.push({
         cost: h.totalCost,
@@ -523,7 +581,8 @@ export function buildDashboardSummary({
     : undefined;
 
   const totalDailyChange = enrichedHoldings.reduce((sum, h) => sum + (h.dailyChange || 0), 0);
-  const prevPortfolioVal = totalPortfolioValue - totalDailyChange;
+  const displayPortfolioValue = shouldApplyTax ? netPortfolioVal : totalPortfolioValue;
+  const prevPortfolioVal = displayPortfolioValue - totalDailyChange;
   const dailyChangePct = prevPortfolioVal > 0 ? (totalDailyChange / prevPortfolioVal) * 100 : 0;
 
   const annualizedUnit = t('dashboard.annualizedReturn', 'r/r');
@@ -547,7 +606,7 @@ export function buildDashboardSummary({
   }
 
   return {
-    portfolioValueFormatted: formatMoney(totalPortfolioValue, baseCurrency),
+    portfolioValueFormatted: formatMoney(displayPortfolioValue, baseCurrency),
     dailyChangeAmountFormatted: formatMoney(totalDailyChange, baseCurrency, true),
     dailyChangePercentFormatted: `${totalDailyChange >= 0 ? '+' : ''}${dailyChangePct.toFixed(2)}% ${t ? t('dashboard.today', 'dzisiaj') : 'dzisiaj'}`,
     totalCostFormatted: formatMoney(totalPortfolioCost, baseCurrency),
@@ -558,8 +617,35 @@ export function buildDashboardSummary({
     positionCount: positions.length,
     taxMode,
     profitLabel: shouldApplyTax ? (t ? t('dashboard.netProfit', 'Zysk netto') : 'Zysk netto') : (t ? t('dashboard.grossProfit', 'Zysk brutto') : 'Zysk brutto'),
+    portfolioValueLabel: shouldApplyTax
+      ? (t ? t('dashboard.netPortfolioValue', 'Wartość portfela (netto)') : 'Wartość portfela (netto)')
+      : (t ? t('dashboard.grossPortfolioValue', 'Wartość portfela (brutto)') : 'Wartość portfela (brutto)'),
     taxNoteFormatted,
     nominalXirr,
     realXirr: realMetrics.realXirr,
   };
+}
+
+export function standardizeDate(dateInput: string | Date | number): string {
+  if (typeof dateInput === 'string') {
+    if (/^\d{4}-\d{2}-\d{2}/.test(dateInput)) {
+      return dateInput.slice(0, 10);
+    }
+    const dt = new Date(dateInput);
+    if (!isNaN(dt.getTime())) {
+      const y = dt.getFullYear();
+      const m = String(dt.getMonth() + 1).padStart(2, '0');
+      const d = String(dt.getDate()).padStart(2, '0');
+      return `${y}-${m}-${d}`;
+    }
+    return dateInput;
+  }
+  const dt = typeof dateInput === 'number' ? new Date(dateInput) : dateInput;
+  if (dt instanceof Date && !isNaN(dt.getTime())) {
+    const y = dt.getFullYear();
+    const m = String(dt.getMonth() + 1).padStart(2, '0');
+    const d = String(dt.getDate()).padStart(2, '0');
+    return `${y}-${m}-${d}`;
+  }
+  return String(dateInput);
 }

@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react';
 import { useActivePortfolioData } from '../hooks/useActivePortfolioData.ts';
-import { calculateBondCurrentPrice, isBondItem } from '../utils/portfolioUnifiedEngine.ts';
+import { calculateBondCurrentPrice, getBondFamily, isBondItem } from '../utils/portfolioUnifiedEngine.ts';
 import { StressTestingView } from '../components/analytics/StressTestingView.tsx';
 
 export const MonteCarloPage = () => {
@@ -13,7 +13,7 @@ export const MonteCarloPage = () => {
     rates,
     baseCurrency,
     cpi,
-  } = useActivePortfolioData();
+  } = useActivePortfolioData(undefined, { skipHistory: true });
 
   const [nowTimestamp] = useState(() => Date.now());
 
@@ -104,14 +104,17 @@ export const MonteCarloPage = () => {
     for (const tx of transactions) {
       if (tx.transactionType !== 'BUY') continue;
       const inst = instruments[tx.instrumentId];
-      const sName = (tx.seriesName || inst?.symbol || '').toUpperCase();
+      const isBond = isBondItem(tx, inst);
       const fx = (tx.currency === baseCurrency ? 1 : rates[tx.currency]) || 1;
       const cost = tx.baseAmount ?? tx.quantity * tx.price * fx;
 
-      if (sName.startsWith('TOS')) {
-        tosTotal += cost;
-      } else if (sName.startsWith('EDO') || sName.startsWith('COI')) {
-        edoTotal += cost;
+      if (isBond) {
+        const fam = getBondFamily(tx.seriesName || inst?.symbol, tx.termMonths, tx.bondMargin);
+        if (fam === 'TOS' || fam === 'ROR' || fam === 'DOR' || fam === 'OTS') {
+          tosTotal += cost;
+        } else {
+          edoTotal += cost;
+        }
       } else {
         etfTotal += cost;
       }

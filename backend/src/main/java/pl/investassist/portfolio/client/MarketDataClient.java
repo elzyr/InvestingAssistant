@@ -7,6 +7,7 @@ import java.util.ArrayList;
 import java.util.List;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.client.SimpleClientHttpRequestFactory;
+import org.springframework.cache.annotation.Cacheable;
 import org.springframework.stereotype.Component;
 import org.springframework.web.client.RestClient;
 import pl.investassist.common.enums.Currency;
@@ -31,6 +32,7 @@ public class MarketDataClient {
         .build();
   }
 
+  @Cacheable(value = "exchangeRates", key = "#from + '-' + #to + '-' + (#date != null ? #date : 'spot')", unless = "#result == null")
   public BigDecimal getExchangeRate(Currency from, Currency to, LocalDate date) {
     if (from.equals(to)) {
       return BigDecimal.ONE;

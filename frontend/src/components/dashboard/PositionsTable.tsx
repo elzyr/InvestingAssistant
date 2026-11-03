@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import { ChevronDown, Pencil } from 'lucide-react';
+import { ChevronDown, Pencil, AlertTriangle } from 'lucide-react';
 import type { Position, TaxMode } from '../../types/dashboard.ts';
 
 interface PositionRowProps {
@@ -71,8 +71,13 @@ const PositionRow = ({
           {position.sharePercent.toFixed(1)}%
         </div>
 
-        <div className="text-right font-mono text-xs text-zinc-300">
-          {position.priceFormatted}
+        <div className="text-right font-mono text-xs text-zinc-300 flex items-center justify-end gap-1">
+          <span>{position.priceFormatted}</span>
+          {position.isPriceUnavailable && (
+            <span title={t('dashboard.priceUnavailable', 'Brak aktualnej wyceny rynkowej (użyto ceny zakupu)')} className="inline-flex items-center">
+              <AlertTriangle className="w-3.5 h-3.5 text-amber-400 shrink-0 cursor-help" />
+            </span>
+          )}
         </div>
 
         <div className="text-right font-mono font-bold text-xs text-white">

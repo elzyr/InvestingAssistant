@@ -2,6 +2,15 @@ import unittest
 from unittest.mock import patch, MagicMock
 
 class TestInstrumentSearch(unittest.TestCase):
+    def setUp(self):
+        from app.services.cache_service import cache_service
+        try:
+            cache_service.redis_client.flushdb()
+        except Exception:
+            pass
+        with cache_service._mem_lock:
+            cache_service._memory_cache.clear()
+
     def test_search_instruments_returns_stocks_and_etfs_with_mapped_types(self):
         from app.services.yahoo_service import YahooService
 

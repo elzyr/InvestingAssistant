@@ -3,6 +3,7 @@ package pl.investassist.portfolio.service;
 import java.math.BigDecimal;
 import java.math.RoundingMode;
 import java.time.LocalDateTime;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Objects;
 import java.util.Optional;
@@ -80,8 +81,8 @@ public class PositionService {
           } else if (timeB != null) {
             return -1;
           }
-          int typeA = a.getTransactionType() == TransactionType.BUY ? 0 : 1;
-          int typeB = b.getTransactionType() == TransactionType.BUY ? 0 : 1;
+          int typeA = a.getTransactionType() == TransactionType.BUY ? 0 : (a.getTransactionType() == TransactionType.DIVIDEND ? 2 : 1);
+          int typeB = b.getTransactionType() == TransactionType.BUY ? 0 : (b.getTransactionType() == TransactionType.DIVIDEND ? 2 : 1);
           if (typeA != typeB) return Integer.compare(typeA, typeB);
           if (a.getId() != null && b.getId() != null) {
             return a.getId().compareTo(b.getId());
@@ -104,13 +105,8 @@ public class PositionService {
       resolvedCurrency = posOpt.map(Position::getCurrency).orElse(transactions.get(0).getCurrency());
     }
 
-    BigDecimal totalQuantity = BigDecimal.ZERO;
-    BigDecimal totalCostNative = BigDecimal.ZERO;
-    BigDecimal totalCostBase = BigDecimal.ZERO;
-    LocalDateTime firstPurchaseDate = null;
-    BigDecimal bondRate = null;
-    BigDecimal bondMargin = null;
-    Integer termMonths = null;
+    List<BuyLot> buyLots = new ArrayList<>();
+    BigDecimal currentTotalQuantity = BigDecimal.ZERO;
 
     for (Transaction tx : transactions) {
       if (tx.getTransactionType() == TransactionType.BUY) {
@@ -126,44 +122,69 @@ public class PositionService {
         BigDecimal costNative = resolvedPrice.multiply(qty).add(comm);
         BigDecimal costBase = tx.getBaseAmount() != null ? tx.getBaseAmount() : costNative;
 
-        totalQuantity = totalQuantity.add(qty);
-        totalCostNative = totalCostNative.add(costNative);
-        totalCostBase = totalCostBase.add(costBase);
-
-        if (firstPurchaseDate == null && tx.getExecutedAt() != null) {
-          firstPurchaseDate = tx.getExecutedAt();
-        }
-        if (tx.getBondRate() != null) bondRate = tx.getBondRate();
-        if (tx.getBondMargin() != null) bondMargin = tx.getBondMargin();
-        if (tx.getTermMonths() != null) termMonths = tx.getTermMonths();
+        buyLots.add(new BuyLot(
+            qty,
+            costNative,
+            costBase,
+            tx.getExecutedAt(),
+            tx.getBondRate(),
+            tx.getBondMargin(),
+            tx.getTermMonths()
+        ));
+        currentTotalQuantity = currentTotalQuantity.add(qty);
       } else if (tx.getTransactionType() == TransactionType.SELL) {
         BigDecimal sellQty = tx.getQuantity();
-        BigDecimal remaining = totalQuantity.subtract(sellQty);
-        if (remaining.compareTo(BigDecimal.ZERO) < 0) {
+        if (currentTotalQuantity.compareTo(sellQty) < 0) {
+          BigDecimal diff = currentTotalQuantity.subtract(sellQty);
           throw new InsufficientPositionException(
-              "Insufficient quantity: transaction on " + tx.getExecutedAt() + " causes negative balance (" + remaining + ")");
+              "Insufficient quantity: transaction on " + tx.getExecutedAt() + " causes negative balance (" + diff + ")");
         }
-        if (totalQuantity.compareTo(BigDecimal.ZERO) > 0) {
-          if (remaining.compareTo(BigDecimal.ZERO) == 0) {
-            totalQuantity = BigDecimal.ZERO;
-            totalCostNative = BigDecimal.ZERO;
-            totalCostBase = BigDecimal.ZERO;
-            firstPurchaseDate = null;
-            bondRate = null;
-            bondMargin = null;
-            termMonths = null;
-          } else {
-            totalCostNative = totalCostNative.multiply(remaining).divide(totalQuantity, 10, RoundingMode.HALF_UP);
-            totalCostBase = totalCostBase.multiply(remaining).divide(totalQuantity, 10, RoundingMode.HALF_UP);
-            totalQuantity = remaining;
+
+        BigDecimal toDeduct = sellQty;
+        for (BuyLot lot : buyLots) {
+          if (lot.remainingQuantity.compareTo(BigDecimal.ZERO) > 0) {
+            if (lot.remainingQuantity.compareTo(toDeduct) <= 0) {
+              toDeduct = toDeduct.subtract(lot.remainingQuantity);
+              lot.remainingQuantity = BigDecimal.ZERO;
+            } else {
+              lot.remainingQuantity = lot.remainingQuantity.subtract(toDeduct);
+              toDeduct = BigDecimal.ZERO;
+              break;
+            }
           }
         }
+        currentTotalQuantity = currentTotalQuantity.subtract(sellQty);
       }
     }
 
-    if (totalQuantity.compareTo(BigDecimal.ZERO) <= 0) {
+    List<BuyLot> activeLots = buyLots.stream()
+        .filter(lot -> lot.remainingQuantity.compareTo(BigDecimal.ZERO) > 0)
+        .toList();
+
+    if (activeLots.isEmpty() || currentTotalQuantity.compareTo(BigDecimal.ZERO) <= 0) {
       posOpt.ifPresent(positionRepository::delete);
       return;
+    }
+
+    BigDecimal totalQuantity = BigDecimal.ZERO;
+    BigDecimal totalCostNative = BigDecimal.ZERO;
+    BigDecimal totalCostBase = BigDecimal.ZERO;
+    BigDecimal bondRate = null;
+    BigDecimal bondMargin = null;
+    Integer termMonths = null;
+
+    for (BuyLot lot : activeLots) {
+      totalQuantity = totalQuantity.add(lot.remainingQuantity);
+      BigDecimal lotCostNative = lot.initialCostNative.multiply(lot.remainingQuantity)
+          .divide(lot.initialQuantity, 10, RoundingMode.HALF_UP);
+      BigDecimal lotCostBase = lot.initialCostBase.multiply(lot.remainingQuantity)
+          .divide(lot.initialQuantity, 10, RoundingMode.HALF_UP);
+      totalCostNative = totalCostNative.add(lotCostNative);
+      totalCostBase = totalCostBase.add(lotCostBase);
+
+      if (lot.bondRate != null) bondRate = lot.bondRate;
+      if (lot.bondMargin != null) bondMargin = lot.bondMargin;
+      if (lot.termMonths != null) termMonths = lot.termMonths;
     }
 
     Position position = posOpt.orElseGet(() -> {
@@ -179,11 +200,40 @@ public class PositionService {
     position.setTotalCostBase(totalCostBase.setScale(4, RoundingMode.HALF_UP));
     position.setCurrency(resolvedCurrency);
     position.setSeriesName(cleanSeries);
-    position.setPurchaseDate(firstPurchaseDate != null ? firstPurchaseDate : LocalDateTime.now());
+    position.setPurchaseDate(activeLots.get(0).executedAt != null ? activeLots.get(0).executedAt : LocalDateTime.now());
     position.setBondRate(bondRate);
     position.setBondMargin(bondMargin);
     position.setTermMonths(termMonths);
 
     positionRepository.save(position);
+  }
+
+  private static class BuyLot {
+    final BigDecimal initialQuantity;
+    BigDecimal remainingQuantity;
+    final BigDecimal initialCostNative;
+    final BigDecimal initialCostBase;
+    final LocalDateTime executedAt;
+    final BigDecimal bondRate;
+    final BigDecimal bondMargin;
+    final Integer termMonths;
+
+    BuyLot(
+        BigDecimal quantity,
+        BigDecimal initialCostNative,
+        BigDecimal initialCostBase,
+        LocalDateTime executedAt,
+        BigDecimal bondRate,
+        BigDecimal bondMargin,
+        Integer termMonths) {
+      this.initialQuantity = quantity;
+      this.remainingQuantity = quantity;
+      this.initialCostNative = initialCostNative;
+      this.initialCostBase = initialCostBase;
+      this.executedAt = executedAt;
+      this.bondRate = bondRate;
+      this.bondMargin = bondMargin;
+      this.termMonths = termMonths;
+    }
   }
 }

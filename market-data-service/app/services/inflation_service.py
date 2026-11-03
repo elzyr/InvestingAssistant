@@ -1,3 +1,6 @@
+import logging
+import requests
+from app.services.cache_service import cache_service
 
 INFLATION_HISTORY = [
     (2024, 12, 4.7, "GUS"),
@@ -10,6 +13,8 @@ INFLATION_HISTORY = [
     (2026, 6, 2.5, "NBP"),
     (2026, 7, 3.0, "NBP"),
     (2026, 8, 3.4, "NBP"),
+    (2026, 9, 4.9, "GUS"),
+    (2026, 10, 5.0, "GUS"),
 ]
 
 def _to_record(row: tuple) -> dict:
@@ -30,7 +35,28 @@ class InflationService:
 
     @staticmethod
     def get_cpi() -> dict:
-        return _CPI_SUMMARY
+        cache_key = "macro:inflation:cpi"
+        cached = cache_service.get(cache_key)
+        if cached is not None and isinstance(cached, dict):
+            return cached
+
+        summary = dict(_CPI_SUMMARY)
+        try:
+            resp = requests.get(
+                "https://api-dbw.stat.gov.pl/api/1.1.0/variable/variable-data-section?id-zmienna=305&id-przekroj=736&id-rok=2026&id-okres=281&ile-na-stronie=10",
+                timeout=3,
+            )
+            if resp.status_code == 200:
+                data = resp.json()
+                if isinstance(data, dict) and "data" in data and isinstance(data["data"], list) and len(data["data"]) > 0:
+                    val = data["data"][0].get("wartosc")
+                    if isinstance(val, (int, float)):
+                        summary["currentCpi"] = round(float(val), 2)
+        except Exception as e:
+            logging.info(f"GUS DBW API unavailable, falling back to static history: {e}")
+
+        cache_service.set(cache_key, summary, expire=86400)
+        return summary
 
     @staticmethod
     def get_monthly_cpi(year: int | None = None) -> list[dict]:

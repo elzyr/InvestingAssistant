@@ -20,6 +20,12 @@ class MarketHistoryRepository:
         if dialect:
             self.dialect = dialect
             self.is_postgres = (dialect == "postgres")
+        elif self.conn is not None and isinstance(self.conn, sqlite3.Connection):
+            self.dialect = "sqlite"
+            self.is_postgres = False
+        elif db_path is not None and not database_url:
+            self.dialect = "sqlite"
+            self.is_postgres = False
         elif self.database_url or db_host:
             self.dialect = "postgres"
             self.is_postgres = True
@@ -27,6 +33,7 @@ class MarketHistoryRepository:
             self.dialect = "sqlite"
             self.is_postgres = False
 
+        self.schema = getattr(settings, "DB_SCHEMA", "market_data") or "market_data"
         self.pool = None
         if self.is_postgres and self.conn is None:
             if not self.database_url and db_host:
@@ -57,11 +64,17 @@ class MarketHistoryRepository:
             return self.conn, True
         if self.is_postgres:
             self._ensure_pool()
+            conn = None
             if self.pool is not None:
                 conn = self.pool.getconn()
-                return conn, False
-            import psycopg2
-            conn = psycopg2.connect(self.database_url)
+            else:
+                import psycopg2
+                conn = psycopg2.connect(self.database_url)
+            try:
+                with conn.cursor() as cur:
+                    cur.execute(f"SET search_path TO {self.schema}, public;")
+            except Exception:
+                pass
             return conn, False
         db_dir = os.path.dirname(self.db_path)
         if db_dir:
@@ -98,6 +111,8 @@ class MarketHistoryRepository:
         try:
             cursor = conn.cursor()
             if self.is_postgres:
+                cursor.execute(f"CREATE SCHEMA IF NOT EXISTS {self.schema};")
+                cursor.execute(f"SET search_path TO {self.schema}, public;")
                 cursor.execute("""
                     CREATE TABLE IF NOT EXISTS daily_price_history (
                         symbol TEXT,

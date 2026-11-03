@@ -119,6 +119,44 @@ class PositionServiceTest {
   }
 
   @Test
+  void recalculatePosition_whenPartialSellAcrossMultipleLots_appliesFifoReductionForCostBaseAndAveragePrice() {
+    Transaction tx1 = new Transaction();
+    tx1.setTransactionType(TransactionType.BUY);
+    tx1.setQuantity(new BigDecimal("10"));
+    tx1.setPrice(new BigDecimal("100"));
+    tx1.setBaseAmount(new BigDecimal("1000.0000"));
+    tx1.setExecutedAt(LocalDateTime.of(2025, 1, 10, 10, 0));
+
+    Transaction tx2 = new Transaction();
+    tx2.setTransactionType(TransactionType.BUY);
+    tx2.setQuantity(new BigDecimal("10"));
+    tx2.setPrice(new BigDecimal("200"));
+    tx2.setBaseAmount(new BigDecimal("2000.0000"));
+    tx2.setExecutedAt(LocalDateTime.of(2025, 2, 10, 10, 0));
+
+    Transaction sellTx = new Transaction();
+    sellTx.setTransactionType(TransactionType.SELL);
+    sellTx.setQuantity(new BigDecimal("10"));
+    sellTx.setPrice(new BigDecimal("250"));
+    sellTx.setExecutedAt(LocalDateTime.of(2025, 3, 10, 10, 0));
+
+    when(transactionRepository.findAllByPortfolioIdAndInstrumentIdOrderByExecutedAtAsc(portfolio.getId(), instrumentId))
+        .thenReturn(List.of(tx1, tx2, sellTx));
+    when(positionRepository.findFirstByPortfolioIdAndInstrumentIdAndSeriesNameIsNull(portfolio.getId(), instrumentId))
+        .thenReturn(Optional.empty());
+
+    positionService.recalculatePosition(portfolio, instrumentId, Currency.PLN, null);
+
+    ArgumentCaptor<Position> captor = ArgumentCaptor.forClass(Position.class);
+    verify(positionRepository).save(captor.capture());
+    Position saved = captor.getValue();
+
+    assertThat(saved.getQuantity()).isEqualByComparingTo("10");
+    assertThat(saved.getTotalCostBase()).isEqualByComparingTo("2000.0000");
+    assertThat(saved.getAverageBuyPrice()).isEqualByComparingTo("200.000000");
+  }
+
+  @Test
   void recalculatePosition_whenEmptyTransactions_deletesPositionIfExists() {
     Position existingPosition = new Position();
     existingPosition.setId(UUID.randomUUID());

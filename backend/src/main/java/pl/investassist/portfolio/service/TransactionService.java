@@ -201,10 +201,32 @@ public class TransactionService {
 
   @org.springframework.transaction.annotation.Transactional(readOnly = true)
   public List<TransactionResponse> getTransactions(UUID userId, UUID portfolioId) {
+    return getTransactions(userId, portfolioId, null, null);
+  }
+
+  @org.springframework.transaction.annotation.Transactional(readOnly = true)
+  public List<TransactionResponse> getTransactions(UUID userId, UUID portfolioId, Integer page, Integer size) {
     portfolioService.validateAndGetPortfolioEntity(userId, portfolioId);
-    return transactionRepository.findAllByPortfolioIdOrderByExecutedAtDesc(portfolioId).stream()
+    if (page != null && size != null && size > 0) {
+      try {
+        org.springframework.data.domain.Page<Transaction> paged =
+            transactionRepository.findAllByPortfolioIdOrderByExecutedAtDesc(
+                portfolioId, org.springframework.data.domain.PageRequest.of(page, size));
+        if (paged != null) {
+          return paged.getContent().stream().map(TransactionResponse::from).toList();
+        }
+      } catch (Exception ignored) {
+      }
+    }
+    List<TransactionResponse> all = transactionRepository.findAllByPortfolioIdOrderByExecutedAtDesc(portfolioId).stream()
         .map(TransactionResponse::from)
         .toList();
+    if (page != null && size != null && size > 0) {
+      int fromIndex = page * size;
+      if (fromIndex >= all.size()) return List.of();
+      return all.subList(fromIndex, Math.min(fromIndex + size, all.size()));
+    }
+    return all;
   }
 
   private record ResolvedFinancials(
@@ -240,7 +262,7 @@ public class TransactionService {
     if (baseAmount == null) {
       BigDecimal total = price.multiply(quantity);
       BigDecimal comm = commission != null ? commission : BigDecimal.ZERO;
-      BigDecimal netTotal = (txType == TransactionType.SELL) ? total.subtract(comm) : total.add(comm);
+      BigDecimal netTotal = (txType == TransactionType.SELL || txType == TransactionType.DIVIDEND) ? total.subtract(comm) : total.add(comm);
       if (txCurrency.equals(portfolio.getBaseCurrency())) {
         baseAmount = netTotal;
       } else {

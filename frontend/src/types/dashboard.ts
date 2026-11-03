@@ -53,6 +53,7 @@ export interface SubPosition {
   xirr?: number | null;
   isXirrFallback?: boolean;
   fxDecomposition?: { marketReturnPct: number; fxReturnPct: number } | null;
+  isPriceUnavailable?: boolean;
 }
 
 export interface Position {
@@ -72,6 +73,7 @@ export interface Position {
   xirr?: number | null;
   isXirrFallback?: boolean;
   fxDecomposition?: { marketReturnPct: number; fxReturnPct: number } | null;
+  isPriceUnavailable?: boolean;
 }
 
 export interface PortfolioSummary {
@@ -86,6 +88,7 @@ export interface PortfolioSummary {
   positionCount: number;
   taxMode: TaxMode;
   profitLabel: string;
+  portfolioValueLabel?: string;
   taxNoteFormatted?: string;
   nominalXirr?: number | null;
   realXirr?: number | null;

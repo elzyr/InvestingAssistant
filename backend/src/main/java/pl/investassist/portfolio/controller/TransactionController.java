@@ -37,8 +37,11 @@ public class TransactionController {
 
   @GetMapping
   public List<TransactionResponse> getAllTransactions(
-      @RequestHeader("X-User-Id") UUID userId, @PathVariable UUID portfolioId) {
-    return transactionService.getTransactions(userId, portfolioId);
+      @RequestHeader("X-User-Id") UUID userId,
+      @PathVariable UUID portfolioId,
+      @org.springframework.web.bind.annotation.RequestParam(required = false) Integer page,
+      @org.springframework.web.bind.annotation.RequestParam(required = false) Integer size) {
+    return transactionService.getTransactions(userId, portfolioId, page, size);
   }
 
   @PutMapping("/{transactionId}")

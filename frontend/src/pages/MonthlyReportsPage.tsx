@@ -40,7 +40,7 @@ export const MonthlyReportsPage: React.FC = () => {
     monthlyCpi,
     baseCurrency,
     loading,
-  } = useActivePortfolioData(selectedYear);
+  } = useActivePortfolioData(selectedYear, { skipPositions: true });
 
   const availableYears = useMemo(
     () => extractAvailableYears(transactions),

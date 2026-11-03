@@ -89,6 +89,21 @@ public class DatabaseSchemaInitializer implements ApplicationRunner {
 
       jdbcTemplate.execute("ALTER TABLE position DROP CONSTRAINT IF EXISTS uk_position_port_inst_series");
       jdbcTemplate.execute("ALTER TABLE position ADD CONSTRAINT uk_position_port_inst_series UNIQUE NULLS NOT DISTINCT (portfolio_id, instrument_id, series_name)");
+
+      jdbcTemplate.execute("CREATE INDEX IF NOT EXISTS idx_portfolio_user_id ON portfolio(user_id)");
+      jdbcTemplate.execute("CREATE INDEX IF NOT EXISTS idx_position_portfolio_id ON position(portfolio_id)");
+      jdbcTemplate.execute("CREATE INDEX IF NOT EXISTS idx_position_instrument_id ON position(instrument_id)");
+      jdbcTemplate.execute("CREATE INDEX IF NOT EXISTS idx_transaction_portfolio_executed ON transaction(portfolio_id, executed_at DESC)");
+      jdbcTemplate.execute("CREATE INDEX IF NOT EXISTS idx_transaction_instrument_id ON transaction(instrument_id)");
+      jdbcTemplate.execute("CREATE INDEX IF NOT EXISTS idx_instrument_type ON instrument(type)");
+      jdbcTemplate.execute("DROP INDEX IF EXISTS idx_instrument_symbol");
+      jdbcTemplate.execute("DROP INDEX IF EXISTS idx_position_port_inst_series");
+      jdbcTemplate.execute("CREATE INDEX IF NOT EXISTS idx_transaction_portfolio_inst_exec ON transaction(portfolio_id, instrument_id, executed_at ASC)");
+      try {
+        jdbcTemplate.execute("CREATE EXTENSION IF NOT EXISTS pg_trgm");
+        jdbcTemplate.execute("CREATE INDEX IF NOT EXISTS idx_instrument_search_trgm ON instrument USING gin (symbol gin_trgm_ops, name gin_trgm_ops)");
+      } catch (Exception ignored) {
+      }
     } catch (Exception e) {
       log.error("Error executing database schema migrations: {}", e.getMessage());
     }

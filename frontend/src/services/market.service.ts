@@ -6,12 +6,13 @@ import type {
 
 export interface PriceQuote {
   symbol: string;
-  price: number;
+  price: number | null;
   previousClose?: number;
   change?: number;
   changePercent?: number;
   currency: string;
   source: string;
+  isUnavailable?: boolean;
 }
 
 export interface ExchangeRate {
@@ -50,6 +51,20 @@ export interface HistoricalPriceResponse {
 }
 
 export const marketService = {
+  async getBatchPrices(
+    symbols: string[],
+    targetCurrency?: string
+  ): Promise<Record<string, PriceQuote>> {
+    if (!symbols || symbols.length === 0) {
+      return {};
+    }
+    const response = await apiClient.post<Record<string, PriceQuote>>('/api/prices/batch', {
+      symbols,
+      currency: targetCurrency,
+    });
+    return response.data;
+  },
+
   async getPrice(symbol: string, currency?: string): Promise<PriceQuote> {
     const params: Record<string, string> = {};
     if (currency) params.currency = currency;

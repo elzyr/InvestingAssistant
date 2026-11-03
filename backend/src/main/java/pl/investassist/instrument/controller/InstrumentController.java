@@ -35,9 +35,10 @@ public class InstrumentController {
   @GetMapping
   public ResponseEntity<List<InstrumentResponse>> getInstruments(
       @RequestParam(required = false) String search,
-      @RequestParam(required = false) InstrumentType type) {
-    List<InstrumentResponse> responses = instrumentService.getInstruments(search, type);
-    return ResponseEntity.ok(responses);
+      @RequestParam(required = false) InstrumentType type,
+      @RequestParam(required = false) Integer page,
+      @RequestParam(required = false) Integer size) {
+    return ResponseEntity.ok(instrumentService.getInstruments(search, type, page, size));
   }
 
   @GetMapping("/{id}")

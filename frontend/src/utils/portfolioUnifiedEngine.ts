@@ -8,15 +8,30 @@ import type {
   ProjectionHorizonOption,
   InflationAdjustMode 
 } from '../types/dashboard.ts';
+import { standardizeDate } from './dashboardCalculations.ts';
 
-export function getBondFamily(seriesOrSymbol?: string | null): string {
-  if (!seriesOrSymbol) return 'EDO';
-  const s = seriesOrSymbol.toUpperCase();
-  for (const prefix of ['TOS', 'COI', 'ROR', 'DOR', 'OTS', 'EDO']) {
-    if (s.includes(prefix)) {
-      return prefix;
+export function getBondFamily(
+  seriesOrSymbol?: string | null,
+  termMonths?: number | null,
+  bondMargin?: number | null
+): string {
+  if (seriesOrSymbol) {
+    const s = seriesOrSymbol.toUpperCase();
+    for (const prefix of ['TOS', 'COI', 'ROR', 'DOR', 'OTS', 'EDO']) {
+      if (s.includes(prefix)) {
+        return prefix;
+      }
     }
   }
+  if (termMonths === 36) return 'TOS';
+  if (termMonths === 48) return 'COI';
+  if (termMonths === 12) return 'ROR';
+  if (termMonths === 24) return 'DOR';
+  if (termMonths === 3) return 'OTS';
+  if (termMonths === 120) return 'EDO';
+  if (bondMargin != null && bondMargin > 0) return 'EDO';
+  if (bondMargin == null || bondMargin === 0) return 'TOS';
+  if (seriesOrSymbol && seriesOrSymbol.toUpperCase().startsWith('PL_BOND')) return 'TOS';
   return 'EDO';
 }
 
@@ -55,8 +70,7 @@ export function isBondItem(
           inst.symbol.includes('COI') ||
           inst.symbol.includes('ROR') ||
           inst.symbol.includes('DOR') ||
-          inst.symbol.includes('OTS'))) ||
-      (item.currency === 'PLN' && (item.price === 100 || item.averageBuyPrice === 100))
+          inst.symbol.includes('OTS'))) 
   );
 }
 
@@ -174,11 +188,8 @@ export function calculateBondCurrentPrice({
     const curDays = days % 365;
 
     if (isNonCompounding) {
-      if (k === 0) {
-        return 100 * (1 + r1 * (curDays / 365));
-      }
-      const totalCoupons = 100 * r1 + 100 * (k - 1) * laterRate + 100 * laterRate * (curDays / 365);
-      return 100 + totalCoupons;
+      const activeRate = k === 0 ? r1 : laterRate;
+      return 100 * (1 + activeRate * (curDays / 365));
     }
 
     if (k === 0) {
@@ -190,7 +201,8 @@ export function calculateBondCurrentPrice({
 
   const r = (bondRate ?? 6.5) / 100;
   if (isNonCompounding) {
-    return 100 * (1 + r * (days / 365));
+    const curDays = days % 365;
+    return 100 * (1 + r * (curDays / 365));
   }
 
   const k = Math.floor(days / 365);
@@ -287,7 +299,11 @@ export function generateUnifiedPortfolioTimeline({
   const preparedTxs = transactions
     .map((tx) => {
       const timeMs = new Date(tx.executedAt).getTime();
-      const fx = (tx.currency === baseCurrency ? 1 : rates[tx.currency]) || 1;
+      const rawProduct = tx.quantity * tx.price;
+      const txFxFallback =
+        tx.exchangeRateToBase ||
+        (tx.baseAmount && rawProduct > 0 ? tx.baseAmount / rawProduct : undefined);
+      const fx = (tx.currency === baseCurrency ? 1 : (rates[tx.currency] || txFxFallback)) || 1;
       const commission = tx.commission || 0;
       const txCost = tx.baseAmount ?? (
         tx.transactionType === 'SELL'
@@ -313,6 +329,7 @@ export function generateUnifiedPortfolioTimeline({
         symbol,
         fallbackPrice,
         instrumentId: tx.instrumentId,
+        currency: tx.currency,
       };
     })
     .sort((a, b) => a.timeMs - b.timeMs);
@@ -327,6 +344,83 @@ export function generateUnifiedPortfolioTimeline({
   let userBondValSum = 0;
   let userBondWeightedRateSum = 0;
 
+  const bondLotsMap = new Map<string, {
+    quantity: number;
+    executedAt: string | Date | number;
+    bondRate?: number | null;
+    bondMargin?: number | null;
+    seriesName?: string | null;
+    termMonths?: number | null;
+    fx: number;
+  }[]>();
+
+  for (const tx of preparedTxs) {
+    if (!tx.isBond) continue;
+    const key = `${tx.instrumentId}_${tx.seriesName || ''}`;
+    let lots = bondLotsMap.get(key);
+    if (!lots) {
+      lots = [];
+      bondLotsMap.set(key, lots);
+    }
+    if (tx.transactionType === 'BUY') {
+      lots.push({
+        quantity: tx.quantity,
+        executedAt: tx.executedAt,
+        bondRate: tx.bondRate,
+        bondMargin: tx.bondMargin,
+        seriesName: tx.seriesName,
+        termMonths: tx.termMonths,
+        fx: tx.fx,
+      });
+    } else if (tx.transactionType === 'SELL') {
+      let toReduce = tx.quantity;
+      while (toReduce > 0 && lots.length > 0) {
+        if (lots[0].quantity <= toReduce) {
+          toReduce -= lots[0].quantity;
+          lots.shift();
+        } else {
+          lots[0].quantity -= toReduce;
+          toReduce = 0;
+        }
+      }
+    }
+  }
+
+  const getBondValuation = (
+    pos: PositionResponse,
+    targetDate: number | string | Date,
+    fx: number
+  ): number => {
+    const key = `${pos.instrumentId}_${pos.seriesName || ''}`;
+    const lots = bondLotsMap.get(key);
+    if (lots && lots.length > 0) {
+      let sum = 0;
+      for (const lot of lots) {
+        const p = calculateBondCurrentPrice({
+          purchaseDate: lot.executedAt,
+          bondRate: lot.bondRate ?? pos.bondRate,
+          bondMargin: lot.bondMargin ?? pos.bondMargin,
+          cpi,
+          targetDate,
+          seriesName: lot.seriesName ?? pos.seriesName,
+          termMonths: lot.termMonths ?? pos.termMonths,
+        });
+        sum += lot.quantity * p * (lot.fx || fx);
+      }
+      return sum;
+    }
+    const p = calculateBondCurrentPrice({
+      purchaseDate: pos.purchaseDate,
+      bondRate: pos.bondRate,
+      bondMargin: pos.bondMargin,
+      cpi,
+      targetDate,
+      seriesName: pos.seriesName,
+      termMonths: pos.termMonths,
+    });
+    return pos.quantity * p * fx;
+  };
+
   const posInstrumentCounts = new Map<string, number>();
   for (const p of positions) {
     posInstrumentCounts.set(p.instrumentId, (posInstrumentCounts.get(p.instrumentId) || 0) + 1);
@@ -335,7 +429,11 @@ export function generateUnifiedPortfolioTimeline({
   for (const pos of positions) {
     const inst = instruments[pos.instrumentId];
     const isBond = isBondItem(pos, inst);
-    const fx = (pos.currency === baseCurrency ? 1 : rates[pos.currency]) || 1;
+    const fallbackFx =
+      pos.totalCostBase != null && pos.quantity * pos.averageBuyPrice > 0
+        ? pos.totalCostBase / (pos.quantity * pos.averageBuyPrice)
+        : undefined;
+    const fx = (pos.currency === baseCurrency ? 1 : (rates[pos.currency] || fallbackFx)) || 1;
     const canUseDirectPrice =
       instrumentPrices[pos.instrumentId] != null &&
       (!isBond || posInstrumentCounts.get(pos.instrumentId) === 1);
@@ -351,7 +449,7 @@ export function generateUnifiedPortfolioTimeline({
           termMonths: pos.termMonths,
         })
       : (instrumentPrices[pos.instrumentId] ?? pos.averageBuyPrice);
-    const val = pos.quantity * currentPrice * fx;
+    const val = isBond && !canUseDirectPrice ? getBondValuation(pos, now, fx) : pos.quantity * currentPrice * fx;
     const cost = pos.totalCostBase ?? (pos.quantity * pos.averageBuyPrice * fx);
 
     if (isBond) {
@@ -448,7 +546,7 @@ export function generateUnifiedPortfolioTimeline({
     const isToday = i === totalHistorySteps;
     const tMs = isToday ? now : Math.min(now - 1000, startMs + Math.round(i * stepMs));
     const dDay = new Date(tMs);
-    const dayDateStr = `${dDay.getFullYear()}-${String(dDay.getMonth() + 1).padStart(2, '0')}-${String(dDay.getDate()).padStart(2, '0')}`;
+    const dayDateStr = standardizeDate(dDay);
 
     const holdings = new Map<string, {
       instrumentId: string;
@@ -475,7 +573,7 @@ export function generateUnifiedPortfolioTimeline({
 
       const key = tx.isBond
         ? `${tx.instrumentId}_${tx.seriesName || ''}`
-        : tx.instrumentId;
+        : `${tx.instrumentId}_${tx.currency}`;
 
       let h = holdings.get(key);
       if (!h) {
@@ -565,7 +663,7 @@ export function generateUnifiedPortfolioTimeline({
           bondValAtT += lotVal;
           hVal += lotVal;
         }
-        const bondKey = getBondFamily(h.lots[0]?.seriesName || h.symbol);
+        const bondKey = getBondFamily(h.lots[0]?.seriesName || h.symbol, h.lots[0]?.termMonths, h.lots[0]?.bondMargin);
         const bondAssetType: 'ETF' | 'BOND' | 'STOCK' | 'OTHER' = 'BOND';
         keyMetaMap.set(bondKey, { label: bondKey, assetType: bondAssetType });
         const existingBond = stepContribMap.get(bondKey);
@@ -624,7 +722,11 @@ export function generateUnifiedPortfolioTimeline({
         for (const pos of positions) {
           const inst = instruments[pos.instrumentId];
           const isBond = isBondItem(pos, inst);
-          const fx = (pos.currency === baseCurrency ? 1 : rates[pos.currency]) || 1;
+          const fallbackFx =
+            pos.totalCostBase != null && pos.quantity * pos.averageBuyPrice > 0
+              ? pos.totalCostBase / (pos.quantity * pos.averageBuyPrice)
+              : undefined;
+          const fx = (pos.currency === baseCurrency ? 1 : (rates[pos.currency] || fallbackFx)) || 1;
           const canUseDirectPrice =
             instrumentPrices[pos.instrumentId] != null &&
             (!isBond || posInstrumentCounts.get(pos.instrumentId) === 1);
@@ -640,10 +742,10 @@ export function generateUnifiedPortfolioTimeline({
                 termMonths: pos.termMonths,
               })
             : (instrumentPrices[pos.instrumentId] ?? pos.averageBuyPrice);
-          const val = pos.quantity * currentPrice * fx;
+          const val = isBond && !canUseDirectPrice ? getBondValuation(pos, tMs, fx) : pos.quantity * currentPrice * fx;
           const cost = pos.totalCostBase ?? (pos.quantity * pos.averageBuyPrice * fx);
           const key = isBond
-            ? getBondFamily(pos.seriesName || inst?.symbol)
+            ? getBondFamily(pos.seriesName || inst?.symbol, pos.termMonths, pos.bondMargin)
             : (inst?.symbol || pos.seriesName || pos.instrumentId);
           const assetType: 'ETF' | 'BOND' | 'STOCK' | 'OTHER' = isBond
             ? 'BOND'
@@ -874,6 +976,38 @@ export function generateUnifiedPortfolioTimeline({
       for (const c of contributors) {
         c.returnContributionPct = pointCost > 0 ? Number(((c.profit / pointCost) * 100).toFixed(2)) : 0;
         c.sharePct = absSum > 0 ? Number(((c.profit / absSum) * 100).toFixed(1)) : 0;
+      }
+
+      if (contributors.length > 0) {
+        if (absSum > 0) {
+          const targetShareSum = Number(((sumProfit / absSum) * 100).toFixed(1));
+          const sumShare = Number(contributors.reduce((s, c) => s + c.sharePct, 0).toFixed(1));
+          const shareDiff = Number((targetShareSum - sumShare).toFixed(1));
+          if (Math.abs(shareDiff) > 0.0001 && Math.abs(shareDiff) <= 1.0) {
+            let maxIdx = 0;
+            for (let k = 1; k < contributors.length; k++) {
+              if (Math.abs(contributors[k].profit) > Math.abs(contributors[maxIdx].profit)) {
+                maxIdx = k;
+              }
+            }
+            contributors[maxIdx].sharePct = Number((contributors[maxIdx].sharePct + shareDiff).toFixed(1));
+          }
+        }
+
+        if (pointCost > 0) {
+          const targetReturn = Number(point.returnPct.toFixed(2));
+          const sumReturn = Number(contributors.reduce((s, c) => s + c.returnContributionPct, 0).toFixed(2));
+          const returnDiff = Number((targetReturn - sumReturn).toFixed(2));
+          if (Math.abs(returnDiff) > 0.0001 && Math.abs(returnDiff) <= 0.5) {
+            let maxIdx = 0;
+            for (let k = 1; k < contributors.length; k++) {
+              if (Math.abs(contributors[k].profit) > Math.abs(contributors[maxIdx].profit)) {
+                maxIdx = k;
+              }
+            }
+            contributors[maxIdx].returnContributionPct = Number((contributors[maxIdx].returnContributionPct + returnDiff).toFixed(2));
+          }
+        }
       }
     }
 

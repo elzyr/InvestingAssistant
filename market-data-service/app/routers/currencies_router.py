@@ -24,4 +24,4 @@ def get_exchange_rate(
         if isinstance(e, HTTPException):
             raise e
         logging.error(f"Error fetching exchange rate: {e}")
-        raise HTTPException(status_code=400, detail="Error fetching exchange rate")
+        raise HTTPException(status_code=502, detail="Upstream market provider failure")

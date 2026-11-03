@@ -11,8 +11,10 @@ import {
   calculateBondCurrentPrice,
   generateUnifiedPortfolioTimeline,
   getBondFamily,
+  isBondItem,
 } from './portfolioUnifiedEngine.ts';
-import { buildDashboardPositions } from './dashboardCalculations.ts';
+import { generateRealAnnualSummary } from './realReportsEngine.ts';
+import { buildDashboardPositions, buildDashboardSummary, getTransactionCashFlow } from './dashboardCalculations.ts';
 
 const assertCloseTo = (actual, expected, tolerance = 1e-4, message) => {
   assert.ok(
@@ -156,6 +158,17 @@ describe('xirrEngine', () => {
         null,
         'Identical transaction dates should return null'
       );
+    });
+
+    it('calculates negative return correctly for severe capital loss with negative candidates (CALC-10)', () => {
+      const severeLossFlows = [
+        { amount: -1000, date: '2022-01-01' },
+        { amount: 300, date: '2024-01-01' },
+        { amount: -100, date: '2024-07-01' },
+      ];
+      const rate = calculateXirr(severeLossFlows);
+      assert.ok(typeof rate === 'number' && Number.isFinite(rate));
+      assertCloseTo(rate, -0.8776, 1e-2);
     });
   });
 
@@ -382,6 +395,17 @@ describe('xirrEngine', () => {
       assert.strictEqual(metrics.realProfitPercent, 0);
       assert.strictEqual(metrics.realXirr, null);
     });
+
+    it('returns realXirr: null when cpi is -100% deflation (CALC-11)', () => {
+      const metrics = calculatePortfolioRealMetrics({
+        transactions: [{ cost: 10000, executedAt: '2023-01-01' }],
+        portfolioValue: 12000,
+        cpi: -100,
+        nominalXirr: 0.20,
+        currentDate: '2024-01-01',
+      });
+      assert.strictEqual(metrics.realXirr, null);
+    });
   });
 
   describe('calculateFxDecomposition', () => {
@@ -462,8 +486,8 @@ describe('xirrEngine', () => {
       assertCloseTo(pricePastMaturity, priceAtMaturity, 1e-2);
     });
 
-    it('calculates simple non-compounded interest for COI bond', () => {
-      const price = calculateBondCurrentPrice({
+    it('does not inflate non-compounding bond unit price with past paid coupons (CALC-08)', () => {
+      const priceAt2Years = calculateBondCurrentPrice({
         purchaseDate: '2022-01-01',
         bondRate: 7.0,
         bondMargin: 1.5,
@@ -471,7 +495,151 @@ describe('xirrEngine', () => {
         targetDate: '2024-01-01',
         seriesName: 'COI0126',
       });
-      assertCloseTo(price, 111.5, 1e-2);
+      assertCloseTo(priceAt2Years, 100.0, 1e-2);
+
+      const priceAt18Months = calculateBondCurrentPrice({
+        purchaseDate: '2022-01-01',
+        bondRate: 7.0,
+        bondMargin: 1.5,
+        cpi: 3.0,
+        targetDate: '2023-07-02',
+        seriesName: 'COI0126',
+      });
+      assertCloseTo(priceAt18Months, 102.24, 1e-2);
+
+      const rorAt18Months = calculateBondCurrentPrice({
+        purchaseDate: '2024-01-01',
+        bondRate: 6.0,
+        targetDate: '2025-07-02',
+        seriesName: 'ROR0125',
+      });
+      assertCloseTo(rorAt18Months, 103.0, 1e-2);
+    });
+
+    it('does not treat equity or ETF in PLN with price 100 as a bond (CALC-06)', () => {
+      assert.strictEqual(
+        isBondItem({ currency: 'PLN', price: 100 }),
+        false
+      );
+      assert.strictEqual(
+        isBondItem({ currency: 'PLN', averageBuyPrice: 100 }),
+        false
+      );
+      assert.strictEqual(
+        isBondItem(
+          { currency: 'PLN', price: 100 },
+          { id: 'inst-pko', symbol: 'PKO.WA', currency: 'PLN' }
+        ),
+        false
+      );
+    });
+
+    it('evaluates multi-lot bond holdings with per-lot interest from actual execution date (CALC-03)', () => {
+      const t1 = '2024-01-01T00:00:00.000Z';
+      const t2 = '2024-07-01T00:00:00.000Z';
+      const transactions = [
+        {
+          id: 'tx-edo-1',
+          instrumentId: 'inst-edo',
+          seriesName: 'EDO0134',
+          bondRate: 10.0,
+          transactionType: 'BUY',
+          quantity: 10,
+          price: 100,
+          currency: 'PLN',
+          executedAt: t1,
+          baseAmount: 1000,
+        },
+        {
+          id: 'tx-edo-2',
+          instrumentId: 'inst-edo',
+          seriesName: 'EDO0134',
+          bondRate: 10.0,
+          transactionType: 'BUY',
+          quantity: 10,
+          price: 100,
+          currency: 'PLN',
+          executedAt: t2,
+          baseAmount: 1000,
+        },
+      ];
+      const positions = [
+        {
+          id: 'pos-edo',
+          instrumentId: 'inst-edo',
+          seriesName: 'EDO0134',
+          quantity: 20,
+          averageBuyPrice: 100,
+          totalCostBase: 2000,
+          currency: 'PLN',
+          isBond: true,
+          bondRate: 10.0,
+          purchaseDate: t1,
+        },
+      ];
+      const instruments = {
+        'inst-edo': { id: 'inst-edo', symbol: 'EDO0134', type: 'BOND', currency: 'PLN' },
+      };
+
+      const points = generateUnifiedPortfolioTimeline({
+        transactions,
+        positions,
+        instruments,
+        totalPortfolioValue: 2000,
+        totalPortfolioCost: 2000,
+        taxMode: 'BRUTTO',
+        timeframe: 'MAX',
+        projectionHorizon: 'OFF',
+        cpi: 3.6,
+        rates: { PLN: 1 },
+        baseCurrency: 'PLN',
+        instrumentPrices: {},
+      });
+
+      const todayPoint = points.find((p) => !p.isFuture && p.timestamp >= Date.now() - 86400000);
+      assert.ok(todayPoint, 'Timeline point for today must exist');
+      const edo = todayPoint.contributors.find((c) => c.key === 'EDO');
+      assert.ok(edo, 'EDO contributor must exist');
+      assertCloseTo(edo.valuation, 2563, 10);
+    });
+
+    it('calculates real returns via Fisher equation instead of naive subtraction (CALC-05)', () => {
+      const transactions = [
+        {
+          id: 'tx-1',
+          instrumentId: 'inst-1',
+          transactionType: 'BUY',
+          quantity: 10,
+          price: 100,
+          currency: 'PLN',
+          executedAt: '2025-01-01T10:00:00Z',
+          baseAmount: 1000,
+        },
+      ];
+      const instruments = {
+        'inst-1': { id: 'inst-1', symbol: 'TEST', type: 'STOCK', currency: 'PLN' },
+      };
+      const quotes = {
+        TEST: { symbol: 'TEST', price: 140, currency: 'PLN' },
+      };
+
+      const summary = generateRealAnnualSummary({
+        transactions,
+        instruments,
+        quotes,
+        rates: { PLN: 1 },
+        cpi: 5.0,
+        monthlyCpi: { 0: 5.0 },
+        baseCurrency: 'PLN',
+        isIkeAccount: true,
+        year: 2025,
+      });
+
+      const hurdle = Math.pow(1.05, 30.9996 / 365);
+      const expectedRealPct = (1.4 / hurdle - 1) * 100;
+      assertCloseTo(summary.records[0].realProfitPct, expectedRealPct, 0.05);
+      const recorded = summary.records.filter((r) => r.status === 'RECORDED');
+      assertCloseTo(summary.ytdRealReturnPct, recorded[recorded.length - 1].realProfitPct, 0.01);
     });
 
     it('reduces weighted-average cost basis proportionally on SELL rather than subtracting proceeds', () => {
@@ -697,6 +865,99 @@ describe('xirrEngine', () => {
       assertCloseTo(sub.fxDecomposition.marketReturnPct, 0.0, 1e-4);
       assertCloseTo(sub.fxDecomposition.fxReturnPct, 2.44186, 1e-2);
       assert.notStrictEqual(Math.round(sub.fxDecomposition.fxReturnPct), 341);
+    });
+
+    it('prioritizes historical exchangeRateToBase over current spot rates in getTransactionCashFlow (CALC-07)', () => {
+      const tx = {
+        id: 'tx-usd-1',
+        instrumentId: 'inst-usd',
+        transactionType: 'BUY',
+        quantity: 10,
+        price: 100,
+        currency: 'USD',
+        exchangeRateToBase: 3.80,
+        executedAt: '2023-01-01T10:00:00Z',
+      };
+
+      const flow = getTransactionCashFlow(tx, 'PLN', { USD: 4.50 });
+      assert.strictEqual(flow.isOutflow, true);
+      assertCloseTo(flow.amount, 3800, 1e-2);
+    });
+
+    it('prioritizes historical exchangeRateToBase over current spot rates for SELL proceeds (CALC-07)', () => {
+      const sellTx = {
+        id: 'tx-usd-sell',
+        instrumentId: 'inst-usd',
+        transactionType: 'SELL',
+        quantity: 10,
+        price: 150,
+        currency: 'USD',
+        exchangeRateToBase: 3.90,
+        executedAt: '2023-06-01T10:00:00Z',
+      };
+
+      const flow = getTransactionCashFlow(sellTx, 'PLN', { USD: 4.50 });
+      assert.strictEqual(flow.isOutflow, false);
+      assertCloseTo(flow.amount, 5850, 1e-2);
+    });
+
+    it('handles DIVIDEND as a positive cash flow cash inflow (CALC-09)', () => {
+      const divTx = {
+        id: 'tx-div-1',
+        instrumentId: 'inst-div-1',
+        type: 'DIVIDEND',
+        amount: 250,
+        currency: 'PLN',
+        executedAt: '2024-04-15T10:00:00Z',
+      };
+
+      const flow = getTransactionCashFlow(divTx, 'PLN', {});
+      assert.strictEqual(flow.isOutflow, false);
+      assertCloseTo(flow.amount, 250, 1e-2);
+
+      const divTxForeign = {
+        id: 'tx-div-2',
+        instrumentId: 'inst-div-2',
+        transactionType: 'DIVIDEND',
+        quantity: 10,
+        price: 5,
+        currency: 'USD',
+        exchangeRateToBase: 4.0,
+        executedAt: '2024-04-15T10:00:00Z',
+      };
+
+      const flowForeign = getTransactionCashFlow(divTxForeign, 'PLN', { USD: 4.5 });
+      assert.strictEqual(flowForeign.isOutflow, false);
+      assertCloseTo(flowForeign.amount, 200, 1e-2);
+    });
+  });
+
+  describe('performanceEngine and date standardization (CALC-14, CALC-16)', () => {
+    it('standardizes dates from local and UTC ISO strings to YYYY-MM-DD without day drift (CALC-14)', async () => {
+      const mod = await import('./dashboardCalculations.ts');
+      const normalizeDate = mod.standardizeDate || mod.normalizeDateToYMD || mod.parseDateToYMD || mod.formatDateToYMD;
+      assert.ok(typeof normalizeDate === 'function', 'Date standardization function must be exported from dashboardCalculations.ts');
+
+      assert.strictEqual(normalizeDate('2024-03-15T12:00:00'), '2024-03-15');
+      assert.strictEqual(normalizeDate('2024-03-15T00:00:00Z'), '2024-03-15');
+      assert.strictEqual(normalizeDate('2024-03-15'), '2024-03-15');
+    });
+
+    it('calculates TWR when initial cash flow or initial portfolio value is 0 without NaN or Infinity (CALC-16)', async () => {
+      const { calculateTwr } = await import('./performanceEngine.ts').catch(() => ({ calculateTwr: undefined }));
+      assert.ok(typeof calculateTwr === 'function', 'calculateTwr must be exported from performanceEngine.ts');
+
+      const twrZeroInitial = calculateTwr([
+        { startValue: 0, endValue: 0, netCashFlow: 0 },
+      ]);
+      assert.ok(typeof twrZeroInitial === 'number' && Number.isFinite(twrZeroInitial), 'TWR must be finite number');
+      assert.strictEqual(twrZeroInitial, 0.0);
+
+      const twrDepositOnly = calculateTwr([
+        { startValue: 0, endValue: 1000, netCashFlow: 1000 },
+      ]);
+      assert.ok(typeof twrDepositOnly === 'number' && Number.isFinite(twrDepositOnly), 'Deposit only must not produce NaN or Infinity');
+      assert.strictEqual(twrDepositOnly, 0.0);
     });
   });
 
@@ -1309,6 +1570,379 @@ describe('xirrEngine', () => {
       assert.strictEqual(edo.profit, 290, 'EDO profit must match true per-lot sum (210 + 80) without cross-contamination');
       assert.strictEqual(vwce.valuation, 1500);
       assert.strictEqual(edo.valuation, 2290);
+    });
+
+    it('strictly balances contributor amounts and percentages to total profit and 100% without rounding drift (CALC-15)', () => {
+      const pastDate = new Date(Date.now() - 30 * 24 * 3600 * 1000).toISOString();
+      const assets = ['EQ1', 'EQ2', 'EQ3'];
+      const transactions = assets.map((id) => ({
+        id: `tx-${id}`,
+        instrumentId: `inst-${id}`,
+        transactionType: 'BUY',
+        quantity: 10,
+        price: 100,
+        currency: 'PLN',
+        executedAt: pastDate,
+        baseAmount: 1000,
+      }));
+      const positions = assets.map((id) => ({
+        id: `pos-${id}`,
+        instrumentId: `inst-${id}`,
+        quantity: 10,
+        averageBuyPrice: 100,
+        totalCostBase: 1000,
+        currency: 'PLN',
+        isBond: false,
+        purchaseDate: pastDate,
+      }));
+      const instruments = Object.fromEntries(
+        assets.map((id) => [
+          `inst-${id}`,
+          { id: `inst-${id}`, symbol: id, type: 'STOCK', currency: 'PLN' },
+        ])
+      );
+      const instrumentPrices = Object.fromEntries(
+        assets.map((id) => [`inst-${id}`, 110])
+      );
+
+      const points = generateUnifiedPortfolioTimeline({
+        transactions,
+        positions,
+        instruments,
+        totalPortfolioValue: 3300,
+        totalPortfolioCost: 3000,
+        taxMode: 'BRUTTO',
+        timeframe: 'MAX',
+        projectionHorizon: 'OFF',
+        cpi: 0,
+        rates: { PLN: 1 },
+        baseCurrency: 'PLN',
+        instrumentPrices,
+      });
+
+      const latestPoint = points[points.length - 1];
+      assert.ok(Array.isArray(latestPoint.contributors), 'Point contributors must be an array');
+      assert.strictEqual(latestPoint.contributors.length, 3);
+      assert.strictEqual(latestPoint.profit, 300);
+
+      const sumProfit = latestPoint.contributors.reduce((acc, c) => acc + c.profit, 0);
+      assert.strictEqual(sumProfit, latestPoint.profit, 'Sum of contributor profits must strictly equal total profit');
+
+      const sumShare = Number(latestPoint.contributors.reduce((acc, c) => acc + c.sharePct, 0).toFixed(1));
+      assert.strictEqual(sumShare, 100.0, 'Sum of contributor sharePct must strictly equal 100.0% without rounding drift');
+
+      const sumReturn = Number(latestPoint.contributors.reduce((acc, c) => acc + c.returnContributionPct, 0).toFixed(2));
+      assert.strictEqual(sumReturn, Number(latestPoint.returnPct.toFixed(2)), 'Sum of returnContributionPct must strictly equal returnPct');
+    });
+  });
+
+  describe('bond family classification & unnamed bonds', () => {
+    it('classifies unnamed bond positions by termMonths and margin', () => {
+      assert.strictEqual(getBondFamily('PL_BOND', 36, null), 'TOS');
+      assert.strictEqual(getBondFamily(null, 36, undefined), 'TOS');
+      assert.strictEqual(getBondFamily(undefined, 48, 1.5), 'COI');
+      assert.strictEqual(getBondFamily('', 120, 2.0), 'EDO');
+      assert.strictEqual(getBondFamily('PL_BOND', 12, 0), 'ROR');
+      assert.strictEqual(getBondFamily(null, 24, 0), 'DOR');
+      assert.strictEqual(getBondFamily(null, 3, 0), 'OTS');
+      assert.strictEqual(getBondFamily(null, null, null), 'TOS');
+    });
+
+    it('classifies named series symbols regardless of termMonths parameter', () => {
+      assert.strictEqual(getBondFamily('EDO1135', 36), 'EDO');
+      assert.strictEqual(getBondFamily('TOS0929', 120), 'TOS');
+      assert.strictEqual(getBondFamily('COI0428'), 'COI');
+      assert.strictEqual(getBondFamily('ROR0525'), 'ROR');
+      assert.strictEqual(getBondFamily('DOR0826'), 'DOR');
+      assert.strictEqual(getBondFamily('OTS1124'), 'OTS');
+    });
+  });
+
+  describe('cohort vintage XIRR isolation across bond series', () => {
+    it('isolates cash flows of different bond series sharing the same instrumentId', () => {
+      const nowTs = new Date('2026-11-01T12:00:00Z').getTime();
+      const transactions = [
+        {
+          id: 'tx-edo-1',
+          instrumentId: 'PL_BOND',
+          seriesName: 'EDO0436',
+          transactionType: 'BUY',
+          quantity: 4,
+          price: 100,
+          currency: 'PLN',
+          executedAt: '2026-04-10T10:00:00Z',
+          baseAmount: 400,
+        },
+        {
+          id: 'tx-edo-2',
+          instrumentId: 'PL_BOND',
+          seriesName: 'EDO0636',
+          transactionType: 'BUY',
+          quantity: 4,
+          price: 100,
+          currency: 'PLN',
+          executedAt: '2026-06-12T10:00:00Z',
+          baseAmount: 400,
+        },
+        {
+          id: 'tx-tos-1',
+          instrumentId: 'PL_BOND',
+          seriesName: 'TOS0129',
+          transactionType: 'BUY',
+          quantity: 120,
+          price: 100,
+          currency: 'PLN',
+          executedAt: '2026-01-15T10:00:00Z',
+          baseAmount: 12000,
+        },
+        {
+          id: 'tx-tos-2',
+          instrumentId: 'PL_BOND',
+          seriesName: 'TOS0529',
+          transactionType: 'BUY',
+          quantity: 120,
+          price: 100,
+          currency: 'PLN',
+          executedAt: '2026-05-20T10:00:00Z',
+          baseAmount: 12000,
+        },
+      ];
+
+      const enrichedHoldings = [
+        {
+          id: 'pos-edo-1',
+          instrumentId: 'PL_BOND',
+          ticker: 'EDO0436',
+          name: 'EDO0436',
+          assetType: 'BOND',
+          isBond: true,
+          quantity: 4,
+          averagePrice: 100,
+          currentPrice: 102.5,
+          previousPrice: 102.4,
+          currency: 'PLN',
+          totalValue: 410,
+          totalCost: 400,
+          profit: 10,
+          profitPct: 2.5,
+          dailyChange: 0.4,
+          seriesName: 'EDO0436',
+          purchaseDate: '2026-04-10T10:00:00Z',
+        },
+        {
+          id: 'pos-edo-2',
+          instrumentId: 'PL_BOND',
+          ticker: 'EDO0636',
+          name: 'EDO0636',
+          assetType: 'BOND',
+          isBond: true,
+          quantity: 4,
+          averagePrice: 100,
+          currentPrice: 101.5,
+          previousPrice: 101.4,
+          currency: 'PLN',
+          totalValue: 406,
+          totalCost: 400,
+          profit: 6,
+          profitPct: 1.5,
+          dailyChange: 0.4,
+          seriesName: 'EDO0636',
+          purchaseDate: '2026-06-12T10:00:00Z',
+        },
+        {
+          id: 'pos-tos',
+          instrumentId: 'PL_BOND',
+          ticker: 'TOS0129',
+          name: 'TOS0129',
+          assetType: 'BOND',
+          isBond: true,
+          quantity: 240,
+          averagePrice: 100,
+          currentPrice: 103.0,
+          previousPrice: 102.9,
+          currency: 'PLN',
+          totalValue: 24720,
+          totalCost: 24000,
+          profit: 720,
+          profitPct: 3.0,
+          dailyChange: 24,
+          seriesName: 'TOS0129',
+          purchaseDate: '2026-01-15T10:00:00Z',
+        },
+      ];
+
+      const positions = buildDashboardPositions({
+        enrichedHoldings,
+        transactions,
+        totalPortfolioValue: 25536,
+        baseCurrency: 'PLN',
+        rates: { PLN: 1 },
+        shouldApplyTax: true,
+        nowTimestamp: nowTs,
+      });
+
+      const edoPos = positions.find((p) => p.ticker.includes('EDO'));
+      assert.ok(edoPos, 'EDO position should be present');
+      assert.strictEqual(edoPos.subPositionsType, 'bonds_yearly');
+      assert.ok(edoPos.subPositions && edoPos.subPositions.length > 0);
+
+      const vintage2026 = edoPos.subPositions.find((sub) => sub.name.includes('2026'));
+      assert.ok(vintage2026, 'Rocznik 2026 subposition should exist for EDO');
+      assert.ok(vintage2026.xirr != null, 'XIRR should be calculated for vintage 2026');
+      assert.ok(vintage2026.xirr > 0.02 && vintage2026.xirr < 0.10, `EDO vintage XIRR must be positive annual return, got: ${vintage2026.xirr}`);
+    });
+  });
+
+  describe('dashboard summary Netto vs Brutto portfolio value card', () => {
+    const holdings = [
+      {
+        id: 'pos-1',
+        instrumentId: 'inst-1',
+        ticker: 'ETF1',
+        name: 'ETF 1',
+        assetType: 'ETF',
+        isBond: false,
+        quantity: 100,
+        averagePrice: 100,
+        currentPrice: 120,
+        previousPrice: 119,
+        currency: 'PLN',
+        totalValue: 12000,
+        totalCost: 10000,
+        profit: 2000,
+        profitPct: 20,
+        dailyChange: 100,
+        purchaseDate: '2026-01-01T00:00:00Z',
+      },
+    ];
+
+    const txs = [
+      {
+        id: 'tx-1',
+        instrumentId: 'inst-1',
+        transactionType: 'BUY',
+        quantity: 100,
+        price: 100,
+        currency: 'PLN',
+        executedAt: '2026-01-01T00:00:00Z',
+        baseAmount: 10000,
+      },
+    ];
+
+    const positionsRaw = [
+      {
+        id: 'pos-1',
+        instrumentId: 'inst-1',
+        quantity: 100,
+        averageBuyPrice: 100,
+        totalCostBase: 10000,
+        currency: 'PLN',
+        purchaseDate: '2026-01-01T00:00:00Z',
+      },
+    ];
+
+    it('formats portfolio value as net of tax when shouldApplyTax is true', () => {
+      const summaryNet = buildDashboardSummary({
+        totalPortfolioValue: 12000,
+        totalPortfolioCost: 10000,
+        enrichedHoldings: holdings,
+        positions: positionsRaw,
+        transactions: txs,
+        baseCurrency: 'PLN',
+        rates: { PLN: 1 },
+        cpi: 3.0,
+        taxMode: 'NETTO',
+        shouldApplyTax: true,
+        isIkeAccount: false,
+        nowTimestamp: new Date('2026-06-01T00:00:00Z').getTime(),
+        t: (k, d) => (d !== undefined ? d : k),
+      });
+
+      assert.strictEqual(summaryNet.portfolioValueFormatted, '11 620 PLN');
+      assert.strictEqual(summaryNet.totalProfitAmountFormatted, '+1 620 PLN');
+      assert.strictEqual(summaryNet.taxNoteFormatted, 'Belka: -380 PLN');
+      assert.strictEqual(summaryNet.portfolioValueLabel, 'Wartość portfela (netto)');
+    });
+
+    it('formats portfolio value as gross when shouldApplyTax is false', () => {
+      const summaryGross = buildDashboardSummary({
+        totalPortfolioValue: 12000,
+        totalPortfolioCost: 10000,
+        enrichedHoldings: holdings,
+        positions: positionsRaw,
+        transactions: txs,
+        baseCurrency: 'PLN',
+        rates: { PLN: 1 },
+        cpi: 3.0,
+        taxMode: 'BRUTTO',
+        shouldApplyTax: false,
+        isIkeAccount: false,
+        nowTimestamp: new Date('2026-06-01T00:00:00Z').getTime(),
+        t: (k, d) => (d !== undefined ? d : k),
+      });
+
+      assert.strictEqual(summaryGross.portfolioValueFormatted, '12 000 PLN');
+      assert.strictEqual(summaryGross.totalProfitAmountFormatted, '+2 000 PLN');
+      assert.strictEqual(summaryGross.portfolioValueLabel, 'Wartość portfela (brutto)');
+    });
+  });
+
+  describe('monthly reports cpi fallback for latest month', () => {
+    it('uses last known CPI and maintains positive real profit in months without GUS table entries', () => {
+      const transactions = [
+        {
+          id: 'tx-1',
+          instrumentId: 'inst-1',
+          transactionType: 'BUY',
+          quantity: 100,
+          price: 100,
+          currency: 'PLN',
+          executedAt: '2026-01-10T10:00:00Z',
+          baseAmount: 10000,
+        },
+      ];
+
+      const instruments = {
+        'inst-1': { id: 'inst-1', symbol: 'TEST.ETF', type: 'ETF', currency: 'PLN' },
+      };
+
+      const historicalPrices = {
+        'TEST.ETF': {
+          '2026-01-31': 101,
+          '2026-02-28': 102,
+          '2026-03-31': 103,
+          '2026-04-30': 104,
+          '2026-05-31': 105,
+          '2026-06-30': 106,
+          '2026-07-31': 107,
+          '2026-08-31': 108,
+          '2026-09-30': 109,
+          '2026-10-31': 110,
+          '2026-11-03': 111,
+        },
+      };
+
+      const quotes = {
+        'TEST.ETF': { symbol: 'TEST.ETF', price: 111, currency: 'PLN' },
+      };
+
+      const summary = generateRealAnnualSummary({
+        transactions,
+        instruments,
+        year: 2026,
+        baseCurrency: 'PLN',
+        rates: { PLN: 1 },
+        cpi: 4.5,
+        isIkeAccount: false,
+        quotes,
+        historicalPrices,
+        nowTimestamp: new Date('2026-11-03T18:00:00Z').getTime(),
+      });
+
+      const nov = summary.records.find((r) => r.monthIndex === 10);
+      assert.ok(nov, 'November report record should be generated');
+      assert.ok(nov.cpiInflation > 0, `CPI inflation for latest month must be > 0, got ${nov.cpiInflation}`);
+      assert.ok(nov.realProfitPct > 0, `Real profit pct must be positive, got ${nov.realProfitPct}`);
     });
   });
 });

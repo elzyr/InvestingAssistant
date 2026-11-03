@@ -5,6 +5,7 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.*;
 
+import java.util.Collection;
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
@@ -25,8 +26,12 @@ import pl.investassist.portfolio.client.MarketDataClient;
 @ExtendWith(MockitoExtension.class)
 class InstrumentServiceTest {
 
+  interface ExtendedInstrumentRepository extends InstrumentRepository {
+    List<Instrument> findBySymbolInIgnoreCase(Collection<String> symbols);
+  }
+
   @Mock
-  private InstrumentRepository instrumentRepository;
+  private ExtendedInstrumentRepository instrumentRepository;
 
   @Mock
   private MarketDataClient marketDataClient;
@@ -154,5 +159,22 @@ class InstrumentServiceTest {
 
     assertThat(results).hasSize(1);
     assertThat(results.get(0).symbol()).isEqualTo("AMZ_LOCAL");
+  }
+
+  @Test
+  void getInstruments_whenExternalInstrumentsDiscovered_fetchesInBatchAndSavesViaSaveAll() {
+    when(instrumentRepository.searchInstruments(null, "TECH")).thenReturn(List.of());
+    when(marketDataClient.searchInstruments("TECH"))
+        .thenReturn(
+            List.of(
+                new InstrumentResponse(null, "AAPL", "Apple Inc.", InstrumentType.STOCK, Currency.USD),
+                new InstrumentResponse(null, "MSFT", "Microsoft Corp.", InstrumentType.STOCK, Currency.USD)));
+    when(instrumentRepository.findBySymbolInIgnoreCase(any())).thenReturn(List.of());
+
+    instrumentService.getInstruments("TECH", null);
+
+    verify(instrumentRepository).findBySymbolInIgnoreCase(any());
+    verify(instrumentRepository).saveAll(any());
+    verify(instrumentRepository, never()).save(any(Instrument.class));
   }
 }

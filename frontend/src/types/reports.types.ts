@@ -42,6 +42,7 @@ export interface AnnualSummaryData {
   ytdProfitNet: number;
   ytdReturnNetPct: number;
   ytdRealReturnPct: number;
+  ytdTwr?: number;
   avgCpi: number;
   baseCurrency?: string;
 }
