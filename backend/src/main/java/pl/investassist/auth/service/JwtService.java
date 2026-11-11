@@ -1,14 +1,13 @@
 package pl.investassist.auth.service;
 
 import io.jsonwebtoken.Jwts;
-import io.jsonwebtoken.security.Keys;
 import jakarta.annotation.PostConstruct;
-import java.nio.charset.StandardCharsets;
 import java.util.Date;
 import javax.crypto.SecretKey;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import pl.investassist.auth.entity.User;
+import pl.investassist.security.JwtKeyUtils;
 
 @Service
 public class JwtService {
@@ -23,11 +22,7 @@ public class JwtService {
 
   @PostConstruct
   void init() {
-    byte[] keyBytes = secretKey != null ? secretKey.getBytes(StandardCharsets.UTF_8) : new byte[0];
-    if (keyBytes.length < 32) {
-      throw new IllegalStateException("jwt.secret must be set and at least 32 bytes (HS256)");
-    }
-    this.signingKey = Keys.hmacShaKeyFor(keyBytes);
+    this.signingKey = JwtKeyUtils.hmacKeyFromSecret(secretKey);
   }
 
   public String generateAccessToken(User user) {

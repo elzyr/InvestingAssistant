@@ -3,7 +3,6 @@ package pl.investassist.security;
 import io.jsonwebtoken.Claims;
 import io.jsonwebtoken.JwtParser;
 import io.jsonwebtoken.Jwts;
-import io.jsonwebtoken.security.Keys;
 import jakarta.annotation.PostConstruct;
 import jakarta.servlet.FilterChain;
 import jakarta.servlet.ServletException;
@@ -59,11 +58,7 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
 
   @PostConstruct
   void init() {
-    byte[] keyBytes = secretKey != null ? secretKey.getBytes(StandardCharsets.UTF_8) : new byte[0];
-    if (keyBytes.length < 32) {
-      throw new IllegalStateException("jwt.secret must be set and at least 32 bytes (HS256)");
-    }
-    SecretKey signingKey = Keys.hmacShaKeyFor(keyBytes);
+    SecretKey signingKey = JwtKeyUtils.hmacKeyFromSecret(secretKey);
     this.jwtParser = Jwts.parser().verifyWith(signingKey).build();
   }
 

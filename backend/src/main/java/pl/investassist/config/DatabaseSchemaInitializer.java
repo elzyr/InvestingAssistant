@@ -52,8 +52,6 @@ public class DatabaseSchemaInitializer implements ApplicationRunner {
       jdbcTemplate.execute("ALTER TABLE portfolio ALTER COLUMN name SET NOT NULL");
       jdbcTemplate.execute("ALTER TABLE portfolio ALTER COLUMN base_currency SET NOT NULL");
       jdbcTemplate.execute("ALTER TABLE portfolio ADD COLUMN IF NOT EXISTS account_type VARCHAR(20) DEFAULT 'STANDARD' NOT NULL");
-      jdbcTemplate.execute("UPDATE portfolio SET account_type = 'IKE' WHERE account_type = 'STANDARD' AND LOWER(name) LIKE '%ike%'");
-      jdbcTemplate.execute("UPDATE portfolio SET account_type = 'IKZE' WHERE account_type = 'STANDARD' AND LOWER(name) LIKE '%ikze%'");
       jdbcTemplate.execute("ALTER TABLE portfolio DROP CONSTRAINT IF EXISTS chk_portfolio_account_type");
       jdbcTemplate.execute("ALTER TABLE portfolio ADD CONSTRAINT chk_portfolio_account_type CHECK (account_type IN ('STANDARD', 'IKE', 'IKZE'))");
       jdbcTemplate.execute("CREATE INDEX IF NOT EXISTS idx_portfolio_account_type ON portfolio(account_type);");
@@ -104,11 +102,13 @@ public class DatabaseSchemaInitializer implements ApplicationRunner {
       jdbcTemplate.execute("CREATE INDEX IF NOT EXISTS idx_instrument_type ON instrument(type)");
       jdbcTemplate.execute("DROP INDEX IF EXISTS idx_instrument_symbol");
       jdbcTemplate.execute("DROP INDEX IF EXISTS idx_position_port_inst_series");
-      jdbcTemplate.execute("CREATE INDEX IF NOT EXISTS idx_transaction_portfolio_inst_exec ON transaction(portfolio_id, instrument_id, executed_at ASC)");
+      jdbcTemplate.execute("DROP INDEX IF EXISTS idx_transaction_portfolio_inst_exec");
+      jdbcTemplate.execute("DROP INDEX IF EXISTS idx_tx_portfolio_id");
       try {
         jdbcTemplate.execute("CREATE EXTENSION IF NOT EXISTS pg_trgm");
         jdbcTemplate.execute("CREATE INDEX IF NOT EXISTS idx_instrument_search_trgm ON instrument USING gin (symbol gin_trgm_ops, name gin_trgm_ops)");
-      } catch (Exception ignored) {
+      } catch (Exception e) {
+        log.debug("Skipping pg_trgm index creation: {}", e.getMessage());
       }
     } catch (Exception e) {
       log.error("Error executing database schema migrations: {}", e.getMessage());

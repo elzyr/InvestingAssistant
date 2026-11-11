@@ -25,14 +25,5 @@ public interface InstrumentRepository extends JpaRepository<Instrument, UUID> {
           + "LOWER(i.name) LIKE LOWER(CONCAT('%', :query, '%'))"
           + ") ORDER BY CASE WHEN LOWER(i.symbol) LIKE LOWER(CONCAT(:query, '%')) THEN 0 "
           + "WHEN LOWER(i.name) LIKE LOWER(CONCAT(:query, '%')) THEN 1 ELSE 2 END, i.symbol ASC")
-  List<Instrument> searchInstruments(@Param("type") InstrumentType type, @Param("query") String query);
-
-  @Query(
-      "SELECT i FROM Instrument i WHERE "
-          + "(:type IS NULL OR i.type = :type) AND ("
-          + "LOWER(i.symbol) LIKE LOWER(CONCAT('%', :query, '%')) OR "
-          + "LOWER(i.name) LIKE LOWER(CONCAT('%', :query, '%'))"
-          + ") ORDER BY CASE WHEN LOWER(i.symbol) LIKE LOWER(CONCAT(:query, '%')) THEN 0 "
-          + "WHEN LOWER(i.name) LIKE LOWER(CONCAT(:query, '%')) THEN 1 ELSE 2 END, i.symbol ASC")
   Page<Instrument> searchInstruments(@Param("type") InstrumentType type, @Param("query") String query, Pageable pageable);
 }

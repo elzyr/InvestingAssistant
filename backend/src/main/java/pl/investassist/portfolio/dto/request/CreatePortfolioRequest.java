@@ -14,10 +14,6 @@ public record CreatePortfolioRequest(
     @NotNull Currency baseCurrency,
     AccountType accountType) {
 
-  public CreatePortfolioRequest(String name, String description, Currency baseCurrency) {
-    this(name, description, baseCurrency, AccountType.STANDARD);
-  }
-
   public Portfolio toEntity(UUID userId) {
     Portfolio portfolio = new Portfolio();
     portfolio.setUserId(userId);

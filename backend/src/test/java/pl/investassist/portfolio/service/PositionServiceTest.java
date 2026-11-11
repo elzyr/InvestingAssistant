@@ -193,8 +193,9 @@ class PositionServiceTest {
     bondTxOtherSeries.setSeriesName("COI1028");
     bondTxOtherSeries.setExecutedAt(LocalDateTime.of(2025, 1, 15, 10, 0));
 
-    when(transactionRepository.findAllByPortfolioIdAndInstrumentIdOrderByExecutedAtAsc(portfolio.getId(), instrumentId))
-        .thenReturn(List.of(bondTx1, bondTxOtherSeries));
+    when(transactionRepository.findAllByPortfolioIdAndInstrumentIdAndSeriesNameOrderByExecutedAtAsc(
+        portfolio.getId(), instrumentId, "EDO1034"))
+        .thenReturn(List.of(bondTx1));
     when(positionRepository.findFirstByPortfolioIdAndInstrumentIdAndSeriesName(portfolio.getId(), instrumentId, "EDO1034"))
         .thenReturn(Optional.empty());
 
@@ -396,5 +397,22 @@ class PositionServiceTest {
 
     verify(transactionRepository).findAllByPortfolioIdAndInstrumentIdAndSeriesNameOrderByExecutedAtAsc(
         portfolio.getId(), instrumentId, "EDO1034");
+  }
+
+  @Test
+  void recalculatePosition_whenLastSeriesTransactionDeleted_deletesPositionWithoutFallbackAllSeriesQuery() {
+    Position existingPosition = new Position();
+    existingPosition.setId(UUID.randomUUID());
+
+    when(transactionRepository.findAllByPortfolioIdAndInstrumentIdAndSeriesNameOrderByExecutedAtAsc(
+        portfolio.getId(), instrumentId, "EDO1034"))
+        .thenReturn(Collections.emptyList());
+    when(positionRepository.findFirstByPortfolioIdAndInstrumentIdAndSeriesName(portfolio.getId(), instrumentId, "EDO1034"))
+        .thenReturn(Optional.of(existingPosition));
+
+    positionService.recalculatePosition(portfolio, instrumentId, Currency.PLN, "EDO1034");
+
+    verify(positionRepository).delete(existingPosition);
+    verify(transactionRepository, never()).findAllByPortfolioIdAndInstrumentIdOrderByExecutedAtAsc(any(), any());
   }
 }

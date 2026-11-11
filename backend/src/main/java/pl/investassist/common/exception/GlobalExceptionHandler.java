@@ -7,7 +7,6 @@ import java.util.Locale;
 import java.util.Map;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.context.MessageSource;
 import org.springframework.context.NoSuchMessageException;
 import org.springframework.context.i18n.LocaleContextHolder;
@@ -32,19 +31,11 @@ public class GlobalExceptionHandler extends ResponseEntityExceptionHandler {
 
   private final MessageSource messageSource;
 
-  @Autowired
   public GlobalExceptionHandler(MessageSource messageSource) {
     this.messageSource = messageSource;
   }
 
-  public GlobalExceptionHandler() {
-    this.messageSource = null;
-  }
-
   private String resolveMessage(String messageOrKey, String defaultCode) {
-    if (messageSource == null) {
-      return messageOrKey != null ? messageOrKey : defaultCode;
-    }
     Locale locale = LocaleContextHolder.getLocale();
     if (messageOrKey != null) {
       try {

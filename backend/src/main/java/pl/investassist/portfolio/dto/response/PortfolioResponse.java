@@ -15,16 +15,6 @@ public record PortfolioResponse(
     AccountType accountType,
     LocalDateTime createdAt) {
 
-  public PortfolioResponse(
-      UUID id,
-      UUID userId,
-      String name,
-      String description,
-      Currency baseCurrency,
-      LocalDateTime createdAt) {
-    this(id, userId, name, description, baseCurrency, AccountType.STANDARD, createdAt);
-  }
-
   public static PortfolioResponse from(Portfolio portfolio) {
     if (portfolio == null) {
       return null;

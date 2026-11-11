@@ -11,7 +11,6 @@ import pl.investassist.portfolio.enums.TransactionType;
 @Table(
     name = "transaction",
     indexes = {
-      @Index(name = "idx_tx_portfolio_id", columnList = "portfolio_id"),
       @Index(
           name = "idx_tx_port_inst_time",
           columnList = "portfolio_id, instrument_id, executed_at")

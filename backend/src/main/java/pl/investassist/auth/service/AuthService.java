@@ -36,6 +36,7 @@ public class AuthService {
     this.refreshTokenService = refreshTokenService;
   }
 
+  @Transactional
   public AuthResponse register(RegisterRequest request) {
     String normalizedEmail = request.email().trim().toLowerCase(Locale.ROOT);
     if (userRepository.existsByEmail(normalizedEmail)) {
@@ -76,7 +77,6 @@ public class AuthService {
     return issueTokens(user);
   }
 
-  @Transactional(readOnly = true)
   public AuthResponse refreshToken(RefreshTokenRequest request) {
     UUID userId =
         refreshTokenService

@@ -1,13 +1,17 @@
 package pl.investassist.instrument.service;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
-import static org.mockito.Mockito.*;
+import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.when;
 
-import java.util.Collection;
 import java.util.List;
 import java.util.Optional;
+import java.util.Set;
 import java.util.UUID;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -15,7 +19,9 @@ import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
-import org.springframework.test.util.ReflectionTestUtils;
+import org.springframework.dao.DataIntegrityViolationException;
+import org.springframework.data.domain.PageImpl;
+import org.springframework.data.domain.Pageable;
 import pl.investassist.common.enums.Currency;
 import pl.investassist.common.enums.InstrumentType;
 import pl.investassist.instrument.dto.InstrumentResponse;
@@ -26,12 +32,8 @@ import pl.investassist.portfolio.client.MarketDataClient;
 @ExtendWith(MockitoExtension.class)
 class InstrumentServiceTest {
 
-  interface ExtendedInstrumentRepository extends InstrumentRepository {
-    List<Instrument> findBySymbolInIgnoreCase(Collection<String> symbols);
-  }
-
   @Mock
-  private ExtendedInstrumentRepository instrumentRepository;
+  private InstrumentRepository instrumentRepository;
 
   @Mock
   private MarketDataClient marketDataClient;
@@ -40,77 +42,44 @@ class InstrumentServiceTest {
 
   @BeforeEach
   void setUp() {
-    instrumentService = createInstrumentService(instrumentRepository, marketDataClient);
-  }
-
-  private InstrumentService createInstrumentService(
-      InstrumentRepository repository, MarketDataClient client) {
-    try {
-      return InstrumentService.class
-          .getConstructor(InstrumentRepository.class, MarketDataClient.class)
-          .newInstance(repository, client);
-    } catch (NoSuchMethodException e) {
-      try {
-        InstrumentService service =
-            InstrumentService.class
-                .getConstructor(InstrumentRepository.class)
-                .newInstance(repository);
-        try {
-          ReflectionTestUtils.setField(service, "marketDataClient", client);
-        } catch (Exception ignored) {
-        }
-        return service;
-      } catch (Exception ex) {
-        throw new RuntimeException(ex);
-      }
-    } catch (Exception e) {
-      throw new RuntimeException(e);
-    }
+    instrumentService = new InstrumentService(instrumentRepository, marketDataClient);
   }
 
   @Test
-  void getInstruments_whenSearchHasAtLeastTwoCharsAndNotInDb_callsMarketDataClientAndSaves() {
-    Instrument saved = new Instrument();
-    saved.setId(UUID.randomUUID());
-    saved.setSymbol("AMZN");
-    saved.setName("Amazon.com Inc.");
-    saved.setType(InstrumentType.STOCK);
-    saved.setCurrency(Currency.USD);
-
-    when(instrumentRepository.searchInstruments(null, "AMZN")).thenReturn(List.of());
-    lenient()
-        .when(marketDataClient.searchInstruments("AMZN"))
+  void getInstruments_whenSearchHasAtLeastTwoCharsAndNotInDb_callsMarketDataClientAndSavesBatchWithoutNPlusOne() {
+    when(instrumentRepository.searchInstruments(eq(null), eq("AMZN"), eq(Pageable.unpaged())))
+        .thenReturn(new PageImpl<>(List.of()));
+    when(marketDataClient.searchInstruments("AMZN"))
         .thenReturn(
             List.of(
                 new InstrumentResponse(null, "AMZN", "Amazon.com Inc.", InstrumentType.STOCK, Currency.USD)));
-    lenient().when(instrumentRepository.findBySymbolIgnoreCase("AMZN")).thenReturn(Optional.empty());
-    lenient()
-        .when(instrumentRepository.save(any(Instrument.class)))
+    when(instrumentRepository.findBySymbolInIgnoreCase(Set.of("AMZN"))).thenReturn(List.of());
+    when(instrumentRepository.saveAll(any()))
         .thenAnswer(
             i -> {
-              Instrument inst = i.getArgument(0);
-              inst.setId(UUID.randomUUID());
-              return inst;
+              List<Instrument> items = i.getArgument(0);
+              items.forEach(inst -> inst.setId(UUID.randomUUID()));
+              return items;
             });
 
-    List<InstrumentResponse> results = instrumentService.getInstruments("AMZN", null);
+    List<InstrumentResponse> results = instrumentService.getInstruments("AMZN", null, null, null);
 
     verify(marketDataClient).searchInstruments("AMZN");
-    ArgumentCaptor<Instrument> captor = ArgumentCaptor.forClass(Instrument.class);
-    verify(instrumentRepository).save(captor.capture());
-    assertThat(captor.getValue().getSymbol()).isEqualTo("AMZN");
-    assertThat(captor.getValue().getName()).isEqualTo("Amazon.com Inc.");
-    assertThat(captor.getValue().getType()).isEqualTo(InstrumentType.STOCK);
-    assertThat(captor.getValue().getCurrency()).isEqualTo(Currency.USD);
-    assertThat(results).isNotEmpty();
-    assertThat(results).extracting(InstrumentResponse::symbol).contains("AMZN");
+    verify(instrumentRepository, never()).findBySymbolIgnoreCase(anyString());
+    @SuppressWarnings("unchecked")
+    ArgumentCaptor<List<Instrument>> captor = ArgumentCaptor.forClass(List.class);
+    verify(instrumentRepository).saveAll(captor.capture());
+    assertThat(captor.getValue()).hasSize(1);
+    assertThat(captor.getValue().get(0).getSymbol()).isEqualTo("AMZN");
+    assertThat(results).extracting(InstrumentResponse::symbol).containsExactly("AMZN");
   }
 
   @Test
   void getInstruments_whenSearchLengthLessThanTwoChars_doesNotCallMarketDataClient() {
-    when(instrumentRepository.searchInstruments(null, "A")).thenReturn(List.of());
+    when(instrumentRepository.searchInstruments(eq(null), eq("A"), eq(Pageable.unpaged())))
+        .thenReturn(new PageImpl<>(List.of()));
 
-    List<InstrumentResponse> results = instrumentService.getInstruments("A", null);
+    List<InstrumentResponse> results = instrumentService.getInstruments("A", null, null, null);
 
     verify(marketDataClient, never()).searchInstruments(anyString());
     assertThat(results).isEmpty();
@@ -125,20 +94,20 @@ class InstrumentServiceTest {
     existing.setType(InstrumentType.STOCK);
     existing.setCurrency(Currency.USD);
 
-    when(instrumentRepository.searchInstruments(null, "AMZN")).thenReturn(List.of());
-    lenient()
-        .when(marketDataClient.searchInstruments("AMZN"))
+    when(instrumentRepository.searchInstruments(eq(null), eq("AMZN"), eq(Pageable.unpaged())))
+        .thenReturn(new PageImpl<>(List.of()));
+    when(marketDataClient.searchInstruments("AMZN"))
         .thenReturn(
             List.of(
                 new InstrumentResponse(null, "AMZN", "Amazon.com Inc.", InstrumentType.STOCK, Currency.USD)));
-    lenient().when(instrumentRepository.findBySymbolIgnoreCase("AMZN")).thenReturn(Optional.of(existing));
+    when(instrumentRepository.findBySymbolInIgnoreCase(Set.of("AMZN"))).thenReturn(List.of(existing));
 
-    List<InstrumentResponse> results = instrumentService.getInstruments("AMZN", null);
+    List<InstrumentResponse> results = instrumentService.getInstruments("AMZN", null, null, null);
 
     verify(marketDataClient).searchInstruments("AMZN");
+    verify(instrumentRepository, never()).saveAll(any());
     verify(instrumentRepository, never()).save(any(Instrument.class));
-    assertThat(results).isNotEmpty();
-    assertThat(results).extracting(InstrumentResponse::symbol).contains("AMZN");
+    assertThat(results).extracting(InstrumentResponse::symbol).containsExactly("AMZN");
   }
 
   @Test
@@ -150,12 +119,12 @@ class InstrumentServiceTest {
     local.setType(InstrumentType.STOCK);
     local.setCurrency(Currency.USD);
 
-    when(instrumentRepository.searchInstruments(null, "AMZ")).thenReturn(List.of(local));
-    lenient()
-        .when(marketDataClient.searchInstruments("AMZ"))
+    when(instrumentRepository.searchInstruments(eq(null), eq("AMZ"), eq(Pageable.unpaged())))
+        .thenReturn(new PageImpl<>(List.of(local)));
+    when(marketDataClient.searchInstruments("AMZ"))
         .thenThrow(new RuntimeException("Market data service offline"));
 
-    List<InstrumentResponse> results = instrumentService.getInstruments("AMZ", null);
+    List<InstrumentResponse> results = instrumentService.getInstruments("AMZ", null, null, null);
 
     assertThat(results).hasSize(1);
     assertThat(results.get(0).symbol()).isEqualTo("AMZ_LOCAL");
@@ -163,7 +132,8 @@ class InstrumentServiceTest {
 
   @Test
   void getInstruments_whenExternalInstrumentsDiscovered_fetchesInBatchAndSavesViaSaveAll() {
-    when(instrumentRepository.searchInstruments(null, "TECH")).thenReturn(List.of());
+    when(instrumentRepository.searchInstruments(eq(null), eq("TECH"), eq(Pageable.unpaged())))
+        .thenReturn(new PageImpl<>(List.of()));
     when(marketDataClient.searchInstruments("TECH"))
         .thenReturn(
             List.of(
@@ -171,10 +141,55 @@ class InstrumentServiceTest {
                 new InstrumentResponse(null, "MSFT", "Microsoft Corp.", InstrumentType.STOCK, Currency.USD)));
     when(instrumentRepository.findBySymbolInIgnoreCase(any())).thenReturn(List.of());
 
-    instrumentService.getInstruments("TECH", null);
+    instrumentService.getInstruments("TECH", null, null, null);
 
     verify(instrumentRepository).findBySymbolInIgnoreCase(any());
     verify(instrumentRepository).saveAll(any());
     verify(instrumentRepository, never()).save(any(Instrument.class));
+  }
+
+  @Test
+  void getInstruments_whenConcurrentDuplicateOnBatchInsert_savesRemainingInstrumentsIndividually() {
+    Instrument existingAapl = new Instrument();
+    existingAapl.setId(UUID.randomUUID());
+    existingAapl.setSymbol("AAPL");
+    existingAapl.setName("Apple Inc.");
+    existingAapl.setType(InstrumentType.STOCK);
+    existingAapl.setCurrency(Currency.USD);
+
+    when(instrumentRepository.searchInstruments(eq(null), eq("AA"), eq(Pageable.unpaged())))
+        .thenReturn(new PageImpl<>(List.of()));
+    when(marketDataClient.searchInstruments("AA"))
+        .thenReturn(
+            List.of(
+                new InstrumentResponse(null, "AAPL", "Apple Inc.", InstrumentType.STOCK, Currency.USD),
+                new InstrumentResponse(null, "AAOI", "Applied Optoelectronics", InstrumentType.STOCK, Currency.USD)));
+    when(instrumentRepository.findBySymbolInIgnoreCase(any())).thenReturn(List.of());
+    when(instrumentRepository.saveAll(any()))
+        .thenThrow(new DataIntegrityViolationException("duplicate key"));
+    when(instrumentRepository.save(any(Instrument.class)))
+        .thenAnswer(invocation -> {
+          Instrument inst = invocation.getArgument(0);
+          if ("AAPL".equals(inst.getSymbol())) {
+            throw new DataIntegrityViolationException("duplicate key");
+          }
+          inst.setId(UUID.randomUUID());
+          return inst;
+        });
+    when(instrumentRepository.findBySymbolIgnoreCase("AAPL")).thenReturn(Optional.of(existingAapl));
+
+    List<InstrumentResponse> results = instrumentService.getInstruments("AA", null, null, null);
+
+    assertThat(results).extracting(InstrumentResponse::symbol).containsExactlyInAnyOrder("AAPL", "AAOI");
+  }
+
+  @Test
+  void getInstruments_whenInvalidPagination_throwsIllegalArgumentException() {
+    assertThatThrownBy(() -> instrumentService.getInstruments("AA", null, -1, 10))
+        .isInstanceOf(IllegalArgumentException.class);
+    assertThatThrownBy(() -> instrumentService.getInstruments("AA", null, 0, 0))
+        .isInstanceOf(IllegalArgumentException.class);
+    assertThatThrownBy(() -> instrumentService.getInstruments("AA", null, 0, 101))
+        .isInstanceOf(IllegalArgumentException.class);
   }
 }

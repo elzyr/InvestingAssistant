@@ -1,12 +1,14 @@
 package pl.investassist.instrument.dto;
 
+import java.io.Serializable;
 import java.util.UUID;
 import pl.investassist.common.enums.Currency;
 import pl.investassist.common.enums.InstrumentType;
 import pl.investassist.instrument.entity.Instrument;
 
 public record InstrumentResponse(
-    UUID id, String symbol, String name, InstrumentType type, Currency currency) {
+    UUID id, String symbol, String name, InstrumentType type, Currency currency)
+    implements Serializable {
 
   public static InstrumentResponse from(Instrument entity) {
     if (entity == null) {

@@ -13,8 +13,12 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
+import org.mockito.InOrder;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.PageImpl;
+import org.springframework.data.domain.Pageable;
 import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.TransactionDefinition;
 import org.springframework.transaction.support.SimpleTransactionStatus;
@@ -33,6 +37,7 @@ import pl.investassist.portfolio.dto.response.TransactionResponse;
 import pl.investassist.portfolio.entity.Portfolio;
 import pl.investassist.portfolio.entity.Transaction;
 import pl.investassist.portfolio.enums.TransactionType;
+import pl.investassist.portfolio.repository.PortfolioRepository;
 import pl.investassist.portfolio.repository.TransactionRepository;
 
 @ExtendWith(MockitoExtension.class)
@@ -40,6 +45,9 @@ class TransactionServiceTest {
 
   @Mock
   private TransactionRepository transactionRepository;
+
+  @Mock
+  private PortfolioRepository portfolioRepository;
 
   @Mock
   private PortfolioService portfolioService;
@@ -71,6 +79,7 @@ class TransactionServiceTest {
 
     transactionService = new TransactionService(
         transactionRepository,
+        portfolioRepository,
         portfolioService,
         positionService,
         marketDataClient,
@@ -85,6 +94,8 @@ class TransactionServiceTest {
     portfolio.setId(portfolioId);
     portfolio.setUserId(userId);
     portfolio.setBaseCurrency(Currency.PLN);
+
+    lenient().when(portfolioRepository.findByIdWithLock(portfolioId)).thenReturn(Optional.of(portfolio));
   }
 
   @Test
@@ -289,9 +300,10 @@ class TransactionServiceTest {
     org.springframework.test.util.ReflectionTestUtils.setField(tx, "exchangeRateToBase", new BigDecimal("4.0000"));
 
     when(portfolioService.validateAndGetPortfolioEntity(userId, portfolioId)).thenReturn(portfolio);
-    when(transactionRepository.findAllByPortfolioIdOrderByExecutedAtDesc(portfolioId)).thenReturn(java.util.List.of(tx));
+    when(transactionRepository.findAllByPortfolioIdOrderByExecutedAtDesc(eq(portfolioId), eq(Pageable.unpaged())))
+        .thenReturn(new PageImpl<>(java.util.List.of(tx)));
 
-    java.util.List<TransactionResponse> responses = transactionService.getTransactions(userId, portfolioId);
+    java.util.List<TransactionResponse> responses = transactionService.getTransactions(userId, portfolioId, null, null);
 
     assertThat(responses).hasSize(1);
     assertThat(responses.get(0)).extracting("exchangeRateToBase").isEqualTo(new BigDecimal("4.0000"));
@@ -484,12 +496,95 @@ class TransactionServiceTest {
         new org.springframework.data.domain.PageImpl<>(java.util.List.of(tx));
 
     when(transactionRepository.findAllByPortfolioIdOrderByExecutedAtDesc(
-        eq(portfolioId), any(org.springframework.data.domain.Pageable.class)))
+        eq(portfolioId), any(Pageable.class)))
         .thenReturn(paged);
 
     java.util.List<TransactionResponse> result = transactionService.getTransactions(userId, portfolioId, 0, 10);
     assertThat(result).hasSize(1);
     verify(transactionRepository).findAllByPortfolioIdOrderByExecutedAtDesc(
-        eq(portfolioId), any(org.springframework.data.domain.Pageable.class));
+        eq(portfolioId), any(Pageable.class));
+  }
+
+  @Test
+  void createTransaction_whenDividendCommissionExceedsGross_throwsIllegalArgumentException() {
+    InstrumentResponse instrument = new InstrumentResponse(
+        instrumentId, "AAPL", "Apple Inc.", InstrumentType.STOCK, Currency.PLN);
+    when(instrumentService.getInstrument(instrumentId)).thenReturn(instrument);
+    when(portfolioService.validateAndGetPortfolioEntity(userId, portfolioId)).thenReturn(portfolio);
+
+    CreateTransactionRequest request = new CreateTransactionRequest(
+        instrumentId,
+        TransactionType.DIVIDEND,
+        new BigDecimal("10"),
+        new BigDecimal("2"),
+        new BigDecimal("25"),
+        Currency.PLN,
+        LocalDateTime.of(2025, 2, 15, 10, 0),
+        null,
+        null,
+        null,
+        null,
+        null);
+
+    assertThatThrownBy(() -> transactionService.createTransaction(userId, portfolioId, request))
+        .isInstanceOf(IllegalArgumentException.class);
+  }
+
+  @Test
+  void getTransactions_whenInvalidPagination_throwsIllegalArgumentException() {
+    when(portfolioService.validateAndGetPortfolioEntity(userId, portfolioId)).thenReturn(portfolio);
+
+    assertThatThrownBy(() -> transactionService.getTransactions(userId, portfolioId, -1, 10))
+        .isInstanceOf(IllegalArgumentException.class);
+    assertThatThrownBy(() -> transactionService.getTransactions(userId, portfolioId, 0, 101))
+        .isInstanceOf(IllegalArgumentException.class);
+  }
+
+  @Test
+  void deleteTransaction_acquiresPortfolioLockBeforeLoadingTransaction() {
+    UUID txId = UUID.randomUUID();
+    Transaction tx = new Transaction();
+    tx.setId(txId);
+    tx.setInstrumentId(instrumentId);
+
+    when(portfolioService.validateAndGetPortfolioEntity(userId, portfolioId)).thenReturn(portfolio);
+    when(transactionRepository.findByIdAndPortfolioId(txId, portfolioId)).thenReturn(Optional.of(tx));
+    when(instrumentService.getInstrument(instrumentId)).thenReturn(
+        new InstrumentResponse(instrumentId, "AAPL", "Apple", InstrumentType.STOCK, Currency.PLN));
+
+    transactionService.deleteTransaction(userId, portfolioId, txId);
+
+    InOrder inOrder = inOrder(portfolioRepository, transactionRepository);
+    inOrder.verify(portfolioRepository).findByIdWithLock(portfolioId);
+    inOrder.verify(transactionRepository).findByIdAndPortfolioId(txId, portfolioId);
+    inOrder.verify(transactionRepository).delete(tx);
+  }
+
+  @Test
+  void createTransaction_whenUntrimmedSeriesName_normalizesBeforeSaving() {
+    InstrumentResponse instrument = new InstrumentResponse(
+        instrumentId, "PL_BOND", "Polska obligacja", InstrumentType.BOND, Currency.PLN);
+    when(instrumentService.getInstrument(instrumentId)).thenReturn(instrument);
+    when(portfolioService.validateAndGetPortfolioEntity(userId, portfolioId)).thenReturn(portfolio);
+    when(transactionRepository.save(any(Transaction.class))).thenAnswer(i -> i.getArgument(0));
+
+    CreateTransactionRequest request = new CreateTransactionRequest(
+        instrumentId,
+        TransactionType.BUY,
+        new BigDecimal("100"),
+        new BigDecimal("10"),
+        BigDecimal.ZERO,
+        Currency.PLN,
+        LocalDateTime.of(2025, 1, 15, 10, 0),
+        "  EDO1034  ",
+        null,
+        null,
+        null,
+        null);
+
+    TransactionResponse response = transactionService.createTransaction(userId, portfolioId, request);
+
+    assertThat(response.seriesName()).isEqualTo("EDO1034");
+    verify(positionService).recalculatePosition(portfolio, instrumentId, Currency.PLN, "EDO1034");
   }
 }

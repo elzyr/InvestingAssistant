@@ -11,8 +11,6 @@ import org.springframework.data.repository.query.Param;
 import pl.investassist.portfolio.entity.Transaction;
 
 public interface TransactionRepository extends JpaRepository<Transaction, UUID> {
-  List<Transaction> findAllByPortfolioIdOrderByExecutedAtDesc(UUID portfolioId);
-
   Page<Transaction> findAllByPortfolioIdOrderByExecutedAtDesc(UUID portfolioId, Pageable pageable);
 
   @Query("SELECT t FROM Transaction t WHERE t.portfolio.id = :portfolioId AND t.instrumentId = :instrumentId ORDER BY t.executedAt ASC, t.id ASC")

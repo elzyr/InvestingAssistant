@@ -10,6 +10,7 @@ import java.math.BigDecimal;
 import java.time.LocalDateTime;
 import java.util.UUID;
 import pl.investassist.common.enums.Currency;
+import pl.investassist.common.util.SeriesUtils;
 import pl.investassist.portfolio.entity.Portfolio;
 import pl.investassist.portfolio.entity.Transaction;
 import pl.investassist.portfolio.enums.TransactionType;
@@ -69,7 +70,7 @@ public record CreateTransactionRequest(
     transaction.setCommission(commission);
     transaction.setCurrency(currency);
     transaction.setExecutedAt(executedAt != null ? executedAt : LocalDateTime.now());
-    transaction.setSeriesName(seriesName);
+    transaction.setSeriesName(SeriesUtils.normalize(seriesName));
     transaction.setBondRate(bondRate);
     transaction.setBondMargin(bondMargin);
     transaction.setTermMonths(termMonths);

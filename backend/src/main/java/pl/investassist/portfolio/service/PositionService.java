@@ -59,20 +59,14 @@ public class PositionService {
       String seriesName) {
     String cleanSeries = SeriesUtils.normalize(seriesName);
 
-    List<Transaction> transactions = null;
-    if (cleanSeries != null) {
-      try {
-        transactions = transactionRepository.findAllByPortfolioIdAndInstrumentIdAndSeriesNameOrderByExecutedAtAsc(
-            portfolio.getId(), instrumentId, cleanSeries);
-      } catch (Exception ignored) {
-      }
-    }
-    if (transactions == null || transactions.isEmpty()) {
-      transactions = transactionRepository.findAllByPortfolioIdAndInstrumentIdOrderByExecutedAtAsc(
-          portfolio.getId(), instrumentId);
-    }
+    List<Transaction> transactions =
+        (cleanSeries != null)
+            ? transactionRepository.findAllByPortfolioIdAndInstrumentIdAndSeriesNameOrderByExecutedAtAsc(
+                portfolio.getId(), instrumentId, cleanSeries)
+            : transactionRepository.findAllByPortfolioIdAndInstrumentIdOrderByExecutedAtAsc(
+                portfolio.getId(), instrumentId);
 
-    transactions = transactions.stream()
+    transactions = (transactions != null ? transactions : List.<Transaction>of()).stream()
         .filter(t -> Objects.equals(SeriesUtils.normalize(t.getSeriesName()), cleanSeries))
         .sorted(TX_ORDER)
         .toList();
