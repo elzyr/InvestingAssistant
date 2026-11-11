@@ -1,5 +1,16 @@
 target
+src/test
 .git
 .gitignore
 .env
+.env.*
 *.log
+*.md
+Dockerfile
+.dockerignore
+mvnw.cmd
+.idea
+*.iml
+.vscode
+.DS_Store
+Thumbs.db

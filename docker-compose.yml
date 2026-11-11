@@ -4,13 +4,13 @@ services:
       context: ./backend
       dockerfile: Dockerfile
     container_name: investassist-backend
-    ports:
-      - "8080:8080"
+    expose:
+      - "8080"
     environment:
       - DB_URL=jdbc:postgresql://postgres:5432/${DB_NAME}
       - DB_USER=${DB_USER}
       - DB_PASSWORD=${DB_PASSWORD}
-      - JPA_DDL_AUTO=update
+      - JPA_DDL_AUTO=${JPA_DDL_AUTO:-update}
       - REDIS_HOST=redis
       - REDIS_PORT=6379
       - JWT_SECRET=${JWT_SECRET}
@@ -23,18 +23,22 @@ services:
       market-data-service:
         condition: service_healthy
     healthcheck:
-      test: ["CMD-SHELL", "wget -qO- http://localhost:8080/health || exit 1"]
+      test: ["CMD-SHELL", "wget --spider -q http://127.0.0.1:8080/health || exit 1"]
       interval: 10s
       timeout: 5s
       retries: 5
       start_period: 40s
+    mem_limit: 1024m
+    security_opt:
+      - no-new-privileges:true
     networks:
       - investassist-network
-    restart: always
+    restart: unless-stopped
 
   redis:
     image: redis:7-alpine
     container_name: investassist-redis
+    command: ["redis-server", "--appendonly", "yes"]
     expose:
       - "6379"
     volumes:
@@ -44,9 +48,12 @@ services:
       interval: 5s
       timeout: 5s
       retries: 5
+    mem_limit: 256m
+    security_opt:
+      - no-new-privileges:true
     networks:
       - investassist-network
-    restart: always
+    restart: unless-stopped
 
   market-data-service:
     build:
@@ -71,13 +78,17 @@ services:
       postgres:
         condition: service_healthy
     healthcheck:
-      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8083/health')"]
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8083/health', timeout=3)"]
       interval: 10s
       timeout: 5s
       retries: 5
+      start_period: 15s
+    mem_limit: 768m
+    security_opt:
+      - no-new-privileges:true
     networks:
       - investassist-network
-    restart: always
+    restart: unless-stopped
 
   postgres:
     image: postgres:16-alpine
@@ -95,9 +106,12 @@ services:
       interval: 5s
       timeout: 5s
       retries: 5
+    mem_limit: 512m
+    security_opt:
+      - no-new-privileges:true
     networks:
       - investassist-network
-    restart: always
+    restart: unless-stopped
 
   frontend:
     build:
@@ -105,15 +119,24 @@ services:
       dockerfile: Dockerfile
     container_name: investassist-frontend
     ports:
-      - "3000:80"
+      - "3000:8080"
     depends_on:
       backend:
         condition: service_healthy
       market-data-service:
         condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "wget --spider -q http://127.0.0.1:8080/ || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    mem_limit: 128m
+    security_opt:
+      - no-new-privileges:true
     networks:
       - investassist-network
-    restart: always
+    restart: unless-stopped
 
 volumes:
   redis_data:
