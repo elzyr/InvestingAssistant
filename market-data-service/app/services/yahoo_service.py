@@ -1,7 +1,9 @@
+import math
 import re
 import logging
 from datetime import datetime, timedelta
-from typing import Optional
+from typing import Dict, Optional
+import numpy as np
 import pandas as pd
 import requests
 from requests.adapters import HTTPAdapter
@@ -49,6 +51,36 @@ EXCHANGE_MAP = {
 }
 
 SUPPORTED_SEARCH_CURRENCIES = {"USD", "EUR", "PLN", "GBP", "CHF"}
+
+
+def infer_base_currency(symbol: str) -> str:
+    sym_upper = (symbol or "").upper()
+    for suffix, currency in SUFFIX_MAP.items():
+        if sym_upper.endswith(suffix):
+            return currency
+    return "USD"
+
+
+def extract_date_col(df: pd.DataFrame) -> str:
+    if "Date" in df.columns:
+        return "Date"
+    if "Datetime" in df.columns:
+        return "Datetime"
+    return df.columns[0]
+
+
+def _is_intraday_interval(interval: str) -> bool:
+    return (interval or "").endswith(("m", "h"))
+
+
+def _finite_float(val) -> Optional[float]:
+    if val is None:
+        return None
+    try:
+        num = float(val)
+    except (TypeError, ValueError):
+        return None
+    return num if math.isfinite(num) else None
 
 def _fetch_nbp_rate(from_cur: str, to_cur: str, clean_date: Optional[str] = None) -> Optional[float]:
     if from_cur != "PLN" and to_cur != "PLN":
@@ -121,16 +153,23 @@ class YahooService:
                 ticker = f"{from_cur}{to_cur}=X"
                 stock = yf.Ticker(ticker)
                 info = stock.fast_info
-                price = getattr(info, "last_price", None) if hasattr(info, "last_price") else (info.get("last_price") if isinstance(info, dict) else None)
+                price = _finite_float(
+                    getattr(info, "last_price", None)
+                    if hasattr(info, "last_price")
+                    else (info.get("last_price") if isinstance(info, dict) else None)
+                )
                 if price is None:
                     hist = stock.history(period="1d")
                     if hist.empty:
                         hist = stock.history(period="5d")
+                    if not hist.empty and "Close" in hist.columns:
+                        hist = hist.dropna(subset=["Close"])
+                        hist = hist[np.isfinite(hist["Close"])]
                     if hist.empty:
                         raise HTTPException(status_code=404, detail=f"Exchange rate {from_currency} to {to_currency} not found")
                     rate = float(hist["Close"].iloc[-1])
                 else:
-                    rate = float(price)
+                    rate = price
 
             if not is_spot_fallback:
                 expire = 2592000 if clean_date else 300
@@ -139,16 +178,59 @@ class YahooService:
             return rate
 
     @staticmethod
+    def get_historical_fx_rates(
+        from_currency: str,
+        to_currency: str,
+        start_date: str,
+        end_date: Optional[str] = None,
+    ) -> Dict[str, float]:
+        from_cur = from_currency.upper()
+        to_cur = to_currency.upper()
+        if from_cur == to_cur:
+            return {}
+        fx_ticker = f"{from_cur}{to_cur}=X"
+        try:
+            fx_stock = yf.Ticker(fx_ticker)
+            if end_date:
+                end_dt = (datetime.strptime(end_date[:10], "%Y-%m-%d") + timedelta(days=1)).strftime("%Y-%m-%d")
+                fx_hist = fx_stock.history(start=start_date[:10], end=end_dt, interval="1d")
+            else:
+                fx_hist = fx_stock.history(start=start_date[:10], interval="1d")
+            if fx_hist.empty or "Close" not in fx_hist.columns:
+                return {}
+            fx_hist = fx_hist.dropna(subset=["Close"])
+            fx_hist = fx_hist[np.isfinite(fx_hist["Close"])]
+            if fx_hist.empty:
+                return {}
+            fx_dates = fx_hist.index
+            fx_date_strs = (
+                fx_dates.strftime("%Y-%m-%d")
+                if hasattr(fx_dates, "strftime")
+                else fx_dates.astype(str).str[:10]
+            )
+            return {
+                str(d): float(c)
+                for d, c in zip(fx_date_strs, fx_hist["Close"].values)
+                if math.isfinite(float(c)) and float(c) > 0
+            }
+        except Exception as e:
+            logging.warning(f"Historical FX series fetch failed for {fx_ticker}: {e}")
+            return {}
+
+    @staticmethod
     def get_current_price(symbol: str, target_currency: str = None) -> dict:
         try:
             stock = yf.Ticker(symbol)
             info = stock.fast_info
 
-            price = getattr(info, "last_price", None)
-            prev_close = getattr(info, "previous_close", None)
+            price = _finite_float(getattr(info, "last_price", None))
+            prev_close = _finite_float(getattr(info, "previous_close", None))
 
             if price is None or prev_close is None:
                 hist = stock.history(period="5d")
+                if not hist.empty and "Close" in hist.columns:
+                    hist = hist.dropna(subset=["Close"])
+                    hist = hist[np.isfinite(hist["Close"])]
                 if hist.empty:
                     raise HTTPException(status_code=404, detail=f"Symbol {symbol} not found")
                 if price is None:
@@ -156,12 +238,10 @@ class YahooService:
                 if prev_close is None:
                     prev_close = float(hist["Close"].iloc[-2]) if len(hist) >= 2 else float(price)
 
-            price = float(price)
-            prev_close = float(prev_close)
             change = float(price - prev_close)
             change_percent = float((change / prev_close) * 100) if prev_close else 0.0
 
-            base_currency = (getattr(info, "currency", None) or "USD").upper()
+            base_currency = (getattr(info, "currency", None) or infer_base_currency(symbol)).upper()
 
             if not target_currency or target_currency.upper() == base_currency:
                 return {
@@ -189,23 +269,39 @@ class YahooService:
             raise HTTPException(status_code=502, detail="Upstream market provider failure")
 
     @staticmethod
-    def get_historical_data(symbol: str, period: str = "1mo", interval: str = "1d", target_currency: str = None) -> dict:
+    def get_historical_data(
+        symbol: str,
+        period: str = "1mo",
+        interval: str = "1d",
+        target_currency: str = None,
+        start_date: Optional[str] = None,
+    ) -> dict:
         try:
             stock = yf.Ticker(symbol)
-            hist = stock.history(period=period, interval=interval)
+            hist = (
+                stock.history(start=start_date, interval=interval)
+                if start_date
+                else stock.history(period=period, interval=interval)
+            )
             if hist.empty:
                 raise HTTPException(status_code=404, detail=f"No historical data for symbol {symbol}")
 
             info = stock.fast_info
-            base_currency = (getattr(info, "currency", None) or "USD").upper()
+            base_currency = (getattr(info, "currency", None) or infer_base_currency(symbol)).upper()
 
             hist = hist.reset_index().dropna(subset=["Close"])
-            date_col = "Date" if "Date" in hist.columns else ("Datetime" if "Datetime" in hist.columns else hist.columns[0])
+            hist = hist[np.isfinite(hist["Close"])]
+            if hist.empty:
+                raise HTTPException(status_code=404, detail=f"No valid historical data for symbol {symbol}")
+
+            date_col = extract_date_col(hist)
             dates = hist[date_col]
+            intraday = _is_intraday_interval(interval)
+            date_fmt = "%Y-%m-%dT%H:%M:%S" if intraday else "%Y-%m-%d"
             if hasattr(dates, "dt") and hasattr(dates.dt, "strftime"):
-                hist["date"] = dates.dt.strftime("%Y-%m-%d")
+                hist["date"] = dates.dt.strftime(date_fmt)
             else:
-                hist["date"] = dates.astype(str).str[:10]
+                hist["date"] = dates.astype(str).str[:19] if intraday else dates.astype(str).str[:10]
 
             actual_currency = base_currency
             rate_multiplier = 1.0
@@ -215,16 +311,25 @@ class YahooService:
                 fx_ticker = f"{base_currency}{target_cur}=X"
                 try:
                     fx_stock = yf.Ticker(fx_ticker)
-                    fx_hist = fx_stock.history(period=period, interval=interval)
+                    fx_hist = (
+                        fx_stock.history(start=start_date, interval=interval)
+                        if start_date
+                        else fx_stock.history(period=period, interval=interval)
+                    )
                     if not fx_hist.empty and "Close" in fx_hist.columns:
                         fx_hist = fx_hist.dropna(subset=["Close"])
+                        fx_hist = fx_hist[np.isfinite(fx_hist["Close"])]
+                    if not fx_hist.empty and "Close" in fx_hist.columns:
                         fx_dates = fx_hist.index
-                        if hasattr(fx_dates, "strftime"):
-                            fx_date_str = fx_dates.strftime("%Y-%m-%d")
-                        else:
-                            fx_date_str = fx_dates.astype(str).str[:10]
+                        fx_date_str = (
+                            fx_dates.strftime("%Y-%m-%d")
+                            if hasattr(fx_dates, "strftime")
+                            else fx_dates.astype(str).str[:10]
+                        )
                         fx_df = pd.DataFrame({"fx_date": fx_date_str, "fx_rate": fx_hist["Close"].values})
-                        merged = hist[["date"]].merge(fx_df, left_on="date", right_on="fx_date", how="left")
+                        fx_df = fx_df.drop_duplicates(subset=["fx_date"], keep="last")
+                        merge_keys = pd.DataFrame({"_merge_date": hist["date"].str[:10]})
+                        merged = merge_keys.merge(fx_df, left_on="_merge_date", right_on="fx_date", how="left")
                         merged["fx_rate"] = merged["fx_rate"].ffill().bfill()
                         if merged["fx_rate"].notna().all():
                             rate_multiplier = merged["fx_rate"].values
@@ -234,10 +339,19 @@ class YahooService:
 
             close_series = (hist["Close"] * rate_multiplier).round(4).astype(float)
             hist["close"] = close_series
-            hist["open"] = (hist["Open"] * rate_multiplier).round(4).fillna(close_series).astype(float) if "Open" in hist.columns else close_series
-            hist["high"] = (hist["High"] * rate_multiplier).round(4).fillna(close_series).astype(float) if "High" in hist.columns else close_series
-            hist["low"] = (hist["Low"] * rate_multiplier).round(4).fillna(close_series).astype(float) if "Low" in hist.columns else close_series
-            hist["volume"] = hist["Volume"].fillna(0).astype(int) if "Volume" in hist.columns else 0
+            for out_col, src_col in (("open", "Open"), ("high", "High"), ("low", "Low")):
+                if src_col in hist.columns:
+                    col_vals = (hist[src_col] * rate_multiplier).round(4)
+                    col_vals = col_vals.replace([np.inf, -np.inf], np.nan).fillna(close_series)
+                    hist[out_col] = col_vals.astype(float)
+                else:
+                    hist[out_col] = close_series
+
+            if "Volume" in hist.columns:
+                vol_vals = pd.to_numeric(hist["Volume"], errors="coerce")
+                hist["volume"] = vol_vals.replace([np.inf, -np.inf], np.nan).fillna(0).astype(int)
+            else:
+                hist["volume"] = 0
 
             data = hist[["date", "open", "high", "low", "close", "volume"]].to_dict("records")
             return {"history": data, "currency": actual_currency}

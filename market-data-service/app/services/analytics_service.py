@@ -1,9 +1,14 @@
 import datetime
 import logging
+import math
 from typing import Dict, Any, List, Optional
 import numpy as np
 import yfinance as yf
+from app.services.cache_service import cache_service
 from app.services.market_history_repo import market_history_repo
+from app.services.yahoo_service import extract_date_col, infer_base_currency
+
+ANALYTICS_CACHE_TTL_SECONDS = 21600
 
 UCITS_FALLBACK_MAP = {
     "VWCE.DE": {"ter": 0.0022, "trailingPe": 21.0, "dividendYield": 0.015, "beta": 1.0},
@@ -14,11 +19,16 @@ UCITS_FALLBACK_MAP = {
     "IS3N.DE": {"ter": 0.0018, "trailingPe": 14.0, "dividendYield": 0.024, "beta": 0.95},
 }
 
+
 def _safe_float(val: Any, default: Optional[float] = None) -> Optional[float]:
+    if val is None:
+        return default
     try:
-        return float(val) if val is not None else default
+        num = float(val)
+        return num if math.isfinite(num) else default
     except (ValueError, TypeError):
         return default
+
 
 class AnalyticsService:
     @staticmethod
@@ -27,18 +37,18 @@ class AnalyticsService:
         fallback = UCITS_FALLBACK_MAP.get(sym, {"ter": None, "trailingPe": None, "dividendYield": None, "beta": None})
 
         raw_ter = raw_info.get("netExpenseRatio") or raw_info.get("annualReportExpenseRatio") or raw_info.get("expenseRatio")
-        ter = _safe_float(raw_ter, fallback["ter"]) if raw_ter is not None else fallback["ter"]
+        ter = _safe_float(raw_ter, fallback["ter"])
 
         raw_pe = raw_info.get("trailingPE") or raw_info.get("forwardPE")
-        trailing_pe = _safe_float(raw_pe, fallback["trailingPe"]) if raw_pe is not None else fallback["trailingPe"]
+        trailing_pe = _safe_float(raw_pe, fallback["trailingPe"])
 
         raw_yield = raw_info.get("dividendYield") or raw_info.get("yield")
-        dividend_yield = _safe_float(raw_yield, fallback["dividendYield"]) if raw_yield is not None else fallback["dividendYield"]
+        dividend_yield = _safe_float(raw_yield, fallback["dividendYield"])
         if dividend_yield is not None and dividend_yield > 1.0:
             dividend_yield /= 100.0
 
         raw_beta = raw_info.get("beta") or raw_info.get("beta3Year")
-        beta = _safe_float(raw_beta, fallback["beta"]) if raw_beta is not None else fallback["beta"]
+        beta = _safe_float(raw_beta, fallback["beta"])
 
         return {
             "ter": ter,
@@ -50,108 +60,137 @@ class AnalyticsService:
     @staticmethod
     def fetch_etf_market_metrics(symbol: str) -> Dict[str, Any]:
         sym = symbol.upper()
-        today_str = datetime.date.today().isoformat()
-        yesterday_str = (datetime.date.today() - datetime.timedelta(days=1)).isoformat()
-        max_date = market_history_repo.get_max_date(sym)
-        existing_profile = market_history_repo.get_profile_metrics(sym)
-        profile = existing_profile
+        cache_key = f"analytics:etf:{sym}"
+        with cache_service.get_lock(cache_key):
+            cached = cache_service.get(cache_key)
+            if cached is not None and isinstance(cached, dict):
+                return cached
 
-        already_updated_today = existing_profile and existing_profile.get("lastUpdated") == today_str
-        needs_fetch = not max_date or (max_date < yesterday_str and not already_updated_today)
+            today_str = datetime.date.today().isoformat()
+            yesterday_str = (datetime.date.today() - datetime.timedelta(days=1)).isoformat()
+            max_date = market_history_repo.get_max_date(sym)
+            existing_profile = market_history_repo.get_profile_metrics(sym)
+            profile = existing_profile
 
-        if needs_fetch:
-            try:
-                stock = yf.Ticker(sym)
-                hist = stock.history(start=max_date) if max_date else stock.history(period="5y")
-                if not hist.empty:
-                    hist = hist.reset_index().dropna(subset=["Close"])
-                    date_col = "Date" if "Date" in hist.columns else ("Datetime" if "Datetime" in hist.columns else hist.columns[0])
-                    currency = getattr(stock.fast_info, "currency", "USD") or "USD"
+            already_updated_today = existing_profile and existing_profile.get("lastUpdated") == today_str
+            needs_fetch = not max_date or (max_date < yesterday_str and not already_updated_today)
 
-                    if max_date:
-                        matching_row = hist[hist[date_col].astype(str).str[:10] == max_date]
-                        if not matching_row.empty:
-                            fetched_close = float(matching_row.iloc[0]["Close"])
-                            stored_close = market_history_repo.get_price_on_date(sym, max_date)
-                            if stored_close is not None and stored_close > 0 and abs(fetched_close - stored_close) / stored_close > 0.001:
-                                hist = stock.history(period="5y")
-                                if not hist.empty:
-                                    hist = hist.reset_index().dropna(subset=["Close"])
-                                    date_col = "Date" if "Date" in hist.columns else ("Datetime" if "Datetime" in hist.columns else hist.columns[0])
-                                market_history_repo.delete_symbol_prices(sym)
+            if needs_fetch:
+                try:
+                    stock = yf.Ticker(sym)
+                    hist = stock.history(start=max_date) if max_date else stock.history(period="5y")
+                    if not hist.empty:
+                        hist = hist.reset_index().dropna(subset=["Close"])
+                        hist = hist[np.isfinite(hist["Close"])]
+                    if not hist.empty:
+                        date_col = extract_date_col(hist)
+                        currency = getattr(stock.fast_info, "currency", None) or infer_base_currency(sym)
 
-                    vols = hist["Volume"].values if "Volume" in hist.columns else [0] * len(hist)
-                    records = [
-                        {
-                            "date": str(d)[:10],
-                            "close_price": float(c),
-                            "currency": currency,
-                            "volume": int(v or 0)
-                        }
-                        for d, c, v in zip(hist[date_col].values, hist["Close"].values, vols)
-                    ]
-                    market_history_repo.save_eod_prices_bulk(sym, records, currency)
+                        if max_date:
+                            matching_row = hist[hist[date_col].astype(str).str[:10] == max_date]
+                            if not matching_row.empty:
+                                fetched_close = float(matching_row.iloc[0]["Close"])
+                                stored_close = market_history_repo.get_price_on_date(sym, max_date)
+                                if stored_close is not None and stored_close > 0 and abs(fetched_close - stored_close) / stored_close > 0.001:
+                                    hist = stock.history(period="5y")
+                                    if not hist.empty:
+                                        hist = hist.reset_index().dropna(subset=["Close"])
+                                        hist = hist[np.isfinite(hist["Close"])]
+                                        date_col = extract_date_col(hist)
+                                    market_history_repo.delete_symbol_prices(sym)
 
-                    info = {}
-                    try:
-                        fast = getattr(stock, "fast_info", None)
-                        if fast is not None:
-                            if isinstance(fast, dict):
-                                info = fast
-                            elif hasattr(fast, "items"):
-                                info = dict(fast.items())
-                            elif hasattr(fast, "__dict__"):
-                                info = dict(fast.__dict__)
-                    except Exception:
-                        pass
+                        vols = hist["Volume"].values if "Volume" in hist.columns else [0] * len(hist)
+                        records = [
+                            {
+                                "date": str(d)[:10],
+                                "close_price": float(c),
+                                "currency": currency,
+                                "volume": int(v) if v is not None and math.isfinite(float(v)) else 0,
+                            }
+                            for d, c, v in zip(hist[date_col].values, hist["Close"].values, vols)
+                        ]
+                        market_history_repo.save_eod_prices_bulk(sym, records, currency)
 
-                    enriched = AnalyticsService.enrich_with_ucits_fallback(sym, info)
-                    market_history_repo.save_profile_metrics(
-                        symbol=sym,
-                        ter=enriched["ter"] or 0.0,
-                        trailing_pe=enriched["trailingPe"] or 0.0,
-                        dividend_yield=enriched["dividendYield"] or 0.0,
-                        beta=enriched["beta"] or 1.0,
-                        last_updated=today_str,
-                    )
-                    profile = enriched
-            except Exception as e:
-                logging.warning(f"Failed to fetch market data from Yahoo for {sym}: {e}")
+                        info: Dict[str, Any] = {}
+                        try:
+                            raw_info = getattr(stock, "info", None)
+                            if isinstance(raw_info, dict):
+                                info = raw_info
+                        except Exception as info_err:
+                            logging.warning(f"Failed to fetch Yahoo stock.info for {sym}: {info_err}")
 
-        if not profile:
-            profile = AnalyticsService.enrich_with_ucits_fallback(sym, {})
+                        enriched = AnalyticsService.enrich_with_ucits_fallback(sym, info)
+                        market_history_repo.save_profile_metrics(
+                            symbol=sym,
+                            ter=enriched["ter"],
+                            trailing_pe=enriched["trailingPe"],
+                            dividend_yield=enriched["dividendYield"],
+                            beta=enriched["beta"],
+                            last_updated=today_str,
+                        )
+                        profile = enriched
+                except Exception as e:
+                    logging.warning(f"Failed to fetch market data from Yahoo for {sym}: {e}")
 
-        prices = market_history_repo.get_historical_prices(sym)
-        currency = prices[-1].get("currency", "USD") if prices else "USD"
-        if len(prices) >= 2:
-            closes = np.array([p["closePrice"] for p in prices], dtype=np.float64)
-            daily_returns = np.diff(closes) / closes[:-1]
-            growth_factor = float(np.prod(1.0 + daily_returns))
-            annual_return = float(growth_factor ** (252.0 / len(daily_returns)) - 1.0) if growth_factor > 0 else 0.0
-            annual_volatility = float(np.std(daily_returns, ddof=1) * np.sqrt(252)) if len(daily_returns) > 1 else None
-            daily_returns_dict = {
-                prices[i + 1]["date"]: float(daily_returns[i])
-                for i in range(len(daily_returns))
+            if not profile:
+                profile = AnalyticsService.enrich_with_ucits_fallback(sym, {})
+
+            prices = market_history_repo.get_historical_prices(sym)
+            valid_prices = [
+                p for p in prices
+                if p.get("closePrice") is not None
+                and math.isfinite(float(p["closePrice"]))
+                and float(p["closePrice"]) > 0
+            ]
+            currency = (
+                valid_prices[-1].get("currency")
+                if valid_prices
+                else (prices[-1].get("currency") if prices else None)
+            ) or infer_base_currency(sym)
+
+            if len(valid_prices) >= 2:
+                closes = np.array([float(p["closePrice"]) for p in valid_prices], dtype=np.float64)
+                daily_returns = np.diff(closes) / closes[:-1]
+                growth_factor = float(np.prod(1.0 + daily_returns))
+                raw_ann_ret = (
+                    float(growth_factor ** (252.0 / len(daily_returns)) - 1.0)
+                    if growth_factor > 0
+                    else 0.0
+                )
+                annual_return = raw_ann_ret if math.isfinite(raw_ann_ret) else None
+                raw_ann_vol = (
+                    float(np.std(daily_returns, ddof=1) * np.sqrt(252))
+                    if len(daily_returns) > 1
+                    else None
+                )
+                annual_volatility = raw_ann_vol if (raw_ann_vol is not None and math.isfinite(raw_ann_vol)) else None
+                daily_returns_dict = {
+                    valid_prices[i + 1]["date"]: float(daily_returns[i])
+                    for i in range(len(daily_returns))
+                    if math.isfinite(float(daily_returns[i]))
+                }
+            else:
+                annual_return = None
+                annual_volatility = None
+                daily_returns_dict = {}
+
+            result = {
+                "symbol": sym,
+                "annualReturn": annual_return,
+                "annualVolatility": annual_volatility,
+                "ter": profile.get("ter"),
+                "trailingPe": profile.get("trailingPe"),
+                "dividendYield": profile.get("dividendYield"),
+                "beta": profile.get("beta"),
+                "dailyReturns": daily_returns_dict,
+                "currency": currency,
             }
-        else:
-            annual_return = None
-            annual_volatility = None
-            daily_returns_dict = {}
-
-        return {
-            "symbol": sym,
-            "annualReturn": annual_return,
-            "annualVolatility": annual_volatility,
-            "ter": profile.get("ter"),
-            "trailingPe": profile.get("trailingPe"),
-            "dividendYield": profile.get("dividendYield"),
-            "beta": profile.get("beta"),
-            "dailyReturns": daily_returns_dict,
-            "currency": currency,
-        }
+            cache_ttl = ANALYTICS_CACHE_TTL_SECONDS if valid_prices else 300
+            cache_service.set(cache_key, result, expire=cache_ttl)
+            return result
 
     @staticmethod
-    def calculate_portfolio_metrics(holdings: List[Any], benchmark_symbol: str = "SPY") -> Dict[str, Any]:
+    def calculate_portfolio_metrics(holdings: List[Any]) -> Dict[str, Any]:
         if not holdings:
             return {
                 "weightedReturn": None,
@@ -255,10 +294,6 @@ class AnalyticsService:
                         np.array([s[d] for d in common_dates], dtype=np.float64)
                         for s in valid_series
                     ])
-            elif all(isinstance(s, list) for s in valid_series):
-                min_len = min(len(s) for s in valid_series)
-                if min_len > 1:
-                    aligned_returns = np.column_stack([np.array(s[-min_len:], dtype=np.float64) for s in valid_series])
 
             if aligned_returns is not None and aligned_returns.shape[0] > 1:
                 port_daily = np.dot(aligned_returns, w_vec)

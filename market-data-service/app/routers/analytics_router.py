@@ -13,7 +13,6 @@ class HoldingItem(BaseModel):
 
 class PortfolioStatsRequest(BaseModel):
     holdings: List[HoldingItem] = Field(..., max_length=50)
-    benchmarkSymbol: Optional[str] = Field("SPY", pattern=r"^[A-Za-z0-9.\-^=]+$", max_length=20)
 
 class InstrumentMetricItem(BaseModel):
     symbol: str
@@ -43,6 +42,5 @@ async def calculate_portfolio_stats(request: PortfolioStatsRequest) -> Portfolio
     metrics = await run_in_threadpool(
         AnalyticsService.calculate_portfolio_metrics,
         holdings=request.holdings,
-        benchmark_symbol=request.benchmarkSymbol or "SPY",
     )
     return PortfolioStatsResponse(**metrics)

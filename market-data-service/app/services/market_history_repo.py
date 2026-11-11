@@ -1,8 +1,14 @@
+import logging
 import sqlite3
 import os
 import datetime
 from typing import Optional, List, Dict, Any
 from app.config import settings
+
+
+def _opt_float(val: Optional[float]) -> Optional[float]:
+    return float(val) if val is not None else None
+
 
 class MarketHistoryRepository:
     def __init__(
@@ -37,8 +43,12 @@ class MarketHistoryRepository:
         self.pool = None
         if self.is_postgres and self.conn is None:
             if not self.database_url and db_host:
-                user = getattr(settings, "DB_USER", "postgres") or "postgres"
-                password = getattr(settings, "DB_PASSWORD", "postgres") or "postgres"
+                env_user = getattr(settings, "DB_USER", None)
+                env_password = getattr(settings, "DB_PASSWORD", None)
+                if not env_user or not env_password:
+                    logging.warning("DB_USER or DB_PASSWORD is not configured alongside DB_HOST; using dev defaults")
+                user = env_user or "postgres"
+                password = env_password or "postgres"
                 port = getattr(settings, "DB_PORT", 5432) or 5432
                 dbname = getattr(settings, "DB_NAME", "investing_assistant") or "investing_assistant"
                 self.database_url = f"postgresql://{user}:{password}@{db_host}:{port}/{dbname}"
@@ -46,8 +56,8 @@ class MarketHistoryRepository:
 
         try:
             self.init_db()
-        except Exception:
-            pass
+        except Exception as e:
+            logging.warning(f"Database initialization failed or deferred: {e}")
 
     @property
     def _ph(self) -> str:
@@ -57,10 +67,15 @@ class MarketHistoryRepository:
         if self.is_postgres and self.conn is None and self.pool is None and self.database_url:
             try:
                 from psycopg2 import pool
-                self.pool = pool.ThreadedConnectionPool(1, 10, dsn=self.database_url)
+                self.pool = pool.ThreadedConnectionPool(
+                    1,
+                    10,
+                    dsn=self.database_url,
+                    connect_timeout=5,
+                )
                 self.init_db()
-            except Exception:
-                pass
+            except Exception as e:
+                logging.warning(f"Postgres connection pool initialization failed: {e}")
 
     def _get_connection(self) -> tuple[Any, bool]:
         if self.conn is not None:
@@ -72,12 +87,12 @@ class MarketHistoryRepository:
                 conn = self.pool.getconn()
             else:
                 import psycopg2
-                conn = psycopg2.connect(self.database_url)
+                conn = psycopg2.connect(self.database_url, connect_timeout=5)
             try:
                 with conn.cursor() as cur:
                     cur.execute(f"SET search_path TO {self.schema}, public;")
-            except Exception:
-                pass
+            except Exception as e:
+                logging.warning(f"Failed to set search_path to {self.schema}: {e}")
             return conn, False
         db_dir = os.path.dirname(self.db_path)
         if db_dir:
@@ -97,17 +112,17 @@ class MarketHistoryRepository:
                         conn.rollback()
                     self.pool.putconn(conn)
                     return
-                except Exception:
-                    pass
+                except Exception as e:
+                    logging.warning(f"Failed to return Postgres connection to pool: {e}")
             try:
                 conn.close()
-            except Exception:
-                pass
+            except Exception as e:
+                logging.warning(f"Failed to close Postgres connection: {e}")
         else:
             try:
                 conn.close()
-            except Exception:
-                pass
+            except Exception as e:
+                logging.warning(f"Failed to close SQLite connection: {e}")
 
     def init_db(self) -> None:
         conn, is_external = self._get_connection()
@@ -288,16 +303,24 @@ class MarketHistoryRepository:
     def save_profile_metrics(
         self,
         symbol: str,
-        ter: float,
-        trailing_pe: float,
-        dividend_yield: float,
-        beta: float,
+        ter: Optional[float],
+        trailing_pe: Optional[float],
+        dividend_yield: Optional[float],
+        beta: Optional[float],
         last_updated: Optional[str] = None
     ) -> None:
         conn, is_external = self._get_connection()
         try:
             cursor = conn.cursor()
             updated = last_updated or datetime.date.today().isoformat()
+            params = (
+                symbol,
+                _opt_float(ter),
+                _opt_float(trailing_pe),
+                _opt_float(dividend_yield),
+                _opt_float(beta),
+                updated,
+            )
             if self.is_postgres:
                 cursor.execute("""
                     INSERT INTO etf_profile_metrics (symbol, ter, trailing_pe, dividend_yield, beta, last_updated)
@@ -308,12 +331,12 @@ class MarketHistoryRepository:
                         dividend_yield = EXCLUDED.dividend_yield,
                         beta = EXCLUDED.beta,
                         last_updated = EXCLUDED.last_updated
-                """, (symbol, float(ter or 0.0), float(trailing_pe or 0.0), float(dividend_yield or 0.0), float(beta or 1.0), updated))
+                """, params)
             else:
                 cursor.execute("""
                     INSERT OR REPLACE INTO etf_profile_metrics (symbol, ter, trailing_pe, dividend_yield, beta, last_updated)
                     VALUES (?, ?, ?, ?, ?, ?)
-                """, (symbol, float(ter or 0.0), float(trailing_pe or 0.0), float(dividend_yield or 0.0), float(beta or 1.0), updated))
+                """, params)
             conn.commit()
         finally:
             self._release_connection(conn, is_external)
@@ -328,10 +351,10 @@ class MarketHistoryRepository:
                 return None
             return {
                 "symbol": symbol,
-                "ter": float(row[0]),
-                "trailingPe": float(row[1]),
-                "dividendYield": float(row[2]),
-                "beta": float(row[3]),
+                "ter": _opt_float(row[0]),
+                "trailingPe": _opt_float(row[1]),
+                "dividendYield": _opt_float(row[2]),
+                "beta": _opt_float(row[3]),
                 "lastUpdated": row[4],
             }
         finally:

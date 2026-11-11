@@ -12,7 +12,6 @@ class TestPortfolioStatsSeam(unittest.TestCase):
                 HoldingItem(symbol="VWCE.DE", weight=0.6, value=60000.0),
                 HoldingItem(symbol="VUAA.DE", weight=0.4, value=40000.0)
             ],
-            benchmarkSymbol="SPY"
         )
 
         with patch("app.services.analytics_service.AnalyticsService.fetch_etf_market_metrics") as mock_fetch:
@@ -25,7 +24,13 @@ class TestPortfolioStatsSeam(unittest.TestCase):
                     "trailingPe": 21.0,
                     "dividendYield": 0.015,
                     "beta": 1.0,
-                    "dailyReturns": [0.01, -0.005, 0.002, 0.004, -0.001]
+                    "dailyReturns": {
+                        "2024-01-02": 0.01,
+                        "2024-01-03": -0.005,
+                        "2024-01-04": 0.002,
+                        "2024-01-05": 0.004,
+                        "2024-01-08": -0.001,
+                    },
                 },
                 "VUAA.DE": {
                     "symbol": "VUAA.DE",
@@ -35,7 +40,13 @@ class TestPortfolioStatsSeam(unittest.TestCase):
                     "trailingPe": 24.0,
                     "dividendYield": 0.012,
                     "beta": 1.05,
-                    "dailyReturns": [0.012, -0.006, 0.003, 0.005, -0.002]
+                    "dailyReturns": {
+                        "2024-01-02": 0.012,
+                        "2024-01-03": -0.006,
+                        "2024-01-04": 0.003,
+                        "2024-01-05": 0.005,
+                        "2024-01-08": -0.002,
+                    },
                 }
             }[symbol]
 
