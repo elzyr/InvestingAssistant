@@ -7,12 +7,15 @@ import type {
 } from '../../types/portfolio.ts';
 import type { InstrumentResponse } from '../../types/instrument.ts';
 import type { PriceQuote } from '../../services/market.service.ts';
+import type { PortfolioStatsResponse } from '../../types/analytics.types.ts';
 import {
   fetchPortfolios,
   fetchPositions,
   fetchTransactions,
   fetchHistoricalPrices,
   fetchInflation,
+  fetchMonthlyInflation,
+  fetchPortfolioStats,
   createTransaction,
   updateTransaction,
   deleteTransaction,
@@ -32,10 +35,12 @@ export interface PortfolioState {
   historicalSortedDates: Record<string, string[]>;
   cpi: number | null;
   monthlyCpi: Record<number, Record<number, number>>;
+  portfolioStats: Record<string, PortfolioStatsResponse>;
   loading: boolean;
   isInitialLoading: boolean;
   isPositionsLoading: boolean;
   isTransactionsLoading: boolean;
+  isInflationLoading: boolean;
   error: string | null;
   positionsLastFetchedAt: Record<string, number>;
   transactionsLastFetchedAt: Record<string, number>;
@@ -53,10 +58,12 @@ const initialState: PortfolioState = {
   historicalSortedDates: {},
   cpi: null,
   monthlyCpi: {},
+  portfolioStats: {},
   loading: false,
   isInitialLoading: false,
   isPositionsLoading: false,
   isTransactionsLoading: false,
+  isInflationLoading: false,
   error: null,
   positionsLastFetchedAt: {},
   transactionsLastFetchedAt: {},
@@ -69,20 +76,8 @@ export const portfolioSlice = createSlice({
     setActivePortfolioId: (state, action: PayloadAction<string>) => {
       state.activePortfolioId = action.payload;
     },
-    setInflation: (
-      state,
-      action: PayloadAction<{ cpi: number | null; monthlyCpi?: Record<number, Record<number, number>> }>
-    ) => {
-      state.cpi = action.payload.cpi;
-      if (action.payload.monthlyCpi) {
-        state.monthlyCpi = action.payload.monthlyCpi;
-      }
-    },
-    setYearMonthlyCpi: (
-      state,
-      action: PayloadAction<{ year: number; data: Record<number, number> }>
-    ) => {
-      state.monthlyCpi[action.payload.year] = action.payload.data;
+    clearPortfolioError: (state) => {
+      state.error = null;
     },
     resetPortfolio: () => initialState,
   },
@@ -120,8 +115,6 @@ export const portfolioSlice = createSlice({
         state.instruments = { ...state.instruments, ...action.payload.instruments };
         state.quotes = { ...state.quotes, ...action.payload.quotes };
         state.rates = { ...state.rates, ...action.payload.rates };
-        state.historicalPrices = { ...state.historicalPrices, ...action.payload.historicalPrices };
-        state.historicalSortedDates = { ...state.historicalSortedDates, ...action.payload.historicalSortedDates };
         const pId = typeof action.meta.arg === 'string' ? action.meta.arg : action.meta.arg.portfolioId;
         state.positionsLastFetchedAt[pId] = Date.now();
       })
@@ -136,27 +129,48 @@ export const portfolioSlice = createSlice({
       .addCase(fetchTransactions.fulfilled, (state, action) => {
         state.isTransactionsLoading = false;
         state.transactions = action.payload.transactions;
-        if (action.payload.instruments) {
-          state.instruments = { ...state.instruments, ...action.payload.instruments };
-        }
-        if (action.payload.quotes) {
-          state.quotes = { ...state.quotes, ...action.payload.quotes };
-        }
-        if (action.payload.rates) {
-          state.rates = { ...state.rates, ...action.payload.rates };
-        }
+        state.instruments = { ...state.instruments, ...action.payload.instruments };
+        state.quotes = { ...state.quotes, ...action.payload.quotes };
+        state.rates = { ...state.rates, ...action.payload.rates };
         const tId = typeof action.meta.arg === 'string' ? action.meta.arg : action.meta.arg.portfolioId;
         state.transactionsLastFetchedAt[tId] = Date.now();
       })
-      .addCase(fetchTransactions.rejected, (state) => {
+      .addCase(fetchTransactions.rejected, (state, action) => {
         state.isTransactionsLoading = false;
+        state.error = action.payload || i18n.t('errors.fetchTransactions');
       })
       .addCase(fetchHistoricalPrices.fulfilled, (state, action) => {
         state.historicalPrices[action.payload.symbol] = action.payload.prices;
         state.historicalSortedDates[action.payload.symbol] = action.payload.sortedDates;
       })
+      .addCase(fetchHistoricalPrices.rejected, (state, action) => {
+        if (action.payload) {
+          state.error = action.payload;
+        }
+      })
+      .addCase(fetchInflation.pending, (state) => {
+        state.isInflationLoading = true;
+      })
       .addCase(fetchInflation.fulfilled, (state, action) => {
+        state.isInflationLoading = false;
         state.cpi = action.payload.cpi;
+      })
+      .addCase(fetchInflation.rejected, (state, action) => {
+        state.isInflationLoading = false;
+        if (action.payload) {
+          state.error = action.payload;
+        }
+      })
+      .addCase(fetchMonthlyInflation.fulfilled, (state, action) => {
+        state.monthlyCpi[action.payload.year] = action.payload.data;
+      })
+      .addCase(fetchMonthlyInflation.rejected, (state, action) => {
+        if (action.payload) {
+          state.error = action.payload;
+        }
+      })
+      .addCase(fetchPortfolioStats.fulfilled, (state, action) => {
+        state.portfolioStats[action.payload.key] = action.payload.data;
       })
       .addCase(createTransaction.pending, (state) => {
         state.error = null;
@@ -164,6 +178,7 @@ export const portfolioSlice = createSlice({
       .addCase(createTransaction.fulfilled, (state) => {
         state.positionsLastFetchedAt = {};
         state.transactionsLastFetchedAt = {};
+        state.portfolioStats = {};
       })
       .addCase(createTransaction.rejected, (state, action) => {
         state.error = action.payload || i18n.t('errors.saveTransaction');
@@ -174,6 +189,7 @@ export const portfolioSlice = createSlice({
       .addCase(updateTransaction.fulfilled, (state) => {
         state.positionsLastFetchedAt = {};
         state.transactionsLastFetchedAt = {};
+        state.portfolioStats = {};
       })
       .addCase(updateTransaction.rejected, (state, action) => {
         state.error = action.payload || i18n.t('errors.updateTransaction');
@@ -184,6 +200,7 @@ export const portfolioSlice = createSlice({
       .addCase(deleteTransaction.fulfilled, (state) => {
         state.positionsLastFetchedAt = {};
         state.transactionsLastFetchedAt = {};
+        state.portfolioStats = {};
       })
       .addCase(deleteTransaction.rejected, (state, action) => {
         state.error = action.payload || i18n.t('errors.deleteTransaction');
@@ -197,8 +214,7 @@ export const portfolioSlice = createSlice({
 
 export const {
   setActivePortfolioId,
-  setInflation,
-  setYearMonthlyCpi,
+  clearPortfolioError,
   resetPortfolio,
 } = portfolioSlice.actions;
 

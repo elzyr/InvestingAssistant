@@ -1,6 +1,6 @@
-import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
+import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { useTranslation } from 'react-i18next';
-import { isAxiosError } from 'axios';
+import { isAxiosError, isCancel } from 'axios';
 import { X, ArrowDownRight, ArrowUpRight, Loader2, ShieldCheck, Sparkles, Trash2, Search, ChevronDown, Check } from 'lucide-react';
 import { instrumentService } from '../../services/instrument.service.ts';
 import { marketService } from '../../services/market.service.ts';
@@ -90,9 +90,16 @@ export const TransactionModal: React.FC<TransactionModalProps> = ({
   );
   const [highlightedIndex, setHighlightedIndex] = useState<number>(0);
 
-  useEffect(() => {
+  const handleSearchQueryChange = (val: string) => {
+    setSearchQuery(val);
     setHighlightedIndex(0);
-  }, [searchQuery, isPickerOpen]);
+    if (!val.trim()) {
+      setCatalogInstruments([]);
+      setLoadingCatalog(false);
+    } else if (isOpen && !transaction) {
+      setLoadingCatalog(true);
+    }
+  };
 
   const handlePickerKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
     if (combinedList.length === 0) return;
@@ -221,38 +228,56 @@ export const TransactionModal: React.FC<TransactionModalProps> = ({
     instrument;
   const isBond = isBondInstrument(selectedInstrument) || transaction?.bondRate !== undefined || Boolean(transaction?.seriesName);
 
-  const handleInstrumentSelect = useCallback(
-    (inst: InstrumentResponse) => {
-      setSelectedInstrumentId(inst.id);
-      setSelectedInstrumentObj(inst);
-      const instrumentIsBond = isBondInstrument(inst);
+  const priceAbortRef = useRef<AbortController | null>(null);
 
-      if (instrumentIsBond) {
-        setCurrency('PLN');
-        setPrice('100.00');
+  const handleInstrumentSelect = (inst: InstrumentResponse) => {
+    priceAbortRef.current?.abort();
+    priceAbortRef.current = null;
+    setSelectedInstrumentId(inst.id);
+    setSelectedInstrumentObj(inst);
+    const instrumentIsBond = isBondInstrument(inst);
+
+    if (instrumentIsBond) {
+      setCurrency('PLN');
+      setPrice('100.00');
+      setLoadingPrice(false);
+    } else {
+      setCurrency(inst.currency || 'USD');
+      const cached = reduxQuotes[inst.symbol];
+      if (cached?.price) {
+        setPrice(cached.price.toFixed(2));
+        setLoadingPrice(false);
       } else {
-        setCurrency(inst.currency || 'USD');
-        const cached = reduxQuotes[inst.symbol];
-        if (cached?.price) {
-          setPrice(cached.price.toFixed(2));
-        } else {
-          setLoadingPrice(true);
-          marketService
-            .getPrice(inst.symbol)
-            .then((quote) => {
-              if (quote?.price) {
-                setPrice(quote.price.toFixed(2));
-              }
-            })
-            .catch(() => {})
-            .finally(() => {
+        const controller = new AbortController();
+        priceAbortRef.current = controller;
+        setLoadingPrice(true);
+        marketService
+          .getPrice(inst.symbol, undefined, controller.signal)
+          .then((quote) => {
+            if (!controller.signal.aborted && quote?.price) {
+              setPrice(quote.price.toFixed(2));
+            }
+          })
+          .catch((err: unknown) => {
+            if (!isCancel(err)) {
+              console.warn(`Failed to fetch price for ${inst.symbol}:`, err);
+            }
+          })
+          .finally(() => {
+            if (priceAbortRef.current === controller) {
+              priceAbortRef.current = null;
               setLoadingPrice(false);
-            });
-        }
+            }
+          });
       }
-    },
-    [reduxQuotes]
-  );
+    }
+  };
+
+  useEffect(() => {
+    return () => {
+      priceAbortRef.current?.abort();
+    };
+  }, [isOpen]);
 
   const handleSeriesNameChange = (val: string) => {
     setSeriesName(val);
@@ -302,40 +327,46 @@ export const TransactionModal: React.FC<TransactionModalProps> = ({
     }
   };
 
+  const selectedInstrumentIdRef = useRef(selectedInstrumentId);
+  const initialInstrumentRef = useRef(initialInstrument);
+  const handleInstrumentSelectRef = useRef(handleInstrumentSelect);
+
   useEffect(() => {
-    if (!isOpen || transaction) return;
-    if (!searchQuery.trim()) {
-      setCatalogInstruments([]);
-      setLoadingCatalog(false);
-      return;
-    }
-    let active = true;
-    setLoadingCatalog(true);
+    selectedInstrumentIdRef.current = selectedInstrumentId;
+    initialInstrumentRef.current = initialInstrument;
+    handleInstrumentSelectRef.current = handleInstrumentSelect;
+  });
+
+  useEffect(() => {
+    const trimmed = searchQuery.trim();
+    if (!isOpen || transaction || !trimmed) return;
+
+    const controller = new AbortController();
     const timer = setTimeout(async () => {
       try {
-        const data = await instrumentService.getInstruments(searchQuery.trim());
-        if (!active) return;
+        const data = await instrumentService.getInstruments(trimmed, undefined, controller.signal);
+        if (controller.signal.aborted) return;
         const filtered = data.filter((i) => i.type === 'ETF' || i.type === 'BOND' || i.type === 'STOCK');
         setCatalogInstruments(filtered);
-        if (!selectedInstrumentId && filtered.length > 0 && !initialInstrument) {
-          handleInstrumentSelect(filtered[0]);
+        if (!selectedInstrumentIdRef.current && filtered.length > 0 && !initialInstrumentRef.current) {
+          handleInstrumentSelectRef.current(filtered[0]);
         }
       } catch (err: unknown) {
-        if (!active) return;
+        if (controller.signal.aborted || isCancel(err)) return;
         if (isAxiosError<{ message?: string }>(err)) {
           setError(err.response?.data?.message || t('transactionModal.errorLoadingInstruments'));
         } else {
           setError(t('transactionModal.errorLoadingInstruments'));
         }
       } finally {
-        if (active) setLoadingCatalog(false);
+        if (!controller.signal.aborted) setLoadingCatalog(false);
       }
-    }, searchQuery.trim() ? 250 : 0);
+    }, 250);
     return () => {
-      active = false;
+      controller.abort();
       clearTimeout(timer);
     };
-  }, [isOpen, transaction, searchQuery, selectedInstrumentId, initialInstrument, handleInstrumentSelect, t]);
+  }, [isOpen, transaction, searchQuery, t]);
 
   if (!isOpen) return null;
 
@@ -479,7 +510,12 @@ export const TransactionModal: React.FC<TransactionModalProps> = ({
                 <>
                   <button
                     type="button"
-                    onClick={() => setIsPickerOpen((prev) => !prev)}
+                    onClick={() => {
+                      setIsPickerOpen((prev) => {
+                        if (!prev) setHighlightedIndex(0);
+                        return !prev;
+                      });
+                    }}
                     className="w-full flex items-center justify-between bg-zinc-900 border border-zinc-800 rounded px-3 py-2 text-xs text-zinc-100 font-sans focus:outline-none focus:border-zinc-600 transition"
                   >
                     <span className="truncate">
@@ -501,7 +537,7 @@ export const TransactionModal: React.FC<TransactionModalProps> = ({
                         <input
                           type="text"
                           value={searchQuery}
-                          onChange={(e) => setSearchQuery(e.target.value)}
+                          onChange={(e) => handleSearchQueryChange(e.target.value)}
                           onKeyDown={handlePickerKeyDown}
                           placeholder={t('transactionModal.searchInstrumentPlaceholder')}
                           className="w-full bg-transparent text-xs text-zinc-100 placeholder-zinc-500 focus:outline-none font-sans"
@@ -510,7 +546,7 @@ export const TransactionModal: React.FC<TransactionModalProps> = ({
                         {searchQuery && (
                           <button
                             type="button"
-                            onClick={() => setSearchQuery('')}
+                            onClick={() => handleSearchQueryChange('')}
                             className="text-zinc-500 hover:text-zinc-300"
                           >
                             <X className="w-3 h-3" />

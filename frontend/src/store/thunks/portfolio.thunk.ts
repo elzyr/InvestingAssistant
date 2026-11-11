@@ -12,6 +12,7 @@ import type {
   CreateTransactionRequest,
 } from '../../types/portfolio.ts';
 import type { InstrumentResponse } from '../../types/instrument.ts';
+import type { HoldingItem, PortfolioStatsResponse } from '../../types/analytics.types.ts';
 import type { Currency } from '../../types/auth.ts';
 import type { RootState, AppDispatch } from '../store.ts';
 
@@ -22,25 +23,229 @@ function getErrorMessage(error: unknown, fallback: string): string {
   return fallback;
 }
 
+let inFlightPortfolios = false;
+let inFlightInstruments: Promise<InstrumentResponse[]> | null = null;
+const inFlightQuotes = new Map<string, Promise<Record<string, PriceQuote>>>();
+const inFlightFxRates = new Map<string, Promise<number | null>>();
+const inFlightPositions = new Set<string>();
+const inFlightTransactions = new Set<string>();
+const inFlightHistoricalSymbols = new Set<string>();
+let inFlightInflation = false;
+const inFlightMonthlyInflation = new Set<number>();
+const inFlightPortfolioStats = new Set<string>();
+
+function loadInstrumentsShared(): Promise<InstrumentResponse[]> {
+  if (!inFlightInstruments) {
+    inFlightInstruments = instrumentService.getInstruments().finally(() => {
+      inFlightInstruments = null;
+    });
+  }
+  return inFlightInstruments;
+}
+
+async function loadQuotesShared(
+  symbols: string[],
+  existingQuotes: Record<string, PriceQuote>,
+  force: boolean
+): Promise<Record<string, PriceQuote>> {
+  const result: Record<string, PriceQuote> = {};
+  const targets = symbols.filter((sym) => force || !existingQuotes[sym]);
+  if (targets.length === 0) return result;
+
+  const pendingPromises = new Set<Promise<Record<string, PriceQuote>>>();
+  const missingSymbols: string[] = [];
+
+  for (const sym of targets) {
+    const existingPromise = inFlightQuotes.get(sym);
+    if (existingPromise) {
+      pendingPromises.add(existingPromise);
+    } else {
+      missingSymbols.push(sym);
+    }
+  }
+
+  if (missingSymbols.length > 0) {
+    const batchPromise = marketService
+      .getBatchPrices(missingSymbols)
+      .catch((err) => {
+        console.warn('Failed to fetch batch prices:', err);
+        return {} as Record<string, PriceQuote>;
+      })
+      .finally(() => {
+        for (const sym of missingSymbols) {
+          inFlightQuotes.delete(sym);
+        }
+      });
+
+    for (const sym of missingSymbols) {
+      inFlightQuotes.set(sym, batchPromise);
+    }
+    pendingPromises.add(batchPromise);
+  }
+
+  const settled = await Promise.all(pendingPromises);
+  for (const batch of settled) {
+    Object.assign(result, batch);
+  }
+  return result;
+}
+
+async function loadFxRatesShared(
+  currencies: string[],
+  baseCurrency: string,
+  existingRates: Record<string, number>,
+  force: boolean
+): Promise<Record<string, number>> {
+  const result: Record<string, number> = {};
+  const targets = currencies.filter(
+    (curr) => curr && curr !== baseCurrency && (force || !existingRates[curr])
+  );
+  if (targets.length === 0) return result;
+
+  await Promise.all(
+    targets.map(async (curr) => {
+      const key = `${curr}:${baseCurrency}`;
+      let promise = inFlightFxRates.get(key);
+      if (!promise) {
+        promise = marketService
+          .getExchangeRate(curr, baseCurrency)
+          .then((fx) => (fx && fx.rate ? fx.rate : null))
+          .catch((err) => {
+            console.warn(`Failed to fetch exchange rate ${key}:`, err);
+            return null;
+          })
+          .finally(() => {
+            inFlightFxRates.delete(key);
+          });
+        inFlightFxRates.set(key, promise);
+      }
+      const rate = await promise;
+      if (rate !== null) {
+        result[curr] = rate;
+      }
+    })
+  );
+
+  return result;
+}
+
+interface HydrateMarketParams {
+  instrumentIds: string[];
+  currencies: string[];
+  baseCurrency: string;
+  existingInstruments: Record<string, InstrumentResponse>;
+  existingQuotes: Record<string, PriceQuote>;
+  existingRates: Record<string, number>;
+  force: boolean;
+  preloadedInstrumentsPromise?: Promise<InstrumentResponse[]> | null;
+  markUnavailableQuotes?: boolean;
+}
+
+async function hydrateMarketContext({
+  instrumentIds,
+  currencies,
+  baseCurrency,
+  existingInstruments,
+  existingQuotes,
+  existingRates,
+  force,
+  preloadedInstrumentsPromise,
+  markUnavailableQuotes = false,
+}: HydrateMarketParams): Promise<{
+  instruments: Record<string, InstrumentResponse>;
+  quotes: Record<string, PriceQuote>;
+  rates: Record<string, number>;
+}> {
+  const instrumentsMap: Record<string, InstrumentResponse> = { ...existingInstruments };
+  const missingInstrument = instrumentIds.some((id) => !instrumentsMap[id]);
+
+  if (preloadedInstrumentsPromise || Object.keys(instrumentsMap).length === 0 || missingInstrument) {
+    try {
+      const fetched = await (preloadedInstrumentsPromise ?? loadInstrumentsShared());
+      for (const inst of fetched) {
+        instrumentsMap[inst.id] = inst;
+      }
+    } catch (err) {
+      console.warn('Failed to fetch instruments catalog:', err);
+    }
+  }
+
+  const distinctSymbols = Array.from(
+    new Set(
+      instrumentIds
+        .map((id) => instrumentsMap[id])
+        .filter((inst): inst is InstrumentResponse =>
+          Boolean(inst && inst.type !== 'BOND' && inst.symbol && !inst.symbol.startsWith('PL_BOND'))
+        )
+        .map((inst) => inst.symbol)
+    )
+  );
+
+  const distinctCurrencies = Array.from(new Set(currencies)).filter(
+    (c): c is Currency => Boolean(c && c !== baseCurrency)
+  );
+
+  const [fetchedQuotes, fetchedRates] = await Promise.all([
+    loadQuotesShared(distinctSymbols, existingQuotes, force),
+    loadFxRatesShared(distinctCurrencies, baseCurrency, existingRates, force),
+  ]);
+
+  const quotes: Record<string, PriceQuote> = { ...existingQuotes, ...fetchedQuotes };
+  if (markUnavailableQuotes) {
+    for (const sym of distinctSymbols) {
+      if (!quotes[sym]) {
+        const inst = Object.values(instrumentsMap).find((i) => i.symbol === sym);
+        quotes[sym] = {
+          symbol: sym,
+          price: null,
+          currency: inst?.currency || 'USD',
+          source: 'unavailable',
+          isUnavailable: true,
+        };
+      }
+    }
+  }
+
+  const rates: Record<string, number> = {
+    ...existingRates,
+    [baseCurrency]: 1,
+    ...fetchedRates,
+  };
+
+  return { instruments: instrumentsMap, quotes, rates };
+}
+
 export const fetchPortfolios = createAsyncThunk<
   PortfolioResponse[],
   Currency | undefined,
-  { rejectValue: string }
->('portfolio/fetchPortfolios', async (defaultCurrency = 'PLN', { rejectWithValue }) => {
-  try {
-    const portfolios = await portfolioService.getPortfolios();
-    if (portfolios.length === 0) {
-      const defaultPortfolio = await portfolioService.createPortfolio({
-        name: i18n.t('common.defaultPortfolioName'),
-        baseCurrency: defaultCurrency,
-      });
-      return [defaultPortfolio];
+  { state: RootState; rejectValue: string }
+>(
+  'portfolio/fetchPortfolios',
+  async (defaultCurrency = 'PLN', { rejectWithValue }) => {
+    inFlightPortfolios = true;
+    try {
+      const portfolios = await portfolioService.getPortfolios();
+      if (portfolios.length === 0) {
+        const defaultPortfolio = await portfolioService.createPortfolio({
+          name: i18n.t('common.defaultPortfolioName'),
+          baseCurrency: defaultCurrency,
+        });
+        return [defaultPortfolio];
+      }
+      return portfolios;
+    } catch (error: unknown) {
+      return rejectWithValue(getErrorMessage(error, i18n.t('errors.fetchPortfolios')));
+    } finally {
+      inFlightPortfolios = false;
     }
-    return portfolios;
-  } catch (error: unknown) {
-    return rejectWithValue(getErrorMessage(error, i18n.t('errors.fetchPortfolios')));
+  },
+  {
+    condition: (_, { getState }) => {
+      if (inFlightPortfolios) return false;
+      return getState().portfolio.portfolios.length === 0;
+    },
   }
-});
+);
 
 export const fetchPositions = createAsyncThunk<
   {
@@ -48,8 +253,6 @@ export const fetchPositions = createAsyncThunk<
     instruments: Record<string, InstrumentResponse>;
     quotes: Record<string, PriceQuote>;
     rates: Record<string, number>;
-    historicalPrices: Record<string, Record<string, number>>;
-    historicalSortedDates: Record<string, string[]>;
   },
   string | { portfolioId: string; force?: boolean },
   { state: RootState; rejectValue: string }
@@ -57,96 +260,48 @@ export const fetchPositions = createAsyncThunk<
   'portfolio/fetchPositions',
   async (arg, { getState, rejectWithValue }) => {
     const portfolioId = typeof arg === 'string' ? arg : arg.portfolioId;
+    const force = typeof arg === 'object' && Boolean(arg.force);
+    inFlightPositions.add(portfolioId);
     try {
       const currentState = getState().portfolio;
+      const preloadedInstrumentsPromise =
+        Object.keys(currentState.instruments).length === 0 ? loadInstrumentsShared() : null;
+
       const positions = await portfolioService.getPositions(portfolioId);
-      const missingInstrument = positions.some((p) => !currentState.instruments[p.instrumentId]);
-      const fetchedInstruments =
-        Object.keys(currentState.instruments).length > 0 && !missingInstrument
-          ? []
-          : await instrumentService.getInstruments();
-
-      const instrumentsMap: Record<string, InstrumentResponse> = {
-        ...currentState.instruments,
-      };
-      fetchedInstruments.forEach((inst) => {
-        instrumentsMap[inst.id] = inst;
-      });
-
       const activePortfolio = currentState.portfolios.find((p) => p.id === portfolioId);
       const baseCurrency = activePortfolio?.baseCurrency || 'PLN';
 
-      const quotes: Record<string, PriceQuote> = { ...currentState.quotes };
-      const historicalPrices: Record<string, Record<string, number>> = {
-        ...currentState.historicalPrices,
-      };
-      const historicalSortedDates: Record<string, string[]> = {
-        ...currentState.historicalSortedDates,
-      };
-
-      const uniqueInstrumentIds = Array.from(new Set(positions.map((p) => p.instrumentId)));
-      const distinctSymbols = Array.from(
-        new Set(
-          uniqueInstrumentIds
-            .map((instId) => instrumentsMap[instId]?.symbol)
-            .filter((sym): sym is string => Boolean(sym))
-        )
-      );
-
-      if (distinctSymbols.length > 0) {
-        try {
-          const batchQuotes = await marketService.getBatchPrices(distinctSymbols);
-          Object.assign(quotes, batchQuotes);
-        } catch {
-          void 0;
-        }
-        for (const sym of distinctSymbols) {
-          if (!quotes[sym]) {
-            const inst = Object.values(instrumentsMap).find((i) => i.symbol === sym);
-            quotes[sym] = {
-              symbol: sym,
-              price: null,
-              currency: inst?.currency || 'USD',
-              source: 'unavailable',
-              isUnavailable: true,
-            };
-          }
-        }
-      }
-      const rates: Record<string, number> = { [baseCurrency]: 1 };
-      const distinctCurrencies = Array.from(new Set(positions.map((p) => p.currency))).filter(
-        (curr): curr is Currency => !!curr && curr !== baseCurrency
-      );
-
-      await Promise.all(
-        distinctCurrencies.map(async (curr) => {
-          try {
-            const fx = await marketService.getExchangeRate(curr, baseCurrency);
-            if (fx && fx.rate) {
-              rates[curr] = fx.rate;
-            }
-          } catch {
-            void 0;
-          }
-        })
-      );
+      const market = await hydrateMarketContext({
+        instrumentIds: Array.from(new Set(positions.map((p) => p.instrumentId))),
+        currencies: positions.map((p) => p.currency),
+        baseCurrency,
+        existingInstruments: currentState.instruments,
+        existingQuotes: currentState.quotes,
+        existingRates: currentState.rates,
+        force,
+        preloadedInstrumentsPromise,
+        markUnavailableQuotes: true,
+      });
 
       return {
         positions,
-        instruments: instrumentsMap,
-        quotes,
-        rates,
-        historicalPrices,
-        historicalSortedDates,
+        instruments: market.instruments,
+        quotes: market.quotes,
+        rates: market.rates,
       };
     } catch (error: unknown) {
       return rejectWithValue(getErrorMessage(error, i18n.t('errors.fetchPositions')));
+    } finally {
+      inFlightPositions.delete(portfolioId);
     }
   },
   {
     condition: (arg, { getState }) => {
       const portfolioId = typeof arg === 'string' ? arg : arg.portfolioId;
       const force = typeof arg === 'object' && Boolean(arg.force);
+      if (!force && inFlightPositions.has(portfolioId)) {
+        return false;
+      }
       const last = getState().portfolio.positionsLastFetchedAt?.[portfolioId];
       if (!force && last && Date.now() - last < 60000) {
         return false;
@@ -159,9 +314,9 @@ export const fetchPositions = createAsyncThunk<
 export const fetchTransactions = createAsyncThunk<
   {
     transactions: TransactionResponse[];
-    instruments?: Record<string, InstrumentResponse>;
-    quotes?: Record<string, PriceQuote>;
-    rates?: Record<string, number>;
+    instruments: Record<string, InstrumentResponse>;
+    quotes: Record<string, PriceQuote>;
+    rates: Record<string, number>;
   },
   string | { portfolioId: string; force?: boolean },
   { state: RootState; rejectValue: string }
@@ -169,74 +324,50 @@ export const fetchTransactions = createAsyncThunk<
   'portfolio/fetchTransactions',
   async (arg, { getState, rejectWithValue }) => {
     const portfolioId = typeof arg === 'string' ? arg : arg.portfolioId;
+    const force = typeof arg === 'object' && Boolean(arg.force);
+    inFlightTransactions.add(portfolioId);
     try {
+      const currentState = getState().portfolio;
+      const preloadedInstrumentsPromise =
+        Object.keys(currentState.instruments).length === 0 ? loadInstrumentsShared() : null;
+
       const txs = await portfolioService.getTransactions(portfolioId);
-      const state = getState().portfolio;
-      let instrumentsMap: Record<string, InstrumentResponse> | undefined;
-      let ratesMap: Record<string, number> | undefined;
-
-      if (
-        Object.keys(state.instruments).length === 0 ||
-        txs.some((t) => !state.instruments[t.instrumentId])
-      ) {
-        try {
-          const fetchedInstruments = await instrumentService.getInstruments();
-          instrumentsMap = { ...state.instruments };
-          for (const inst of fetchedInstruments) {
-            instrumentsMap[inst.id] = inst;
-          }
-        } catch {
-          void 0;
-        }
-      }
-
-      const effectiveInstruments = instrumentsMap || state.instruments;
-      const distinctTxSymbols = Array.from(
-        new Set(
-          txs
-            .map((t) => effectiveInstruments[t.instrumentId]?.symbol)
-            .filter((sym): sym is string => Boolean(sym && !sym.startsWith('PL_BOND') && !state.quotes[sym]))
-        )
-      );
-      let quotesMap: Record<string, PriceQuote> | undefined;
-      if (distinctTxSymbols.length > 0) {
-        try {
-          quotesMap = await marketService.getBatchPrices(distinctTxSymbols);
-        } catch {
-          void 0;
-        }
-      }
-
-      const activePortfolio = state.portfolios.find((p) => p.id === portfolioId);
+      const latestState = getState().portfolio;
+      const activePortfolio = latestState.portfolios.find((p) => p.id === portfolioId);
       const baseCurrency = activePortfolio?.baseCurrency || 'PLN';
-      const foreignCurrencies = Array.from(new Set(txs.map((t) => t.currency))).filter(
-        (c): c is Currency => Boolean(c && c !== baseCurrency && !state.rates[c])
-      );
-      if (foreignCurrencies.length > 0) {
-        ratesMap = { ...state.rates };
-        await Promise.all(
-          foreignCurrencies.map(async (curr) => {
-            try {
-              const fx = await marketService.getExchangeRate(curr, baseCurrency);
-              if (fx && fx.rate) {
-                ratesMap![curr] = fx.rate;
-              }
-            } catch {
-              void 0;
-            }
-          })
-        );
-      }
 
-      return { transactions: txs, instruments: instrumentsMap, quotes: quotesMap, rates: ratesMap };
+      const market = await hydrateMarketContext({
+        instrumentIds: Array.from(new Set(txs.map((t) => t.instrumentId))),
+        currencies: txs.map((t) => t.currency),
+        baseCurrency,
+        existingInstruments: latestState.instruments,
+        existingQuotes: latestState.quotes,
+        existingRates: latestState.rates,
+        force: false,
+        preloadedInstrumentsPromise,
+        markUnavailableQuotes: false,
+      });
+
+      void force;
+      return {
+        transactions: txs,
+        instruments: market.instruments,
+        quotes: market.quotes,
+        rates: market.rates,
+      };
     } catch (error: unknown) {
       return rejectWithValue(getErrorMessage(error, i18n.t('errors.fetchTransactions')));
+    } finally {
+      inFlightTransactions.delete(portfolioId);
     }
   },
   {
     condition: (arg, { getState }) => {
       const portfolioId = typeof arg === 'string' ? arg : arg.portfolioId;
       const force = typeof arg === 'object' && Boolean(arg.force);
+      if (!force && inFlightTransactions.has(portfolioId)) {
+        return false;
+      }
       const last = getState().portfolio.transactionsLastFetchedAt?.[portfolioId];
       if (!force && last && Date.now() - last < 60000) {
         return false;
@@ -248,16 +379,93 @@ export const fetchTransactions = createAsyncThunk<
 
 export const fetchInflation = createAsyncThunk<
   { cpi: number | null },
-  void,
-  { rejectValue: string }
->('portfolio/fetchInflation', async (_, { rejectWithValue }) => {
-  try {
-    const data = await marketService.getInflation();
-    return { cpi: data.currentCpi };
-  } catch (error: unknown) {
-    return rejectWithValue(getErrorMessage(error, i18n.t('errors.fetchInflation')));
+  { force?: boolean } | void,
+  { state: RootState; rejectValue: string }
+>(
+  'portfolio/fetchInflation',
+  async (_, { rejectWithValue }) => {
+    inFlightInflation = true;
+    try {
+      const data = await marketService.getInflation();
+      return { cpi: data.currentCpi };
+    } catch (error: unknown) {
+      return rejectWithValue(getErrorMessage(error, i18n.t('errors.fetchInflation')));
+    } finally {
+      inFlightInflation = false;
+    }
+  },
+  {
+    condition: (arg, { getState }) => {
+      const force = typeof arg === 'object' && Boolean(arg?.force);
+      if (!force && inFlightInflation) return false;
+      if (!force && getState().portfolio.cpi !== null) return false;
+      return true;
+    },
   }
-});
+);
+
+export const fetchMonthlyInflation = createAsyncThunk<
+  { year: number; data: Record<number, number> },
+  number | { year: number; force?: boolean },
+  { state: RootState; rejectValue: string }
+>(
+  'portfolio/fetchMonthlyInflation',
+  async (arg, { rejectWithValue }) => {
+    const year = typeof arg === 'number' ? arg : arg.year;
+    inFlightMonthlyInflation.add(year);
+    try {
+      const points = await marketService.getMonthlyInflation(year);
+      const map: Record<number, number> = {};
+      if (Array.isArray(points)) {
+        for (const p of points) {
+          if (p.year === year) {
+            map[p.month - 1] = p.rate;
+          }
+        }
+      }
+      return { year, data: map };
+    } catch (error: unknown) {
+      return rejectWithValue(getErrorMessage(error, i18n.t('errors.fetchInflation')));
+    } finally {
+      inFlightMonthlyInflation.delete(year);
+    }
+  },
+  {
+    condition: (arg, { getState }) => {
+      const year = typeof arg === 'number' ? arg : arg.year;
+      const force = typeof arg === 'object' && Boolean(arg.force);
+      if (!force && inFlightMonthlyInflation.has(year)) return false;
+      if (!force && getState().portfolio.monthlyCpi[year] !== undefined) return false;
+      return true;
+    },
+  }
+);
+
+export const fetchPortfolioStats = createAsyncThunk<
+  { key: string; data: PortfolioStatsResponse },
+  { key: string; holdings: HoldingItem[]; force?: boolean },
+  { state: RootState; rejectValue: string }
+>(
+  'portfolio/fetchPortfolioStats',
+  async ({ key, holdings }, { rejectWithValue }) => {
+    inFlightPortfolioStats.add(key);
+    try {
+      const data = await marketService.getPortfolioStats({ holdings });
+      return { key, data };
+    } catch (error: unknown) {
+      return rejectWithValue(getErrorMessage(error, i18n.t('errors.generalError')));
+    } finally {
+      inFlightPortfolioStats.delete(key);
+    }
+  },
+  {
+    condition: ({ key, force }, { getState }) => {
+      if (!force && inFlightPortfolioStats.has(key)) return false;
+      if (!force && getState().portfolio.portfolioStats[key]) return false;
+      return true;
+    },
+  }
+);
 
 export const createTransaction = createAsyncThunk<
   TransactionResponse,
@@ -315,7 +523,6 @@ export const deleteTransaction = createAsyncThunk<
 export const createPortfolio = createAsyncThunk<
   PortfolioResponse,
   CreatePortfolioRequest,
-
   { rejectValue: string }
 >(
   'portfolio/createPortfolio',
@@ -339,6 +546,7 @@ export const fetchHistoricalPrices = createAsyncThunk<
 >(
   'portfolio/fetchHistoricalPrices',
   async ({ symbol, period = '5y', interval = '1d', currency }, { rejectWithValue }) => {
+    inFlightHistoricalSymbols.add(symbol);
     try {
       const hist = await marketService.getHistoricalPrices(symbol, period, interval, currency);
       const dateMap: Record<string, number> = {};
@@ -353,10 +561,13 @@ export const fetchHistoricalPrices = createAsyncThunk<
       return { symbol, prices: dateMap, sortedDates: dates };
     } catch (error: unknown) {
       return rejectWithValue(getErrorMessage(error, i18n.t('errors.fetchHistory', { symbol })));
+    } finally {
+      inFlightHistoricalSymbols.delete(symbol);
     }
   },
   {
     condition: ({ symbol, force }, { getState }) => {
+      if (!force && inFlightHistoricalSymbols.has(symbol)) return false;
       if (force) return true;
       const existing = getState().portfolio.historicalPrices[symbol];
       return !existing || Object.keys(existing).length === 0;

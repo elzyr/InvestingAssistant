@@ -12,29 +12,18 @@ import {
 } from 'lightweight-charts';
 import type { MonthlyReportRecord } from '../../types/reports.types.ts';
 import { formatPLN, formatPercent } from '../../utils/reportsFormatters.ts';
+import { normalizeChartDateStr } from '../../utils/domain/dates.ts';
 
 interface MonthlyProfitBarChartProps {
   records: MonthlyReportRecord[];
+  baseCurrency?: string;
   onSelectMonth?: (monthIndex: number) => void;
   selectedMonthIndex?: number;
 }
 
-const normalizeDateStr = (time: Time | unknown): string => {
-  if (!time) return '';
-  if (typeof time === 'string') return time;
-  if (typeof time === 'object' && time !== null && 'year' in time && 'month' in time) {
-    const obj = time as { year: number; month: number; day?: number };
-    return `${obj.year}-${String(obj.month).padStart(2, '0')}-01`;
-  }
-  if (typeof time === 'number') {
-    const d = new Date(time * 1000);
-    return `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, '0')}-01`;
-  }
-  return '';
-};
-
 export const MonthlyProfitBarChart: React.FC<MonthlyProfitBarChartProps> = ({
   records,
+  baseCurrency,
   onSelectMonth,
   selectedMonthIndex,
 }) => {
@@ -48,6 +37,7 @@ export const MonthlyProfitBarChart: React.FC<MonthlyProfitBarChartProps> = ({
     () => records.filter((r) => r.status === 'RECORDED'),
     [records]
   );
+  const currency = baseCurrency || recordedRecords[0]?.baseCurrency || 'PLN';
   const onSelectMonthRef = useRef(onSelectMonth);
   useEffect(() => {
     onSelectMonthRef.current = onSelectMonth;
@@ -85,7 +75,7 @@ export const MonthlyProfitBarChart: React.FC<MonthlyProfitBarChartProps> = ({
         barSpacing: 36,
         minBarSpacing: 16,
         tickMarkFormatter: (time: Time) => {
-          const dateStr = normalizeDateStr(time);
+          const dateStr = normalizeChartDateStr(time);
           const d = new Date(dateStr);
           return d.toLocaleDateString(i18n.language, { month: 'short' });
         },
@@ -95,7 +85,7 @@ export const MonthlyProfitBarChart: React.FC<MonthlyProfitBarChartProps> = ({
         autoScale: true,
       },
       localization: {
-        priceFormatter: (val: number) => `${val >= 0 ? '+' : ''}${Math.round(val).toLocaleString(i18n.language)} PLN`,
+        priceFormatter: (val: number) => `${val >= 0 ? '+' : ''}${Math.round(val).toLocaleString(i18n.language)} ${currency}`,
       },
     });
 
@@ -105,7 +95,7 @@ export const MonthlyProfitBarChart: React.FC<MonthlyProfitBarChartProps> = ({
       base: 0,
       priceFormat: {
         type: 'custom',
-        formatter: (val: number) => `${val >= 0 ? '+' : ''}${Math.round(val).toLocaleString(i18n.language)} PLN`,
+        formatter: (val: number) => `${val >= 0 ? '+' : ''}${Math.round(val).toLocaleString(i18n.language)} ${currency}`,
       },
     });
     seriesRef.current = series;
@@ -117,7 +107,7 @@ export const MonthlyProfitBarChart: React.FC<MonthlyProfitBarChartProps> = ({
         setHoveredRecord(null);
         return;
       }
-      const timeStr = normalizeDateStr(param.time);
+      const timeStr = normalizeChartDateStr(param.time);
       const match = recordedRecords.find((r: MonthlyReportRecord) => {
         const expected = `${r.year}-${String(r.monthIndex + 1).padStart(2, '0')}-01`;
         return expected === timeStr;
@@ -127,7 +117,7 @@ export const MonthlyProfitBarChart: React.FC<MonthlyProfitBarChartProps> = ({
 
     chart.subscribeClick((param) => {
       if (!param.time || !onSelectMonthRef.current) return;
-      const timeStr = normalizeDateStr(param.time);
+      const timeStr = normalizeChartDateStr(param.time);
       const match = recordedRecords.find((r: MonthlyReportRecord) => {
         const expected = `${r.year}-${String(r.monthIndex + 1).padStart(2, '0')}-01`;
         return expected === timeStr;
@@ -153,7 +143,7 @@ export const MonthlyProfitBarChart: React.FC<MonthlyProfitBarChartProps> = ({
       chartRef.current = null;
       seriesRef.current = null;
     };
-  }, [recordedRecords]);
+  }, [recordedRecords, currency, i18n.language]);
 
   useEffect(() => {
     if (!seriesRef.current || recordedRecords.length === 0) return;

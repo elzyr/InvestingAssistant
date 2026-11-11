@@ -6,10 +6,32 @@ import {
   fetchTransactions,
   fetchHistoricalPrices,
   fetchInflation,
+  fetchMonthlyInflation,
 } from '../store/thunks/portfolio.thunk.ts';
-import { setYearMonthlyCpi } from '../store/slices/portfolio.slice.ts';
-import { marketService } from '../services/market.service.ts';
 import type { Currency } from '../types/auth.ts';
+import type { PositionResponse, TransactionResponse } from '../types/portfolio.ts';
+import type { InstrumentResponse } from '../types/instrument.ts';
+
+function collectEquitySymbols(
+  positions: PositionResponse[],
+  transactions: TransactionResponse[],
+  instruments: Record<string, InstrumentResponse>
+): string[] {
+  const equitySymbols = new Set<string>();
+  for (const pos of positions) {
+    const inst = instruments[pos.instrumentId];
+    if (inst && inst.type !== 'BOND' && !inst.symbol.startsWith('PL_BOND') && !pos.seriesName) {
+      equitySymbols.add(inst.symbol);
+    }
+  }
+  for (const tx of transactions) {
+    const inst = instruments[tx.instrumentId];
+    if (inst && inst.type !== 'BOND' && !inst.symbol.startsWith('PL_BOND') && !tx.seriesName) {
+      equitySymbols.add(inst.symbol);
+    }
+  }
+  return Array.from(equitySymbols);
+}
 
 export function useActivePortfolioData(
   selectedYear?: number,
@@ -31,6 +53,7 @@ export function useActivePortfolioData(
     historicalSortedDates,
     cpi,
     monthlyCpi: monthlyCpiByYear,
+    portfolioStats,
     loading,
     isInitialLoading,
     isPositionsLoading,
@@ -58,25 +81,11 @@ export function useActivePortfolioData(
 
   useEffect(() => {
     if (options?.skipHistory) return;
-    const equitySymbols = new Set<string>();
-    for (const pos of positions) {
-      const inst = instruments[pos.instrumentId];
-      if (inst && inst.type !== 'BOND' && !inst.symbol.startsWith('PL_BOND') && !pos.seriesName) {
-        equitySymbols.add(inst.symbol);
-      }
-    }
-    for (const tx of transactions) {
-      const inst = instruments[tx.instrumentId];
-      if (inst && inst.type !== 'BOND' && !inst.symbol.startsWith('PL_BOND') && !tx.seriesName) {
-        equitySymbols.add(inst.symbol);
-      }
-    }
+    const equitySymbols = collectEquitySymbols(positions, transactions, instruments);
     for (const sym of equitySymbols) {
-      if (!historicalPrices[sym]) {
-        dispatch(fetchHistoricalPrices({ symbol: sym }));
-      }
+      dispatch(fetchHistoricalPrices({ symbol: sym }));
     }
-  }, [dispatch, positions, transactions, instruments, historicalPrices, options?.skipHistory]);
+  }, [dispatch, positions, transactions, instruments, options?.skipHistory]);
 
   useEffect(() => {
     if (cpi === null) {
@@ -86,20 +95,7 @@ export function useActivePortfolioData(
 
   useEffect(() => {
     if (selectedYear && !monthlyCpiByYear[selectedYear]) {
-      marketService
-        .getMonthlyInflation(selectedYear)
-        .then((points) => {
-          if (Array.isArray(points)) {
-            const map: Record<number, number> = {};
-            for (const p of points) {
-              if (p.year === selectedYear) {
-                map[p.month - 1] = p.rate;
-              }
-            }
-            dispatch(setYearMonthlyCpi({ year: selectedYear, data: map }));
-          }
-        })
-        .catch(() => {});
+      dispatch(fetchMonthlyInflation(selectedYear));
     }
   }, [dispatch, selectedYear, monthlyCpiByYear]);
 
@@ -111,43 +107,16 @@ export function useActivePortfolioData(
       dispatch(fetchTransactions({ portfolioId: activePortfolioId, force: true }));
     }
     if (!options?.skipHistory) {
-      const equitySymbols = new Set<string>();
-      for (const pos of positions) {
-        const inst = instruments[pos.instrumentId];
-        if (inst && inst.type !== 'BOND' && !inst.symbol.startsWith('PL_BOND') && !pos.seriesName) {
-          equitySymbols.add(inst.symbol);
-        }
-      }
-      for (const tx of transactions) {
-        const inst = instruments[tx.instrumentId];
-        if (inst && inst.type !== 'BOND' && !inst.symbol.startsWith('PL_BOND') && !tx.seriesName) {
-          equitySymbols.add(inst.symbol);
-        }
-      }
+      const equitySymbols = collectEquitySymbols(positions, transactions, instruments);
       for (const sym of equitySymbols) {
         dispatch(fetchHistoricalPrices({ symbol: sym, force: true }));
       }
     }
-    dispatch(fetchInflation());
+    dispatch(fetchInflation({ force: true }));
     if (selectedYear) {
-      marketService
-        .getMonthlyInflation(selectedYear)
-        .then((points) => {
-          if (Array.isArray(points)) {
-            const map: Record<number, number> = {};
-            for (const p of points) {
-              if (p.year === selectedYear) {
-                map[p.month - 1] = p.rate;
-              }
-            }
-            dispatch(setYearMonthlyCpi({ year: selectedYear, data: map }));
-          }
-        })
-        .catch(() => {});
+      dispatch(fetchMonthlyInflation({ year: selectedYear, force: true }));
     }
-  }, [dispatch, activePortfolioId, selectedYear, options?.skipPositions, options?.skipHistory, positions, instruments]);
-
-
+  }, [dispatch, activePortfolioId, selectedYear, options?.skipPositions, options?.skipHistory, positions, transactions, instruments]);
 
   return {
     dispatch,
@@ -162,9 +131,8 @@ export function useActivePortfolioData(
     historicalPrices,
     historicalSortedDates,
     cpi,
-    rawCpi: cpi,
     monthlyCpi,
-    monthlyCpiByYear,
+    portfolioStats,
     baseCurrency: activePortfolio?.baseCurrency || baseCurrency,
     loading,
     isInitialLoading,

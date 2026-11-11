@@ -28,7 +28,7 @@ export interface RealReportsParams {
   baseCurrency: string;
   isIkeAccount: boolean;
   year: number;
-  t?: (key: string, options?: any) => string;
+  t?: (key: string, options?: Record<string, unknown>) => string;
   locale?: string;
   nowTimestamp?: number;
 }
@@ -41,7 +41,7 @@ interface CategoryInfo {
 function resolveCategory(
   tx: TransactionResponse,
   instruments: Record<string, InstrumentResponse>,
-  t?: (key: string, options?: any) => string
+  t?: (key: string, options?: Record<string, unknown>) => string
 ): CategoryInfo {
   const translate = t || i18n.t.bind(i18n);
   const inst = instruments[tx.instrumentId];

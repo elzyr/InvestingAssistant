@@ -2,6 +2,7 @@ import { useState, useMemo, useEffect, useRef } from 'react';
 import { useTranslation } from 'react-i18next';
 import { CRISIS_SCENARIOS } from '../../utils/domain/crisisScenarios.ts';
 import { computeBelka } from '../../utils/domain/tax.ts';
+import { normalizeChartDateStr } from '../../utils/domain/dates.ts';
 import { AlertTriangle, ShieldCheck, Flame, Zap, ArrowDownRight, CheckCircle2 } from 'lucide-react';
 import {
   createChart,
@@ -48,21 +49,7 @@ interface CrisisScenario {
   getInflationRate: (m: number) => number;
 }
 
-const normalizeDateStr = (time: Time | unknown): string => {
-  if (!time) return '';
-  if (typeof time === 'string') return time;
-  if (typeof time === 'object' && time !== null && 'year' in time && 'month' in time) {
-    const t = time as { year: number; month: number; day?: number };
-    return `${t.year}-${String(t.month).padStart(2, '0')}-01`;
-  }
-  if (typeof time === 'number') {
-    const d = new Date(time * 1000);
-    return `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, '0')}-01`;
-  }
-  return '';
-};
-
-const formatMonths = (m: number, t: (k: string, opt?: any) => string): string => {
+const formatMonths = (m: number, t: (k: string, opt?: { count?: number }) => string): string => {
   if (m === 1) return t('monteCarlo.month_one');
   const rem10 = m % 10;
   const rem100 = m % 100;
@@ -260,6 +247,7 @@ export const StressTestingView = ({
     currentCostVal,
     weightedBondRate,
     isIkeAccount,
+    i18n.language,
   ]);
 
   const getMonthDateStr = (m: number) => {
@@ -300,7 +288,7 @@ export const StressTestingView = ({
         barSpacing: 26,
         minBarSpacing: 8,
         tickMarkFormatter: (time: Time) => {
-          const d = new Date(normalizeDateStr(time));
+          const d = new Date(normalizeChartDateStr(time));
           const m = (d.getFullYear() - 2026) * 12 + d.getMonth();
           if (m === 0) return 'Start';
           if (m % 12 === 0) return `${m / 12}${i18n.language.startsWith('en') ? 'Y' : 'L'}`;
@@ -394,7 +382,7 @@ export const StressTestingView = ({
         setHoveredPt(null);
         return;
       }
-      const timeStr = normalizeDateStr(param.time);
+      const timeStr = normalizeChartDateStr(param.time);
       const match = simulation.timeline.find((pt) => getMonthDateStr(pt.m) === timeStr);
       setHoveredPt(match || null);
     });
@@ -414,7 +402,7 @@ export const StressTestingView = ({
       chart.remove();
       chartRef.current = null;
     };
-  }, [simulation, baseCurrency]);
+  }, [simulation, baseCurrency, i18n.language, numLocale, t]);
 
   const totalMonthly = tosDca + edoDca + etfDca;
 

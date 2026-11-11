@@ -91,9 +91,9 @@ export const PortfolioChart: React.FC<PortfolioChartProps> = ({
     setInternalShowAttribution(val);
     onShowAttributionChange?.(val);
   };
+  const { t, i18n } = useTranslation();
   const getContributorLabel = (c: { key: string; label: string }) =>
     c.key === 'OTHER' ? t('chart.otherContributors') : c.label;
-  const { t, i18n } = useTranslation();
   const chartContainerRef = useRef<HTMLDivElement | null>(null);
   const chartRef = useRef<IChartApi | null>(null);
   const [hoveredPoint, setHoveredPoint] = useState<ChartPoint | null>(null);
@@ -301,7 +301,7 @@ export const PortfolioChart: React.FC<PortfolioChartProps> = ({
           lineWidth: 2,
           lastValueVisible: false,
           priceLineVisible: false,
-          title: getContributorLabel(c),
+          title: c.key === 'OTHER' ? t('chart.otherContributors') : c.label,
           priceFormat: {
             type: 'custom',
             formatter: (val: number) =>
@@ -468,7 +468,7 @@ export const PortfolioChart: React.FC<PortfolioChartProps> = ({
       chart.remove();
       chartRef.current = null;
     };
-  }, [processedData, metricMode, baseCurrency, isProjectionActive, targetGoal, isCollapsed, todayUtcTime, latestHistoricalPoint, i18n.language, showAttribution]);
+  }, [processedData, metricMode, baseCurrency, isProjectionActive, targetGoal, isCollapsed, todayUtcTime, latestHistoricalPoint, i18n.language, showAttribution, t]);
 
   if (!data || data.length === 0) return null;
 

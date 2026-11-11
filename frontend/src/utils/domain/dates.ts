@@ -41,3 +41,17 @@ export function getShortMonthName(monthIndex: number, locale = 'pl'): string {
   const dt = new Date(2026, monthIndex, 1);
   return new Intl.DateTimeFormat(locale, { month: 'short' }).format(dt);
 }
+
+export function normalizeChartDateStr(time: unknown): string {
+  if (!time) return '';
+  if (typeof time === 'string') return time;
+  if (typeof time === 'object' && 'year' in time && 'month' in time) {
+    const obj = time as { year: number; month: number; day?: number };
+    return `${obj.year}-${String(obj.month).padStart(2, '0')}-01`;
+  }
+  if (typeof time === 'number') {
+    const d = new Date(time * 1000);
+    return `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, '0')}-01`;
+  }
+  return '';
+}

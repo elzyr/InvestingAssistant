@@ -1,12 +1,15 @@
 import { useMemo, useState } from 'react';
 import { useActivePortfolioData } from '../hooks/useActivePortfolioData.ts';
-import { calculateBondCurrentPrice } from '../utils/domain/bondPricing.ts';
+import { clearPortfolioError } from '../store/slices/portfolio.slice.ts';
+import { ErrorBanner } from '../components/common/ErrorBanner.tsx';
+import { enrichPortfolioHoldings } from '../utils/domain/holdings.ts';
 import { getBondFamily, isBondItem } from '../utils/domain/assets.ts';
 import { isIkePortfolio } from '../utils/domain/tax.ts';
 import { StressTestingView } from '../components/analytics/StressTestingView.tsx';
 
 export const MonteCarloPage = () => {
   const {
+    dispatch,
     activePortfolio,
     positions,
     transactions,
@@ -15,47 +18,27 @@ export const MonteCarloPage = () => {
     rates,
     baseCurrency,
     cpi,
+    error,
   } = useActivePortfolioData(undefined, { skipHistory: true });
 
   const [nowTimestamp] = useState(() => Date.now());
 
   const isIkeAccount = useMemo(() => isIkePortfolio(activePortfolio), [activePortfolio]);
 
-  const enrichedHoldings = useMemo(() => {
-    return positions.map((pos) => {
-      const inst = instruments[pos.instrumentId];
-      const isBond = isBondItem(pos, inst);
-      const symbol = pos.seriesName || inst?.symbol || 'UNKNOWN';
-      const isForeign = pos.currency !== baseCurrency;
-      const fallbackFx =
-        pos.totalCostBase != null && pos.quantity * pos.averageBuyPrice > 0
-          ? pos.totalCostBase / (pos.quantity * pos.averageBuyPrice)
-          : undefined;
-      const fxRate = (isForeign ? rates[pos.currency] : 1) || fallbackFx || 1;
-
-      const currentPrice = isBond
-        ? calculateBondCurrentPrice({
-            purchaseDate: pos.purchaseDate,
-            bondRate: pos.bondRate,
-            bondMargin: pos.bondMargin,
-            cpi,
-            seriesName: pos.seriesName,
-            termMonths: pos.termMonths,
-          })
-        : (quotes[inst?.symbol || symbol]?.price ?? pos.averageBuyPrice);
-
-      const totalValueNative = pos.quantity * currentPrice;
-      const totalCost = pos.totalCostBase != null ? pos.totalCostBase : pos.quantity * pos.averageBuyPrice * fxRate;
-      return {
-        symbol,
-        isBond,
-        bondRate: pos.bondRate,
-        bondMargin: pos.bondMargin,
-        totalValue: totalValueNative * fxRate,
-        totalCost,
-      };
-    });
-  }, [positions, instruments, quotes, rates, baseCurrency, cpi]);
+  const enrichedHoldings = useMemo(
+    () =>
+      enrichPortfolioHoldings({
+        positions,
+        transactions,
+        instruments,
+        quotes,
+        rates,
+        baseCurrency,
+        cpi,
+        nowTimestamp,
+      }),
+    [positions, transactions, instruments, quotes, rates, baseCurrency, cpi, nowTimestamp]
+  );
 
   const { currentBondVal, currentEquityVal, currentCostVal, weightedBondRate } = useMemo(() => {
     let bondVal = 0;
@@ -136,7 +119,9 @@ export const MonteCarloPage = () => {
   }, [transactions, instruments, rates, baseCurrency, nowTimestamp]);
 
   return (
-    <div className="w-full max-w-[1920px] mx-auto px-6 lg:px-8 py-6">
+    <div className="w-full max-w-[1920px] mx-auto px-6 lg:px-8 py-6 space-y-4">
+      <ErrorBanner error={error} onDismiss={() => dispatch(clearPortfolioError())} />
+
       <StressTestingView
         currentBondVal={currentBondVal}
         currentEquityVal={currentEquityVal}

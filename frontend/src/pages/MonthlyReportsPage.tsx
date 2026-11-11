@@ -7,7 +7,8 @@ import {
   generateRealAnnualSummary,
 } from '../utils/engines/reports.ts';
 import { useActivePortfolioData } from '../hooks/useActivePortfolioData.ts';
-import { setActivePortfolioId } from '../store/slices/portfolio.slice.ts';
+import { clearPortfolioError, setActivePortfolioId } from '../store/slices/portfolio.slice.ts';
+import { ErrorBanner } from '../components/common/ErrorBanner.tsx';
 import { AnnualSummaryTable } from '../components/reports/AnnualSummaryTable.tsx';
 import { MonthDetailView } from '../components/reports/MonthDetailView.tsx';
 import { MonthlyProfitBarChart } from '../components/reports/MonthlyProfitBarChart.tsx';
@@ -41,6 +42,7 @@ export const MonthlyReportsPage: React.FC = () => {
     monthlyCpi,
     baseCurrency,
     loading,
+    error,
   } = useActivePortfolioData(selectedYear, { skipPositions: true });
 
   const availableYears = useMemo(
@@ -68,7 +70,7 @@ export const MonthlyReportsPage: React.FC = () => {
       baseCurrency,
       isIkeAccount,
       year: activeYear,
-      t: (k: string, d?: string) => (d !== undefined ? t(k, d) : t(k)),
+      t,
       locale: i18n.language,
     });
   }, [
@@ -184,6 +186,8 @@ export const MonthlyReportsPage: React.FC = () => {
         </div>
       </div>
 
+      <ErrorBanner error={error} onDismiss={() => dispatch(clearPortfolioError())} />
+
       {loading && transactions.length === 0 ? (
         <div className="bg-zinc-900/40 border border-zinc-800/80 rounded-xl p-12 text-center flex flex-col items-center justify-center">
           <Loader2 className="w-8 h-8 text-emerald-400 animate-spin mb-3" />
@@ -241,6 +245,7 @@ export const MonthlyReportsPage: React.FC = () => {
             <div className="space-y-6">
                             <MonthlyProfitBarChart
                 records={summary.records}
+                baseCurrency={baseCurrency}
                 onSelectMonth={handleSelectMonth}
                 selectedMonthIndex={selectedMonthIndex}
               />

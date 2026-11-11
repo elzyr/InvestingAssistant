@@ -6,8 +6,7 @@ export function attachContributors(
   points: ChartPoint[],
   rawStepContributors: Map<string, RawContributor>[],
   keyMetaMap: Map<string, { label: string; assetType: 'ETF' | 'BOND' | 'STOCK' | 'OTHER' }>,
-  totalHistorySteps: number,
-  _locale = 'pl-PL'
+  totalHistorySteps: number
 ): void {
   const allDistinctKeys = new Set<string>();
   const maxAbsProfitMap = new Map<string, number>();

@@ -1,7 +1,12 @@
 import type { TransactionResponse } from '../../types/portfolio.ts';
 
+type LegacyTransactionFields = {
+  amount?: number;
+  type?: string;
+};
+
 export function resolveTxFx(
-  tx: { currency?: string; exchangeRateToBase?: number; baseAmount?: number; quantity?: number; price?: number },
+  tx: { currency?: string; exchangeRateToBase?: number; baseAmount?: number; quantity?: number; price?: number } & LegacyTransactionFields,
   baseCurrency: string,
   rates: Record<string, number>,
   fxPriority: 'transaction' | 'current' = 'current'
@@ -9,7 +14,7 @@ export function resolveTxFx(
   if (!tx.currency || tx.currency === baseCurrency) {
     return 1;
   }
-  const rawProduct = (tx.quantity != null && tx.price != null) ? tx.quantity * tx.price : ((tx as any).amount ?? 0);
+  const rawProduct = (tx.quantity != null && tx.price != null) ? tx.quantity * tx.price : (tx.amount ?? 0);
   const txFxFallback =
     tx.exchangeRateToBase ||
     (tx.baseAmount && rawProduct > 0 ? tx.baseAmount / rawProduct : undefined);
@@ -21,14 +26,14 @@ export function resolveTxFx(
 }
 
 export function resolveTxCost(
-  tx: { baseAmount?: number; transactionType?: string; quantity: number; price: number; commission?: number },
+  tx: { baseAmount?: number; transactionType?: string; quantity: number; price: number; commission?: number } & LegacyTransactionFields,
   fx: number
 ): number {
   if (tx.baseAmount != null) {
     return tx.baseAmount;
   }
   const commission = tx.commission || 0;
-  const isSell = (tx.transactionType || (tx as any).type) === 'SELL';
+  const isSell = (tx.transactionType || tx.type) === 'SELL';
   if (isSell) {
     return (tx.quantity * tx.price - commission) * fx;
   }
@@ -36,17 +41,17 @@ export function resolveTxCost(
 }
 
 export function getTransactionCashFlow(
-  tx: TransactionResponse,
+  tx: TransactionResponse & LegacyTransactionFields,
   baseCurrency: string,
   rates: Record<string, number>
 ): { amount: number; isOutflow: boolean } {
   const fx = resolveTxFx(tx, baseCurrency, rates, 'transaction');
-  const txType = (tx.transactionType || (tx as any).type);
+  const txType = tx.transactionType || tx.type;
   if (txType === 'BUY') {
     const cost = resolveTxCost(tx, fx);
     return { amount: cost, isOutflow: true };
   } else if (txType === 'DIVIDEND') {
-    const rawDiv = (tx as any).amount ?? ((tx.price ?? 0) * (tx.quantity || 1));
+    const rawDiv = tx.amount ?? ((tx.price ?? 0) * (tx.quantity || 1));
     const dividendAmount = tx.baseAmount ?? (rawDiv - (tx.commission || 0)) * fx;
     return { amount: dividendAmount, isOutflow: false };
   } else {
@@ -56,13 +61,13 @@ export function getTransactionCashFlow(
 }
 
 export function mapDividendsByInstrument(
-  transactions: TransactionResponse[],
+  transactions: Array<TransactionResponse & LegacyTransactionFields>,
   baseCurrency: string,
   rates: Record<string, number>
 ): Map<string, number> {
   const map = new Map<string, number>();
   for (const t of transactions) {
-    if ((t.transactionType || (t as any).type) === 'DIVIDEND') {
+    if ((t.transactionType || t.type) === 'DIVIDEND') {
       const flow = getTransactionCashFlow(t, baseCurrency, rates);
       map.set(t.instrumentId, (map.get(t.instrumentId) || 0) + flow.amount);
     }
@@ -71,13 +76,13 @@ export function mapDividendsByInstrument(
 }
 
 export function sumDividends(
-  transactions: TransactionResponse[],
+  transactions: Array<TransactionResponse & LegacyTransactionFields>,
   baseCurrency: string,
   rates: Record<string, number>
 ): number {
   let sum = 0;
   for (const t of transactions) {
-    if ((t.transactionType || (t as any).type) === 'DIVIDEND') {
+    if ((t.transactionType || t.type) === 'DIVIDEND') {
       sum += getTransactionCashFlow(t, baseCurrency, rates).amount;
     }
   }

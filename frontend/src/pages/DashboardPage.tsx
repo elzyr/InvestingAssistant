@@ -1,8 +1,9 @@
-import { useState, useEffect, useMemo, useRef } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useActivePortfolioData } from '../hooks/useActivePortfolioData.ts';
-import { marketService } from '../services/market.service.ts';
-import { setActivePortfolioId } from '../store/slices/portfolio.slice.ts';
+import { clearPortfolioError, setActivePortfolioId } from '../store/slices/portfolio.slice.ts';
+import { fetchPortfolioStats } from '../store/thunks/portfolio.thunk.ts';
+import { ErrorBanner } from '../components/common/ErrorBanner.tsx';
 import { TransactionModal } from '../components/portfolio/TransactionModal.tsx';
 import { CreatePortfolioModal } from '../components/portfolio/CreatePortfolioModal.tsx';
 import { TransactionHistoryModal } from '../components/portfolio/TransactionHistoryModal.tsx';
@@ -12,18 +13,13 @@ import { PortfolioChart } from '../components/dashboard/PortfolioChart.tsx';
 import { FilterBar } from '../components/dashboard/FilterBar.tsx';
 import { PositionsTable } from '../components/dashboard/PositionsTable.tsx';
 import { generateUnifiedPortfolioTimeline } from '../utils/engines/timeline/index.ts';
-import { calculateBondCurrentPrice } from '../utils/domain/bondPricing.ts';
-import { isBondItem } from '../utils/domain/assets.ts';
+import { enrichPortfolioHoldings } from '../utils/domain/holdings.ts';
 import { isIkePortfolio } from '../utils/domain/tax.ts';
-import { standardizeDate } from '../utils/domain/dates.ts';
 import {
   buildDashboardPositions,
   buildDashboardSummary,
 } from '../utils/engines/dashboard.ts';
 import type {
-
-
-
   TaxMode,
   TimeframeOption,
   ChartMetricMode,
@@ -33,7 +29,6 @@ import type {
   SortOption,
 } from '../types/dashboard.ts';
 import type { TransactionResponse } from '../types/portfolio.ts';
-import type { PortfolioStatsResponse } from '../types/analytics.types.ts';
 
 export const DashboardPage = () => {
   const { t, i18n } = useTranslation();
@@ -51,8 +46,10 @@ export const DashboardPage = () => {
     historicalPrices,
     historicalSortedDates,
     cpi,
+    portfolioStats,
     baseCurrency,
     loading,
+    error,
     refreshData,
   } = useActivePortfolioData();
 
@@ -66,7 +63,10 @@ export const DashboardPage = () => {
   const [projectionHorizon, setProjectionHorizon] = useState<ProjectionHorizonOption>('OFF');
   const [userMonthlyDca, setUserMonthlyDca] = useState<number | null>(null);
   const [dcaBondShare, setDcaBondShare] = useState<number>(0.5);
-  const [expectedEtfReturn, setExpectedEtfReturn] = useState<number>(8.5);
+  const [userEtfReturnOverride, setUserEtfReturnOverride] = useState<{
+    portfolioId: string | null;
+    value: number;
+  } | null>(null);
   const [bondRollover, setBondRollover] = useState<boolean>(true);
   const [inflationAdjustMode, setInflationAdjustMode] = useState<InflationAdjustMode>('NOMINAL');
   const [targetGoal, setTargetGoal] = useState<number | null>(null);
@@ -80,208 +80,61 @@ export const DashboardPage = () => {
     refreshData();
   };
 
-  const enrichedHoldings = useMemo(() => {
-    return positions.map((pos) => {
-      const inst = instruments[pos.instrumentId];
-      const isBond = isBondItem(pos, inst);
-      const symbol = pos.seriesName || inst?.symbol || 'UNKNOWN';
-      const isForeign = pos.currency !== baseCurrency;
-      const fallbackFx =
-        pos.totalCostBase != null && pos.quantity * pos.averageBuyPrice > 0
-          ? pos.totalCostBase / (pos.quantity * pos.averageBuyPrice)
-          : undefined;
-      const fxRate = (isForeign ? rates[pos.currency] : 1) || fallbackFx || 1;
-
-      let currentPrice = pos.averageBuyPrice;
-      let previousPrice = currentPrice;
-
-      if (isBond) {
-        const bondTxs = transactions
-          .filter((t) => t.instrumentId === pos.instrumentId && (t.seriesName || '') === (pos.seriesName || ''))
-          .sort((a, b) => new Date(a.executedAt).getTime() - new Date(b.executedAt).getTime());
-        const buyTxs = bondTxs.filter((t) => t.transactionType === 'BUY');
-        const sellTxs = bondTxs.filter((t) => t.transactionType === 'SELL');
-        let totalSold = sellTxs.reduce((sum, t) => sum + t.quantity, 0);
-
-        const activeLots: { qty: number; executedAt: string; rate?: number; margin?: number; termMonths?: number }[] = [];
-        for (const buyTx of buyTxs) {
-          if (totalSold >= buyTx.quantity) {
-            totalSold -= buyTx.quantity;
-            continue;
-          }
-          const rem = buyTx.quantity - totalSold;
-          totalSold = 0;
-          activeLots.push({
-            qty: rem,
-            executedAt: buyTx.executedAt,
-            rate: buyTx.bondRate ?? pos.bondRate,
-            margin: buyTx.bondMargin ?? pos.bondMargin,
-            termMonths: buyTx.termMonths ?? pos.termMonths,
-          });
-        }
-
-        if (activeLots.length > 0 && pos.quantity > 0) {
-          let sumNow = 0;
-          let sumPrev = 0;
-          for (const lot of activeLots) {
-            const pNow = calculateBondCurrentPrice({
-              purchaseDate: lot.executedAt,
-              bondRate: lot.rate,
-              bondMargin: lot.margin,
-              cpi,
-              targetDate: nowTimestamp,
-              seriesName: pos.seriesName,
-              termMonths: lot.termMonths,
-            });
-            const pPrev = calculateBondCurrentPrice({
-              purchaseDate: lot.executedAt,
-              bondRate: lot.rate,
-              bondMargin: lot.margin,
-              cpi,
-              targetDate: nowTimestamp - 86400000,
-              seriesName: pos.seriesName,
-              termMonths: lot.termMonths,
-            });
-            sumNow += lot.qty * pNow;
-            sumPrev += lot.qty * pPrev;
-          }
-          currentPrice = sumNow / pos.quantity;
-          previousPrice = sumPrev / pos.quantity;
-        } else {
-          currentPrice = calculateBondCurrentPrice({
-            purchaseDate: pos.purchaseDate,
-            bondRate: pos.bondRate,
-            bondMargin: pos.bondMargin,
-            cpi,
-            targetDate: nowTimestamp,
-            seriesName: pos.seriesName,
-            termMonths: pos.termMonths,
-          });
-          previousPrice = calculateBondCurrentPrice({
-            purchaseDate: pos.purchaseDate,
-            bondRate: pos.bondRate,
-            bondMargin: pos.bondMargin,
-            cpi,
-            targetDate: nowTimestamp - 86400000,
-            seriesName: pos.seriesName,
-            termMonths: pos.termMonths,
-          });
-        }
-      } else {
-        currentPrice = (quotes[symbol]?.price && quotes[symbol].price > 0 ? quotes[symbol].price : pos.averageBuyPrice);
-        previousPrice = currentPrice;
-        if (quotes[symbol]?.previousClose && quotes[symbol].previousClose! > 0) {
-          previousPrice = quotes[symbol].previousClose!;
-        } else if (historicalPrices && historicalSortedDates && inst?.symbol && historicalPrices[inst.symbol]) {
-          const dates = historicalSortedDates[inst.symbol];
-          const dateMap = historicalPrices[inst.symbol];
-          if (dates && dates.length > 0) {
-            const todayDateStr = standardizeDate(nowTimestamp);
-            const lastDate = dates[dates.length - 1];
-            if (lastDate >= todayDateStr && dates.length >= 2) {
-              previousPrice = dateMap[dates[dates.length - 2]] ?? currentPrice;
-            } else {
-              previousPrice = dateMap[lastDate] ?? currentPrice;
-            }
-          }
-        }
-      }
-
-      const totalVal = pos.quantity * currentPrice * fxRate;
-      const totalCostVal = pos.totalCostBase !== undefined ? pos.totalCostBase : pos.quantity * pos.averageBuyPrice * fxRate;
-      const profit = totalVal - totalCostVal;
-      const profitPct = totalCostVal > 0 ? (profit / totalCostVal) * 100 : 0;
-      const dailyChange = pos.quantity * (currentPrice - previousPrice) * fxRate;
-
-      let assetType: 'ETF' | 'BOND' | 'STOCK' = 'ETF';
-      if (isBond) {
-        assetType = 'BOND';
-      } else if (inst?.type === 'STOCK') {
-        assetType = 'STOCK';
-      }
-
-      return {
-        id: pos.id,
-        instrumentId: pos.instrumentId,
-        ticker: symbol,
-        name: inst?.name || symbol,
-        assetType,
-        isBond,
-        quantity: pos.quantity,
-        averagePrice: pos.averageBuyPrice,
-        currentPrice,
-        previousPrice,
-        currency: pos.currency,
-        totalValue: totalVal,
-        totalCost: totalCostVal,
-        profit,
-        profitPct,
-        dailyChange,
-        purchaseDate: pos.purchaseDate,
-        seriesName: pos.seriesName,
-        bondRate: pos.bondRate,
-        bondMargin: pos.bondMargin,
-        termMonths: pos.termMonths,
-        isPriceUnavailable: Boolean(!isBond && quotes[symbol]?.isUnavailable),
-      };
-    });
-  }, [positions, instruments, quotes, rates, baseCurrency, cpi, nowTimestamp, historicalPrices, historicalSortedDates, transactions]);
-
-  const equityHoldings = useMemo(
+  const enrichedHoldings = useMemo(
     () =>
-      enrichedHoldings
-        .filter((h) => !h.isBond)
-        .map((h) => ({ symbol: h.ticker, weight: 0, value: h.totalValue })),
-    [enrichedHoldings]
+      enrichPortfolioHoldings({
+        positions,
+        transactions,
+        instruments,
+        quotes,
+        rates,
+        baseCurrency,
+        cpi,
+        nowTimestamp,
+        historicalPrices,
+        historicalSortedDates,
+      }),
+    [positions, transactions, instruments, quotes, rates, baseCurrency, cpi, nowTimestamp, historicalPrices, historicalSortedDates]
   );
 
-  const empiricalRequestKey = useMemo(() => {
-    if (!activePortfolioId || equityHoldings.length === 0) {
-      return null;
+  const { empiricalRequestKey, equityStatsPayload } = useMemo(() => {
+    const equities = enrichedHoldings.filter((h) => !h.isBond);
+    if (!activePortfolioId || equities.length === 0) {
+      return { empiricalRequestKey: null, equityStatsPayload: [] };
     }
-    const holdingsKey = [...equityHoldings]
-      .map((h) => `${h.symbol}:${h.value.toFixed(2)}`)
+    const totalEquityVal = equities.reduce((sum, h) => sum + Math.max(0, h.totalValue), 0);
+    const payload = equities.map((h) => ({ symbol: h.ticker, weight: 0, value: h.totalValue }));
+    const weightsKey = equities
+      .map((h) => {
+        const weightPerMille = totalEquityVal > 0 ? Math.round((h.totalValue / totalEquityVal) * 1000) : 0;
+        return `${h.ticker}:${weightPerMille}`;
+      })
       .sort()
       .join('|');
-    return `${activePortfolioId}|${holdingsKey}`;
-  }, [activePortfolioId, equityHoldings]);
-  const [rawEmpiricalStats, setRawEmpiricalStats] = useState<{
-    requestKey: string;
-    data: PortfolioStatsResponse;
-  } | null>(null);
-  const empiricalStats =
-    empiricalRequestKey && rawEmpiricalStats?.requestKey === empiricalRequestKey
-      ? rawEmpiricalStats.data
-      : null;
-  const populatedPortfolioRef = useRef<string | null>(null);
-  const latestEmpiricalRequestKeyRef = useRef<string | null>(null);
+    return {
+      empiricalRequestKey: `${activePortfolioId}|${weightsKey}`,
+      equityStatsPayload: payload,
+    };
+  }, [activePortfolioId, enrichedHoldings]);
+
+  const empiricalStats = empiricalRequestKey ? (portfolioStats[empiricalRequestKey] ?? null) : null;
 
   useEffect(() => {
-    if (!empiricalRequestKey) {
-      latestEmpiricalRequestKeyRef.current = null;
+    if (!empiricalRequestKey || equityStatsPayload.length === 0 || empiricalStats) {
       return;
     }
+    dispatch(fetchPortfolioStats({ key: empiricalRequestKey, holdings: equityStatsPayload }));
+  }, [dispatch, empiricalRequestKey, equityStatsPayload, empiricalStats]);
 
-    let isCancelled = false;
-    latestEmpiricalRequestKeyRef.current = empiricalRequestKey;
+  const defaultExpectedEtfReturn =
+    empiricalStats?.weightedReturn != null
+      ? Math.round(empiricalStats.weightedReturn * 1000) / 10
+      : 8.5;
 
-    marketService
-      .getPortfolioStats({ holdings: equityHoldings })
-      .then((stats) => {
-        if (!isCancelled && stats && latestEmpiricalRequestKeyRef.current === empiricalRequestKey) {
-          setRawEmpiricalStats({ requestKey: empiricalRequestKey, data: stats });
-          if (activePortfolioId && populatedPortfolioRef.current !== activePortfolioId) {
-            populatedPortfolioRef.current = activePortfolioId;
-            if (stats.weightedReturn != null) { setExpectedEtfReturn(Math.round(stats.weightedReturn * 1000) / 10); }
-          }
-        }
-      })
-      .catch(() => {});
-
-    return () => {
-      isCancelled = true;
-    };
-  }, [activePortfolioId, empiricalRequestKey]);
+  const expectedEtfReturn =
+    userEtfReturnOverride && userEtfReturnOverride.portfolioId === activePortfolioId
+      ? userEtfReturnOverride.value
+      : defaultExpectedEtfReturn;
 
   const totalPortfolioValue = useMemo(() => {
     return enrichedHoldings.reduce((sum, h) => sum + h.totalValue, 0);
@@ -464,6 +317,8 @@ export const DashboardPage = () => {
         onOpenTransactionHistory={() => setIsHistoryOpen(true)}
       />
 
+      <ErrorBanner error={error} onDismiss={() => dispatch(clearPortfolioError())} />
+
       <KpiGrid summary={dashboardSummary} />
 
       <PortfolioChart
@@ -481,7 +336,9 @@ export const DashboardPage = () => {
         dcaBondShare={dcaBondShare}
         onDcaBondShareChange={setDcaBondShare}
         expectedEtfReturn={expectedEtfReturn}
-        onExpectedEtfReturnChange={setExpectedEtfReturn}
+        onExpectedEtfReturnChange={(val) =>
+          setUserEtfReturnOverride({ portfolioId: activePortfolioId, value: val })
+        }
         bondRollover={bondRollover}
         onBondRolloverChange={setBondRollover}
         inflationAdjustMode={inflationAdjustMode}

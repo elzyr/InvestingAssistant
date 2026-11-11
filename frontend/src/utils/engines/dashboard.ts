@@ -54,7 +54,7 @@ export interface BuildDashboardPositionsParams {
   rates: Record<string, number>;
   shouldApplyTax: boolean;
   nowTimestamp: number;
-  t?: (key: string, options?: any) => string;
+  t?: (key: string, options?: Record<string, unknown>) => string;
   locale?: string;
 }
 

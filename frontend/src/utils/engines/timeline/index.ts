@@ -10,7 +10,7 @@ export type { UnifiedEngineParams };
 export function generateUnifiedPortfolioTimeline(params: UnifiedEngineParams): ChartPoint[] {
   const state = prepareTimelineState(params);
   const { points, rawStepContributors, keyMetaMap } = buildHistoryPoints(state, params);
-  attachContributors(points, rawStepContributors, keyMetaMap, state.totalHistorySteps, params.locale);
+  attachContributors(points, rawStepContributors, keyMetaMap, state.totalHistorySteps);
   appendProjection(points, state, params);
   return points;
 }

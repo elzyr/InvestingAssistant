@@ -119,21 +119,14 @@ export function prepareTimelineState({
     const inst = instruments[pos.instrumentId];
     const isBond = isBondItem(pos, inst);
     const fx = (pos.currency === baseCurrency ? 1 : rates[pos.currency]) || 1;
-    let val = 0;
-    let cost = 0;
+    const cost =
+      pos.totalCostBase != null && pos.totalCostBase > 0
+        ? pos.totalCostBase
+        : pos.quantity * (pos.averageBuyPrice || 100) * fx;
 
-    if (pos.totalCostBase != null && pos.totalCostBase > 0) {
-      cost = pos.totalCostBase;
-    } else {
-      cost = pos.quantity * (pos.averageBuyPrice || 100) * fx;
-    }
-
-    if (isBond) {
-      val = getBondValuation(pos, now, fx);
-    } else {
-      const curPrice = instrumentPrices[pos.instrumentId] ?? pos.averageBuyPrice ?? 100;
-      val = pos.quantity * curPrice * fx;
-    }
+    const val = isBond
+      ? getBondValuation(pos, now, fx)
+      : pos.quantity * (instrumentPrices[pos.instrumentId] ?? pos.averageBuyPrice ?? 100) * fx;
 
     if (isBond) {
       currentBondCapital += val;
