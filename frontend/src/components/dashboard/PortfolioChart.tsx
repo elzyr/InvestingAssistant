@@ -1,30 +1,27 @@
-import React, { useState, useMemo, useRef, useEffect } from 'react';
+import React from 'react';
 import { useTranslation } from 'react-i18next';
-import { ChevronDown, ChevronUp, LineChart, Sparkles, Check, Info, X, Settings2, Maximize2, Target, Layers } from 'lucide-react';
-import {
-  createChart,
-  ColorType,
-  CrosshairMode,
-  LineStyle,
-  AreaSeries,
-  LineSeries,
-  type IChartApi,
-  type ISeriesApi,
-  type UTCTimestamp,
-  type Time,
-  type TickMarkType,
-} from 'lightweight-charts';
-import type { 
-  ChartPoint, 
-  TaxMode, 
-  TimeframeOption, 
+import { ChevronDown, ChevronUp, LineChart, Sparkles, Info, Maximize2, Target, Layers } from 'lucide-react';
+import type {
+  ChartPoint,
+  TaxMode,
+  TimeframeOption,
   ChartMetricMode,
   ProjectionHorizonOption,
   InflationAdjustMode,
 } from '../../types/dashboard.ts';
+import { PortfolioChartAttribution } from './PortfolioChartAttribution.tsx';
+import { PortfolioChartControls } from './PortfolioChartControls.tsx';
+import { PortfolioChartTooltip } from './PortfolioChartTooltip.tsx';
+import {
+  CONTRIBUTOR_COLORS,
+  usePortfolioChart,
+} from './usePortfolioChart.ts';
 import type { PortfolioStatsResponse } from '../../types/analytics.types.ts';
-import { formatNumberWithSpaces, formatSignedNumberWithSpaces } from '../../utils/reportsFormatters.ts';
-import { getShortMonthName } from '../../utils/domain/dates.ts';
+import {
+  formatNumberWithSpaces,
+  formatSignedFixedPercent,
+  formatSignedNumberWithSpaces,
+} from '../../utils/reportsFormatters.ts';
 
 interface PortfolioChartProps {
   data: ChartPoint[];
@@ -40,8 +37,8 @@ interface PortfolioChartProps {
   onMonthlyDcaChange: (val: number) => void;
   dcaBondShare: number;
   onDcaBondShareChange: (val: number) => void;
-  expectedEtfReturn: number;
-  onExpectedEtfReturnChange: (val: number) => void;
+  expectedEtfReturn: number | null;
+  onExpectedEtfReturnChange: (val: number | null) => void;
   bondRollover: boolean;
   onBondRolloverChange: (val: boolean) => void;
   inflationAdjustMode?: InflationAdjustMode;
@@ -49,13 +46,11 @@ interface PortfolioChartProps {
   targetGoal?: number | null;
   onTargetGoalChange?: (goal: number | null) => void;
   empiricalStats?: PortfolioStatsResponse | null;
-  showAttribution?: boolean;
-  onShowAttributionChange?: (show: boolean) => void;
+  proxyWarnings?: string[];
 }
 
-const TIMEFRAMES: TimeframeOption[] = ['1M', '3M', 'YTD', '1R', 'MAX'];
+const TIMEFRAMES: TimeframeOption[] = ['1M', '3M', 'YTD', '1Y', 'MAX'];
 const PROJECTIONS: ProjectionHorizonOption[] = ['3Y', '5Y', '10Y', '20Y'];
-const CONTRIBUTOR_COLORS = ['#f59e0b', '#38bdf8', '#a855f7', '#f43f5e', '#14b8a6', '#94a3b8'];
 
 
 
@@ -82,393 +77,34 @@ export const PortfolioChart: React.FC<PortfolioChartProps> = ({
   targetGoal = null,
   onTargetGoalChange,
   empiricalStats,
-  showAttribution: controlledShowAttribution,
-  onShowAttributionChange,
+  proxyWarnings,
 }) => {
-  const [internalShowAttribution, setInternalShowAttribution] = useState(false);
-  const showAttribution = controlledShowAttribution !== undefined ? controlledShowAttribution : internalShowAttribution;
-  const setShowAttribution = (val: boolean) => {
-    setInternalShowAttribution(val);
-    onShowAttributionChange?.(val);
-  };
-  const getContributorLabel = (c: { key: string; label: string }) =>
-    c.key === 'OTHER' ? t('chart.otherContributors') : c.label;
   const { t, i18n } = useTranslation();
-  const chartContainerRef = useRef<HTMLDivElement | null>(null);
-  const chartRef = useRef<IChartApi | null>(null);
-  const [hoveredPoint, setHoveredPoint] = useState<ChartPoint | null>(null);
-  const [todayXCoord, setTodayXCoord] = useState<number | null>(null);
-  const [isCollapsed, setIsCollapsed] = useState(false);
-  const [showAdvanced, setShowAdvanced] = useState(false);
 
-  const isProjectionActive = projectionHorizon !== 'OFF';
-
-  const processedData = useMemo(() => {
-    if (!data || data.length === 0) return [];
-    let lastTime = 0;
-    return data.map((d) => {
-      let t = Math.floor(d.timestamp / 1000);
-      if (t <= lastTime) {
-        t = lastTime + 86400;
-      }
-      lastTime = t;
-      return {
-        ...d,
-        utcTime: t as UTCTimestamp,
-      };
-    });
-  }, [data]);
-
-  const latestHistoricalPoint = useMemo(() => {
-    if (processedData.length === 0) return null;
-    const historyPoints = processedData.filter((d) => !d.isFuture);
-    const lastP = historyPoints.length > 0 ? historyPoints[historyPoints.length - 1] : processedData[processedData.length - 1];
-    return lastP ? {
-      ...lastP,
-      returnP90: lastP.returnPct,
-      returnP10: lastP.returnPct,
-      netP90: lastP.valuation,
-      netP10: lastP.valuation,
-    } : null;
-  }, [processedData]);
-
-  const todayUtcTime = latestHistoricalPoint?.utcTime;
-
-  const finalFuturePoint = useMemo(() => {
-    return data.slice().reverse().find((d) => d.isFuture);
-  }, [data]);
-  const goalProb = finalFuturePoint?.goalProbability;
-
-  const firstFuturePoint = useMemo(() => {
-    return data.find((d) => d.isFuture);
-  }, [data]);
-  const weightedTer = firstFuturePoint?.weightedTer;
-  const weightedWhtDrag = firstFuturePoint?.weightedWhtDrag;
-  const diversifiedVol = firstFuturePoint?.diversifiedVolatility;
-
-  useEffect(() => {
-    if (!chartContainerRef.current || processedData.length === 0 || isCollapsed) return;
-
-    if (chartRef.current) {
-      chartRef.current.remove();
-      chartRef.current = null;
-    }
-
-    const container = chartContainerRef.current;
-    const chart = createChart(container, {
-      width: container.clientWidth || 800,
-      height: 290,
-      layout: {
-        background: { type: ColorType.Solid, color: '#10121a' },
-        textColor: '#71717a',
-        fontFamily: 'monospace',
-        fontSize: 11,
-      },
-      grid: {
-        vertLines: { color: '#161923' },
-        horzLines: { color: '#161923' },
-      },
-      crosshair: {
-        mode: CrosshairMode.Normal,
-        vertLine: {
-          color: '#38bdf8',
-          width: 1,
-          style: LineStyle.Dashed,
-          labelBackgroundColor: '#0284c7',
-        },
-        horzLine: {
-          color: '#38bdf8',
-          width: 1,
-          style: LineStyle.Dashed,
-          labelBackgroundColor: '#0284c7',
-        },
-      },
-      timeScale: {
-        borderColor: '#27272a',
-        timeVisible: false,
-        secondsVisible: false,
-        rightOffset: 20,
-        minBarSpacing: 0.02,
-        fixLeftEdge: true,
-        tickMarkFormatter: (time: Time, tickMarkType: TickMarkType) => {
-          const tSec = typeof time === 'number' ? time : Math.floor(new Date(String(time)).getTime() / 1000);
-          if (todayUtcTime && Math.abs(tSec - todayUtcTime) < 86400 * 25) {
-            return '';
-          }
-          const d = new Date(tSec * 1000);
-          if (tickMarkType === 0) {
-            return `${d.getFullYear()}`;
-          }
-          if (tickMarkType === 1) {
-            if (d.getMonth() === 0) {
-              return `${d.getFullYear()}`;
-            }
-            return getShortMonthName(d.getMonth(), i18n.language);
-          }
-          if (tickMarkType === 2) {
-            return '';
-          }
-          return d.getMonth() === 0 ? `${d.getFullYear()}` : getShortMonthName(d.getMonth(), i18n.language);
-        },
-      },
-      rightPriceScale: {
-        borderColor: '#27272a',
-        autoScale: true,
-        scaleMargins: {
-          top: 0.12,
-          bottom: 0.12,
-        },
-      },
-      localization: {
-        priceFormatter: (val: number) => {
-          if (showAttribution) {
-            if (metricMode === 'PLN') {
-              return `${formatSignedNumberWithSpaces(val)} ${baseCurrency}`;
-            }
-            return `${val >= 0 ? '+' : ''}${val.toFixed(2)} pp`;
-          }
-          if (metricMode === 'PLN') {
-            return `${formatNumberWithSpaces(val)} ${baseCurrency}`;
-          }
-          return `${val >= 0 ? '+' : ''}${val.toFixed(2)}%`;
-        },
-      },
-    });
-
-    chartRef.current = chart;
-
-    const pastData = processedData.filter((d) => !d.isFuture);
-    const futureData = processedData.filter((d) => d.isFuture);
-
-    if (latestHistoricalPoint && futureData.length > 0) {
-      futureData.unshift(latestHistoricalPoint);
-    }
-
-    const areaSeries: ISeriesApi<'Area'> = chart.addSeries(AreaSeries, {
-      lineColor: showAttribution ? '#10b981' : '#34d399',
-      topColor: showAttribution ? 'rgba(16, 185, 129, 0.25)' : 'rgba(52, 211, 153, 0.35)',
-      bottomColor: 'rgba(52, 211, 153, 0.0)',
-      lineWidth: 2,
-      lastValueVisible: false,
-      priceLineVisible: false,
-      title: showAttribution ? t('chart.totalProfitSeries') : '',
-      priceFormat: {
-        type: 'custom',
-        formatter: (val: number) => {
-          if (showAttribution) {
-            return metricMode === 'PLN'
-              ? `${formatSignedNumberWithSpaces(val)} ${baseCurrency}`
-              : `${val >= 0 ? '+' : ''}${val.toFixed(2)}%`;
-          }
-          return metricMode === 'PLN'
-            ? `${formatNumberWithSpaces(val)} ${baseCurrency}`
-            : `${val >= 0 ? '+' : ''}${val.toFixed(2)}%`;
-        },
-      },
-    });
-
-    areaSeries.setData(
-      pastData.map((d) => ({
-        time: d.utcTime,
-        value: showAttribution
-          ? (metricMode === 'PLN' ? d.profit : d.returnPct)
-          : (metricMode === 'PLN' ? d.valuation : d.returnPct),
-      }))
-    );
-
-    if (metricMode === 'PLN' && !showAttribution) {
-      const costSeries = chart.addSeries(LineSeries, {
-        color: '#71717a',
-        lineStyle: LineStyle.Dashed,
-        lineWidth: 1,
-        lastValueVisible: false,
-        priceLineVisible: false,
-        title: '',
-      });
-      costSeries.setData(
-        processedData.map((d) => ({
-          time: d.utcTime,
-          value: d.cost,
-        }))
-      );
-    }
-
-    if (showAttribution && latestHistoricalPoint?.contributors) {
-      latestHistoricalPoint.contributors.forEach((c, idx) => {
-        const color = CONTRIBUTOR_COLORS[idx % CONTRIBUTOR_COLORS.length];
-        const cSeries = chart.addSeries(LineSeries, {
-          color,
-          lineWidth: 2,
-          lastValueVisible: false,
-          priceLineVisible: false,
-          title: getContributorLabel(c),
-          priceFormat: {
-            type: 'custom',
-            formatter: (val: number) =>
-              metricMode === 'PLN'
-                ? `${formatSignedNumberWithSpaces(val)} ${baseCurrency}`
-                : `${val >= 0 ? '+' : ''}${val.toFixed(2)} pp`,
-          },
-        });
-        cSeries.setData(
-          pastData.map((d) => {
-            const match = d.contributors?.find((item) => item.key === c.key);
-            const val = match
-              ? (metricMode === 'PLN' ? match.profit : match.returnContributionPct)
-              : 0;
-            return {
-              time: d.utcTime,
-              value: val,
-            };
-          })
-        );
-      });
-    }
-
-    if (isProjectionActive && futureData.length > 0) {
-      const medianSeries = chart.addSeries(LineSeries, {
-        color: '#38bdf8',
-        lineWidth: 2,
-        lastValueVisible: true,
-        priceLineVisible: true,
-        priceLineColor: '#38bdf8',
-        priceLineStyle: LineStyle.Dashed,
-        title: t('chart.medianP50'),
-      });
-      medianSeries.setData(
-        futureData.map((d) => ({
-          time: d.utcTime,
-          value: showAttribution
-            ? (metricMode === 'PLN' ? ((d.netMedian ?? d.valuation) - d.cost) : d.returnPct)
-            : (metricMode === 'PLN' ? (d.netMedian ?? d.valuation) : d.returnPct),
-        }))
-      );
-
-      const p90Series = chart.addSeries(LineSeries, {
-        color: '#38bdf8',
-        lineStyle: LineStyle.Dotted,
-        lineWidth: 1,
-        lastValueVisible: false,
-        priceLineVisible: false,
-        title: '',
-      });
-      p90Series.setData(
-        futureData.map((d) => ({
-          time: d.utcTime,
-          value: showAttribution
-            ? (metricMode === 'PLN' ? ((d.netP90 ?? d.valuation) - d.cost) : (d.returnP90 ?? d.returnPct))
-            : (metricMode === 'PLN' ? (d.netP90 ?? d.valuation) : (d.returnP90 ?? d.returnPct)),
-        }))
-      );
-
-      const p10Series = chart.addSeries(LineSeries, {
-        color: '#38bdf8',
-        lineStyle: LineStyle.Dotted,
-        lineWidth: 1,
-        lastValueVisible: false,
-        priceLineVisible: false,
-        title: '',
-      });
-      p10Series.setData(
-        futureData.map((d) => ({
-          time: d.utcTime,
-          value: showAttribution
-            ? (metricMode === 'PLN' ? ((d.netP10 ?? d.valuation) - d.cost) : (d.returnP10 ?? d.returnPct))
-            : (metricMode === 'PLN' ? (d.netP10 ?? d.valuation) : (d.returnP10 ?? d.returnPct)),
-        }))
-      );
-
-      if (targetGoal && targetGoal > 0 && metricMode === 'PLN' && !showAttribution) {
-        medianSeries.createPriceLine({
-          price: targetGoal,
-          color: '#c084fc',
-          lineWidth: 1,
-          lineStyle: LineStyle.Dashed,
-          axisLabelVisible: true,
-          title: t('chart.goal'),
-        });
-      }
-    } else if (targetGoal && targetGoal > 0 && metricMode === 'PLN' && !showAttribution) {
-      areaSeries.createPriceLine({
-        price: targetGoal,
-        color: '#c084fc',
-        lineWidth: 1,
-        lineStyle: LineStyle.Dashed,
-        axisLabelVisible: true,
-        title: t('chart.goal'),
-      });
-    }
-
-    chart.timeScale().fitContent();
-
-    const updateTodayCoord = () => {
-      if (todayUtcTime && chartRef.current) {
-        const coord = chartRef.current.timeScale().timeToCoordinate(todayUtcTime);
-        setTodayXCoord(coord != null && coord > 0 ? coord : null);
-      }
-    };
-
-    updateTodayCoord();
-    chart.timeScale().subscribeVisibleTimeRangeChange(updateTodayCoord);
-    chart.timeScale().subscribeVisibleLogicalRangeChange(updateTodayCoord);
-
-    const normalizeTime = (time: Time | unknown): number => {
-      if (!time) return 0;
-      if (typeof time === 'number') return time;
-      if (typeof time === 'string') return Math.floor(new Date(time).getTime() / 1000);
-      if (typeof time === 'object' && 'year' in (time as Record<string, unknown>) && 'month' in (time as Record<string, unknown>) && 'day' in (time as Record<string, unknown>)) {
-        const t = time as { year: number; month: number; day: number };
-        return Math.floor(Date.UTC(t.year, t.month - 1, t.day) / 1000);
-      }
-      return 0;
-    };
-
-    const pointByTime = new Map<number, ChartPoint>();
-    for (const p of processedData) {
-      pointByTime.set(Number(p.utcTime), p);
-    }
-
-    chart.subscribeCrosshairMove((param) => {
-      if (!param.time) {
-        setHoveredPoint(null);
-        return;
-      }
-      const targetT = normalizeTime(param.time);
-      let found = pointByTime.get(targetT) ?? pointByTime.get(Number(param.time));
-      if (!found && targetT > 0 && processedData.length > 0) {
-        let low = 0;
-        let high = processedData.length - 1;
-        while (low <= high) {
-          const mid = (low + high) >> 1;
-          const midT = Number(processedData[mid].utcTime);
-          if (Math.abs(midT - targetT) <= 86400 * 3) {
-            found = processedData[mid];
-            break;
-          }
-          if (midT < targetT) low = mid + 1;
-          else high = mid - 1;
-        }
-      }
-      setHoveredPoint(found || null);
-    });
-
-    const handleResize = () => {
-      if (chartContainerRef.current && chartRef.current) {
-        chartRef.current.applyOptions({
-          width: chartContainerRef.current.clientWidth,
-        });
-        updateTodayCoord();
-      }
-    };
-
-    window.addEventListener('resize', handleResize);
-
-    return () => {
-      window.removeEventListener('resize', handleResize);
-      chart.remove();
-      chartRef.current = null;
-    };
-  }, [processedData, metricMode, baseCurrency, isProjectionActive, targetGoal, isCollapsed, todayUtcTime, latestHistoricalPoint, i18n.language, showAttribution]);
+  const {
+    showAttribution,
+    setShowAttribution,
+    chartContainerRef,
+    fitContent,
+    hoveredPoint,
+    todayXCoord,
+    isCollapsed,
+    setIsCollapsed,
+    isProjectionActive,
+    latestHistoricalPoint,
+    goalProb,
+    weightedTer,
+    diversifiedVol,
+    activeAttributionPoint,
+  } = usePortfolioChart({
+    data,
+    baseCurrency,
+    metricMode,
+    projectionHorizon,
+    targetGoal,
+    t,
+    locale: i18n.language,
+  });
 
   if (!data || data.length === 0) return null;
 
@@ -486,16 +122,16 @@ export const PortfolioChart: React.FC<PortfolioChartProps> = ({
             </span>
             {inflationAdjustMode === 'REAL' && (
               <span className="text-[10px] font-mono text-amber-300 bg-amber-950/70 px-1.5 py-0.5 rounded border border-amber-800/60">
-                Realnie
+                {t('chart.realBadge')}
               </span>
             )}
             {isProjectionActive && (
               <span className="text-[10px] font-mono text-sky-400 bg-sky-950/60 px-1.5 py-0.5 rounded border border-sky-800/60 flex items-center gap-1">
                 <Sparkles className="w-3 h-3" />
-                +{projectionHorizon.replace('Y', 'L')}
+                {t('chart.projectionHorizonBadge', { years: projectionHorizon.replace('Y', '') })}
               </span>
             )}
-            {targetGoal && isProjectionActive && goalProb !== undefined && (
+            {targetGoal != null && targetGoal > 0 && isProjectionActive && goalProb !== undefined && (
               <span
                 className={`text-[10px] font-mono px-1.5 py-0.5 rounded border flex items-center gap-1 ${
                   goalProb >= 70
@@ -505,7 +141,9 @@ export const PortfolioChart: React.FC<PortfolioChartProps> = ({
                     : 'bg-rose-950/80 text-rose-300 border-rose-700/60'
                 }`}
               >
-                <Target className="w-3 h-3 text-purple-400" /> Cel {formatNumberWithSpaces(targetGoal / 1000)}k: <span className="font-bold">{goalProb}% szans</span>
+                <Target className="w-3 h-3 text-purple-400" />{' '}
+                {t('chart.targetGoalBadge', { val: formatNumberWithSpaces(targetGoal / 1000) })}{' '}
+                <span className="font-bold">{t('chart.targetGoalChance', { prob: goalProb })}</span>
               </span>
             )}
             {isProjectionActive && (
@@ -522,14 +160,6 @@ export const PortfolioChart: React.FC<PortfolioChartProps> = ({
                   <div className="flex justify-between">
                     <span className="text-zinc-400">{t('chart.weightedTer')}</span>
                     <span className="font-semibold text-sky-300">{weightedTer != null ? `${weightedTer.toFixed(2)}%` : '—'}</span>
-                  </div>
-                  <div className="flex justify-between">
-                    <span className="text-zinc-400">{t('chart.whtTax')}</span>
-                    <span className="font-semibold text-amber-300">{weightedWhtDrag != null ? `${weightedWhtDrag.toFixed(2)}%` : '—'}</span>
-                  </div>
-                  <div className="flex justify-between">
-                    <span className="text-zinc-400">{t('chart.totalDrag')}</span>
-                    <span className="font-semibold text-rose-300">{weightedTer != null && weightedWhtDrag != null ? `${(weightedTer + weightedWhtDrag).toFixed(2)}%` : '—'}</span>
                   </div>
                   <div className="flex justify-between pt-1 border-t border-zinc-800">
                     <span className="text-zinc-400">{t('chart.volatility')}</span>
@@ -550,7 +180,7 @@ export const PortfolioChart: React.FC<PortfolioChartProps> = ({
                   <>
                     <span className="text-[10px] font-mono uppercase text-zinc-400 font-medium">{t('chart.currentReturn')}</span>
                     <span className={`text-base font-bold font-mono ${latestHistoricalPoint.returnPct >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
-                      {latestHistoricalPoint.returnPct >= 0 ? '+' : ''}{latestHistoricalPoint.returnPct.toFixed(2)}%
+                      {formatSignedFixedPercent(latestHistoricalPoint.returnPct, 2)}
                     </span>
                     <span className="text-xs font-mono font-medium text-zinc-400">
                       ({formatSignedNumberWithSpaces(latestHistoricalPoint.profit)} {baseCurrency})
@@ -564,8 +194,7 @@ export const PortfolioChart: React.FC<PortfolioChartProps> = ({
                     </span>
                     <span className={`text-xs font-mono font-semibold ${latestHistoricalPoint.profit >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
                       {formatSignedNumberWithSpaces(latestHistoricalPoint.profit)} {baseCurrency} (
-                      {latestHistoricalPoint.returnPct >= 0 ? '+' : ''}
-                      {latestHistoricalPoint.returnPct.toFixed(2)}%)
+                      {formatSignedFixedPercent(latestHistoricalPoint.returnPct, 2)})
                     </span>
                   </>
                 )}
@@ -599,7 +228,7 @@ export const PortfolioChart: React.FC<PortfolioChartProps> = ({
                   : 'text-zinc-400 hover:text-zinc-200'
               }`}
             >
-              PLN
+              {baseCurrency}
             </button>
             <button
               type="button"
@@ -670,7 +299,7 @@ export const PortfolioChart: React.FC<PortfolioChartProps> = ({
                       : 'text-zinc-400 hover:text-zinc-200'
                   }`}
                 >
-                  {tf === '1R' ? (i18n.language.startsWith('en') ? '1Y' : '1R') : tf}
+                  {tf === '1Y' ? (i18n.language.startsWith('pl') ? '1R' : '1Y') : tf}
                 </button>
               );
             })}
@@ -701,7 +330,7 @@ export const PortfolioChart: React.FC<PortfolioChartProps> = ({
 
           <button
             type="button"
-            onClick={() => chartRef.current?.timeScale().fitContent()}
+            onClick={fitContent}
             title={t('chart.fitContent')}
             className="p-1 rounded-lg bg-zinc-900 border border-zinc-800 text-zinc-400 hover:text-zinc-200 transition cursor-pointer"
           >
@@ -719,350 +348,50 @@ export const PortfolioChart: React.FC<PortfolioChartProps> = ({
         </div>
       </div>
 
-      {!isCollapsed && showAttribution && (hoveredPoint && !hoveredPoint.isFuture ? hoveredPoint : latestHistoricalPoint)?.contributors && ((hoveredPoint && !hoveredPoint.isFuture ? hoveredPoint : latestHistoricalPoint)?.contributors?.length ?? 0) > 0 && (() => {
-        const activePt = (hoveredPoint && !hoveredPoint.isFuture ? hoveredPoint : latestHistoricalPoint)!;
-        const contribs = activePt.contributors || [];
-        return (
-          <div className="px-4 py-2 bg-[#0c0e14] border-b border-zinc-800/80 text-xs font-mono">
-            <div className="flex items-center justify-between text-[11px] mb-1.5">
-              <span className="text-zinc-400 font-medium">
-                {t('chart.profitAttributionBreakdown')} ({activePt.dateLabel}):
-              </span>
-              <span className={`font-semibold ${activePt.profit >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
-                {metricMode === 'PLN'
-                  ? `${formatSignedNumberWithSpaces(activePt.profit)} ${baseCurrency}`
-                  : `${activePt.returnPct >= 0 ? '+' : ''}${activePt.returnPct.toFixed(2)}%`}
-              </span>
-            </div>
-
-            <div className="h-1.5 w-full rounded-full overflow-hidden flex bg-zinc-800/80 mb-2">
-              {contribs.map((c, idx) => {
-                const width = c.sharePct === 0 ? 0 : Math.min(100, Math.max(2, Math.abs(c.sharePct)));
-                const color = CONTRIBUTOR_COLORS[idx % CONTRIBUTOR_COLORS.length];
-                return (
-                  <div
-                    key={c.key}
-                    style={{ width: `${width}%`, backgroundColor: color }}
-                    title={`${getContributorLabel(c)}: ${c.profit >= 0 ? '+' : ''}${c.profit} ${baseCurrency} (${c.sharePct >= 0 ? '+' : ''}${c.sharePct}%)`}
-                    className="h-full transition-all"
-                  />
-                );
-              })}
-            </div>
-
-            <div className="flex flex-wrap items-center gap-1.5">
-              {contribs.map((c, idx) => {
-                const color = CONTRIBUTOR_COLORS[idx % CONTRIBUTOR_COLORS.length];
-                return (
-                  <div
-                    key={c.key}
-                    className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-zinc-900/90 border border-zinc-800 text-[10px]"
-                  >
-                    <span className="w-2 h-2 rounded-full shrink-0" style={{ backgroundColor: color }} />
-                    <span className="font-semibold text-zinc-200">{getContributorLabel(c)}</span>
-                    <span className={c.profit >= 0 ? 'text-emerald-400 font-medium' : 'text-rose-400 font-medium'}>
-                      {metricMode === 'PLN'
-                        ? `${formatSignedNumberWithSpaces(c.profit)} ${baseCurrency}`
-                        : `${c.returnContributionPct >= 0 ? '+' : ''}${c.returnContributionPct.toFixed(2)} pp`}
-                    </span>
-                    <span className="text-zinc-500">
-                      ({c.sharePct >= 0 ? '+' : ''}{c.sharePct.toFixed(1)}%)
-                    </span>
-                  </div>
-                );
-              })}
-            </div>
-          </div>
-        );
-      })()}
+      {!isCollapsed && showAttribution && activeAttributionPoint && (
+        <PortfolioChartAttribution
+          activePoint={activeAttributionPoint}
+          baseCurrency={baseCurrency}
+          metricMode={metricMode}
+        />
+      )}
 
       {!isCollapsed && isProjectionActive && (
-        <div className="px-4 py-2 bg-[#0e1017] border-b border-zinc-800/80 text-xs font-mono flex flex-wrap items-center justify-between gap-3">
-          <div className="flex flex-wrap items-center gap-3 sm:gap-4">
-            <div className="flex items-center gap-1.5">
-              <span className="text-zinc-400 text-[11px] font-medium select-none">{t('chart.contributionLabel')}</span>
-              <div className="flex items-center rounded-md border border-zinc-750 bg-zinc-900/90 focus-within:border-sky-500 focus-within:ring-1 focus-within:ring-sky-500/20 transition">
-                <input
-                  type="number"
-                  min="0"
-                  step="100"
-                  value={monthlyDca === 0 ? '' : monthlyDca}
-                  placeholder="0"
-                  onChange={(e) => onMonthlyDcaChange(Math.max(0, Number(e.target.value) || 0))}
-                  className="w-20 bg-transparent px-2 py-1 text-xs font-mono font-medium text-white text-right focus:outline-none [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
-                />
-                <span className="px-1.5 py-1 text-[10px] text-zinc-400 font-semibold border-l border-zinc-800 select-none">
-                  {t('monteCarlo.perMonth', { currency: baseCurrency })}
-                </span>
-              </div>
-            </div>
+        <PortfolioChartControls
+          baseCurrency={baseCurrency}
+          monthlyDca={monthlyDca}
+          onMonthlyDcaChange={onMonthlyDcaChange}
+          dcaBondShare={dcaBondShare}
+          onDcaBondShareChange={onDcaBondShareChange}
+          targetGoal={targetGoal}
+          onTargetGoalChange={onTargetGoalChange}
+          expectedEtfReturn={expectedEtfReturn}
+          onExpectedEtfReturnChange={onExpectedEtfReturnChange}
+          bondRollover={bondRollover}
+          onBondRolloverChange={onBondRolloverChange}
+          empiricalStats={empiricalStats}
+        />
+      )}
 
-            <div className="flex items-center gap-1.5">
-              <span className="text-zinc-400 text-[11px] font-medium select-none">{t('chart.allocationLabel')}</span>
-              <div className="flex items-center gap-2 bg-zinc-900/90 border border-zinc-750 px-2.5 py-1 rounded-md">
-                <button
-                  type="button"
-                  onClick={() => onDcaBondShareChange(1)}
-                  title={t('chart.bonds100')}
-                  className="text-amber-400 hover:text-amber-300 transition font-semibold text-[10px] min-w-[48px] text-right select-none"
-                >
-                  {t('chart.bondsPct', { pct: Math.round(dcaBondShare * 100) })}
-                </button>
-                <input
-                  type="range"
-                  min="0"
-                  max="100"
-                  step="5"
-                  value={Math.round((1 - dcaBondShare) * 100)}
-                  onChange={(e) => onDcaBondShareChange(Number(((100 - Number(e.target.value)) / 100).toFixed(2)))}
-                  style={{
-                    background: 'linear-gradient(to right, rgb(245 158 11 / 0.4), rgb(16 185 129 / 0.4))',
-                  }}
-                  className="w-20 sm:w-24 accent-sky-400 cursor-pointer h-1.5 rounded-lg appearance-none"
-                />
-                <button
-                  type="button"
-                  onClick={() => onDcaBondShareChange(0)}
-                  title={t('chart.etf100')}
-                  className="text-emerald-400 hover:text-emerald-300 transition font-semibold text-[10px] min-w-[48px] select-none text-left"
-                >
-                  ETF {Math.round((1 - dcaBondShare) * 100)}%
-                </button>
-              </div>
-            </div>
-
-            <div className="flex items-center gap-1.5">
-              <div className="flex items-center rounded-md border border-purple-900/60 bg-zinc-900/90 focus-within:border-purple-400 transition">
-                <span className="pl-2 pr-1 text-[11px] text-purple-300 flex items-center gap-1.5 select-none font-medium">
-                  <Target className="w-3.5 h-3.5 text-purple-400" /> {t('chart.targetLabel')}
-                </span>
-                <input
-                  type="text"
-                  inputMode="numeric"
-                  value={targetGoal != null ? formatNumberWithSpaces(targetGoal) : ''}
-                  placeholder={t('chart.targetOptional')}
-                  onChange={(e) => {
-                    const digits = e.target.value.replace(/\D/g, '');
-                    onTargetGoalChange?.(digits ? Number(digits) : null);
-                  }}
-                  className="w-24 bg-transparent px-1.5 py-1 text-xs font-mono font-medium text-white text-right focus:outline-none"
-                />
-                <span className="px-1.5 py-1 text-[10px] text-purple-300 font-semibold border-l border-purple-900/60 select-none">
-                  {baseCurrency}
-                </span>
-                {targetGoal && (
-                  <button
-                    type="button"
-                    onClick={() => onTargetGoalChange?.(null)}
-                    title={t('chart.removeTarget')}
-                    className="px-1.5 py-1 text-zinc-400 hover:text-white transition cursor-pointer"
-                  >
-                    <X className="w-3 h-3" />
-                  </button>
-                )}
-              </div>
-            </div>
-
-            <div className="flex items-center gap-1.5">
-              <span className="text-zinc-400 text-[11px] font-medium select-none">{t('chart.etfCagrLabel')}</span>
-              <div className="relative">
-                <select
-                  value={expectedEtfReturn}
-                  onChange={(e) => onExpectedEtfReturnChange(Number(e.target.value))}
-                  className="bg-zinc-900/90 border border-zinc-750 text-emerald-400 font-bold text-xs rounded-md px-2 py-1 pr-6 focus:outline-none focus:border-emerald-500 cursor-pointer appearance-none"
-                >
-                  {empiricalStats && empiricalStats.weightedReturn != null && (
-                    <option
-                      value={Math.round(empiricalStats.weightedReturn * 1000) / 10}
-                      className="bg-zinc-900 text-zinc-200"
-                    >
-                      {(empiricalStats.weightedReturn * 100).toFixed(1)}% ({t('chart.portfolioCagr')})
-                    </option>
-                  )}
-                  {(!empiricalStats || empiricalStats.weightedReturn == null || Math.round(empiricalStats.weightedReturn * 1000) / 10 !== expectedEtfReturn) &&
-                    ![6.0, 7.5, 8.5, 10.0, 12.0].includes(expectedEtfReturn) && (
-                      <option value={expectedEtfReturn} className="bg-zinc-900 text-zinc-200">
-                        {expectedEtfReturn.toFixed(1)}% ({t('chart.customCagr')})
-                      </option>
-                    )}
-                  <option value={6.0} className="bg-zinc-900 text-zinc-200">6.0% ({t('chart.conservativeCagr')})</option>
-                  <option value={7.5} className="bg-zinc-900 text-zinc-200">7.5% ({t('chart.balancedCagr')})</option>
-                  <option value={8.5} className="bg-zinc-900 text-zinc-200">8.5% ({t('chart.msciWorldCagr')})</option>
-                  <option value={10.0} className="bg-zinc-900 text-zinc-200">10.0% ({t('chart.sp500Cagr')})</option>
-                  <option value={12.0} className="bg-zinc-900 text-zinc-200">12.0% ({t('chart.dynamicCagr')})</option>
-                </select>
-                <ChevronDown className="w-3 h-3 text-zinc-400 absolute right-1.5 top-1/2 -translate-y-1/2 pointer-events-none" />
-              </div>
-            </div>
-
-            {empiricalStats && (
-              <div className="px-2 py-0.5 rounded-md bg-zinc-900 border border-zinc-750 text-[10px] text-zinc-300 font-mono flex items-center gap-1.5 select-none">
-                <span>ETF:</span>
-                {empiricalStats.weightedTer != null && (
-                  <span className="text-zinc-400">TER {(empiricalStats.weightedTer * 100).toFixed(2)}%</span>
-                )}
-                {empiricalStats.weightedVolatility != null && (
-                  <>
-                    <span>·</span>
-                    <span className="text-zinc-400">σ {(empiricalStats.weightedVolatility * 100).toFixed(1)}%</span>
-                  </>
-                )}
-                {empiricalStats.weightedPe != null && (
-                  <>
-                    <span>·</span>
-                    <span className="text-zinc-400">P/E {empiricalStats.weightedPe.toFixed(1)}</span>
-                  </>
-                )}
-              </div>
-            )}
-          </div>
-
-          <div className="relative">
-            <button
-              type="button"
-              onClick={() => setShowAdvanced(!showAdvanced)}
-              className={`px-2 py-1 rounded-md border text-[11px] flex items-center gap-1.5 transition cursor-pointer ${
-                showAdvanced
-                  ? 'bg-zinc-800 border-zinc-600 text-white'
-                  : 'bg-zinc-900/90 border-zinc-750 text-zinc-400 hover:text-zinc-200'
-              }`}
-              title={t('chart.advancedTooltip')}
-            >
-              <Settings2 className="w-3 h-3" />
-              <span className="text-[10px]">{t('chart.advancedAssumptions')}</span>
-            </button>
-
-            {showAdvanced && (
-              <div className="absolute right-0 top-full mt-1.5 z-40 bg-zinc-900 border border-zinc-750 rounded-lg p-3 shadow-2xl text-xs font-mono min-w-[260px]">
-                <span className="text-[10px] text-zinc-400 font-semibold uppercase tracking-wider block mb-2">
-                  {t('chart.advancedOptions')}
-                </span>
-                <label className="flex items-center gap-2 cursor-pointer select-none">
-                  <input
-                    type="checkbox"
-                    checked={bondRollover}
-                    onChange={(e) => onBondRolloverChange(e.target.checked)}
-                    className="sr-only"
-                  />
-                  <div
-                    className={`w-3.5 h-3.5 rounded border flex items-center justify-center transition ${
-                      bondRollover
-                        ? 'bg-sky-500 border-sky-400 text-zinc-950'
-                        : 'bg-zinc-950 border-zinc-700'
-                    }`}
-                  >
-                    {bondRollover && <Check className="w-2.5 h-2.5 stroke-[3]" />}
-                  </div>
-                  <span className="text-[11px] text-zinc-200">{t('chart.bondRolloverLabel')}</span>
-                </label>
-                <p className="text-[10px] text-zinc-500 mt-1 leading-normal">
-                  {t('chart.bondRolloverHelp')}
-                </p>
-              </div>
-            )}
-          </div>
+      {!isCollapsed && isProjectionActive && proxyWarnings && proxyWarnings.length > 0 && (
+        <div
+          role="status"
+          className="px-4 py-1.5 bg-amber-500/10 border-b border-amber-500/30 text-[11px] font-mono text-amber-200 flex items-center gap-2"
+        >
+          <Info className="w-3.5 h-3.5 shrink-0 text-amber-400" />
+          <span>{proxyWarnings.join(' • ')}</span>
         </div>
       )}
 
       {!isCollapsed && (
         <div className="p-4 pt-2 pb-5 bg-[#10121a] relative">
           {hoveredPoint && (
-            <div className="absolute top-4 left-4 z-30 pointer-events-none bg-zinc-950/95 border border-zinc-750/90 rounded-lg p-2.5 shadow-2xl text-xs font-mono backdrop-blur-md min-w-[230px]">
-              <div className="flex items-center justify-between border-b border-zinc-800 pb-1 mb-1.5 text-zinc-300">
-                <span className="font-semibold text-sky-400">
-                  {hoveredPoint.isFuture ? `${t('chart.projection')} ` : ''}{hoveredPoint.dateLabel}
-                </span>
-                {hoveredPoint.isFuture && (
-                  <span className="text-[10px] text-zinc-500 uppercase">Monte Carlo</span>
-                )}
-              </div>
-
-              <div className="space-y-1 text-[11px]">
-                <div className="flex justify-between items-center text-white">
-                  <span className="text-zinc-400">
-                    {hoveredPoint.isFuture ? t('chart.medianLabel') : t('chart.portfolioValuation')}
-                  </span>
-                  <span className="font-bold text-sm text-sky-300">
-                    {metricMode === 'PLN'
-                      ? `${formatNumberWithSpaces(hoveredPoint.valuation)} ${baseCurrency}`
-                      : `${hoveredPoint.returnPct >= 0 ? '+' : ''}${hoveredPoint.returnPct.toFixed(2)}%`}
-                  </span>
-                </div>
-
-                <div className="flex justify-between items-center text-zinc-400">
-                  <span>{t('chart.ownContributionDca')}</span>
-                  <span className="font-mono text-zinc-300">
-                    {formatNumberWithSpaces(hoveredPoint.cost)} {baseCurrency}
-                  </span>
-                </div>
-
-                <div className="flex justify-between items-center pt-1 border-t border-zinc-800/60">
-                  <span className="text-zinc-400">{t('chart.netProfitLabel')}</span>
-                  <span
-                    className={`font-semibold ${
-                      hoveredPoint.profit >= 0 ? 'text-emerald-400' : 'text-rose-400'
-                    }`}
-                  >
-                    {formatSignedNumberWithSpaces(hoveredPoint.profit)} {baseCurrency} (
-                    {hoveredPoint.returnPct >= 0 ? '+' : ''}
-                    {hoveredPoint.returnPct.toFixed(2)}%)
-                  </span>
-                </div>
-
-                {showAttribution && !hoveredPoint.isFuture && hoveredPoint.contributors && hoveredPoint.contributors.length > 0 && (
-                  <div className="pt-1.5 mt-1 border-t border-zinc-800/80 space-y-1 text-[10px]">
-                    <div className="text-[10px] text-zinc-400 font-medium pb-0.5 border-b border-zinc-800/40">
-                      {t('chart.profitAttributionBreakdown')}:
-                    </div>
-                    {hoveredPoint.contributors
-                      .map((c, originalIdx) => ({ c, originalIdx }))
-                      .sort((a, b) => b.c.profit - a.c.profit)
-                      .map(({ c, originalIdx }) => {
-                        const color = CONTRIBUTOR_COLORS[originalIdx % CONTRIBUTOR_COLORS.length];
-                        return (
-                          <div key={c.key} className="flex justify-between items-center gap-2">
-                            <div className="flex items-center gap-1.5 min-w-0">
-                              <span className="w-1.5 h-1.5 rounded-full shrink-0" style={{ backgroundColor: color }} />
-                              <span className="truncate text-zinc-300">{getContributorLabel(c)}</span>
-                            </div>
-                            <div className="flex items-center gap-1 font-mono shrink-0">
-                              <span className={c.profit >= 0 ? 'text-emerald-400' : 'text-rose-400'}>
-                                {metricMode === 'PLN'
-                                  ? `${formatSignedNumberWithSpaces(c.profit)} ${baseCurrency}`
-                                  : `${c.returnContributionPct >= 0 ? '+' : ''}${c.returnContributionPct.toFixed(2)} pp`}
-                              </span>
-                              <span className="text-zinc-500">
-                                ({c.sharePct >= 0 ? '+' : ''}{c.sharePct.toFixed(1)}%)
-                              </span>
-                            </div>
-                          </div>
-                        );
-                      })}
-                  </div>
-                )}
-
-                {hoveredPoint.isFuture && (
-                  <div className="pt-1.5 mt-1 border-t border-zinc-800/80 space-y-0.5 text-[10px]">
-                    <div className="flex justify-between text-sky-300/80">
-                      <span>{t('chart.bullMarket')}</span>
-                      <span className="font-mono font-medium">
-                        {metricMode === 'PLN'
-                          ? `${formatNumberWithSpaces(hoveredPoint.netP90 ?? 0)} ${baseCurrency}`
-                          : `${(hoveredPoint.returnP90 ?? hoveredPoint.returnPct) >= 0 ? '+' : ''}${(hoveredPoint.returnP90 ?? hoveredPoint.returnPct).toFixed(2)}%`}
-                      </span>
-                    </div>
-                    <div className="flex justify-between text-sky-400/70">
-                      <span>{t('chart.bearMarket')}</span>
-                      <span className="font-mono font-medium">
-                        {metricMode === 'PLN'
-                          ? `${formatNumberWithSpaces(hoveredPoint.netP10 ?? 0)} ${baseCurrency}`
-                          : `${(hoveredPoint.returnP10 ?? hoveredPoint.returnPct) >= 0 ? '+' : ''}${(hoveredPoint.returnP10 ?? hoveredPoint.returnPct).toFixed(2)}%`}
-                      </span>
-                    </div>
-                  </div>
-                )}
-              </div>
-            </div>
+            <PortfolioChartTooltip
+              point={hoveredPoint}
+              baseCurrency={baseCurrency}
+              metricMode={metricMode}
+              showAttribution={showAttribution}
+            />
           )}
 
           <div className="relative w-full">
@@ -1099,7 +428,7 @@ export const PortfolioChart: React.FC<PortfolioChartProps> = ({
                     return (
                       <div key={c.key} className="flex items-center gap-1.5">
                         <span className="w-2 h-2 rounded-full inline-block" style={{ backgroundColor: color }}></span>
-                        <span>{getContributorLabel(c)}</span>
+                        <span>{c.label}</span>
                       </div>
                     );
                   })}
@@ -1131,7 +460,7 @@ export const PortfolioChart: React.FC<PortfolioChartProps> = ({
                 </div>
               )}
 
-              {targetGoal && metricMode === 'PLN' && !showAttribution && (
+              {targetGoal != null && targetGoal > 0 && metricMode === 'PLN' && !showAttribution && (
                 <div className="flex items-center gap-1.5">
                   <span className="w-2.5 h-0.5 border-b border-purple-400 border-dashed inline-block"></span>
                   <span className="text-purple-300 font-medium">{t('chart.targetGoalLabel', { val: formatNumberWithSpaces(targetGoal / 1000), currency: baseCurrency })}</span>

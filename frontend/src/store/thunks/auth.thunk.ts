@@ -1,8 +1,7 @@
 import { createAsyncThunk } from '@reduxjs/toolkit';
-import { isAxiosError } from 'axios';
 import type { AuthResponse, LoginRequest, RegisterRequest, UserProfileResponse } from '../../types/auth.ts';
 import { authService } from '../../services/auth.service.ts';
-import { setAccessToken } from '../../api/client.ts';
+import { extractApiErrorMessage, refreshAuthResponse, setAccessToken } from '../../api/client.ts';
 
 function toAuthPayload(authData: AuthResponse): { accessToken: string; user: UserProfileResponse } {
   setAccessToken(authData.accessToken);
@@ -17,10 +16,7 @@ export const loginThunk = createAsyncThunk<
   try {
     return toAuthPayload(await authService.login(credentials));
   } catch (error) {
-    if (isAxiosError<{ message?: string }>(error) && error.response?.data?.message) {
-      return rejectWithValue(error.response.data.message);
-    }
-    return rejectWithValue('auth.errors.defaultLoginError');
+    return rejectWithValue(extractApiErrorMessage(error, 'auth.errors.defaultLoginError', true));
   }
 });
 
@@ -32,10 +28,7 @@ export const registerThunk = createAsyncThunk<
   try {
     return toAuthPayload(await authService.register(credentials));
   } catch (error) {
-    if (isAxiosError<{ message?: string }>(error) && error.response?.data?.message) {
-      return rejectWithValue(error.response.data.message);
-    }
-    return rejectWithValue('auth.errors.defaultRegisterError');
+    return rejectWithValue(extractApiErrorMessage(error, 'auth.errors.defaultRegisterError', true));
   }
 });
 
@@ -45,7 +38,7 @@ export const checkAuthThunk = createAsyncThunk<
   { rejectValue: null }
 >('auth/checkAuth', async (_, { rejectWithValue }) => {
   try {
-    return toAuthPayload(await authService.refreshToken());
+    return toAuthPayload(await refreshAuthResponse());
   } catch {
     setAccessToken(null);
     return rejectWithValue(null);

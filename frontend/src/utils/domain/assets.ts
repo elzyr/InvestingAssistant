@@ -1,39 +1,97 @@
 import type { InstrumentResponse } from '../../types/instrument.ts';
 
-export function getBondFamily(
-  seriesOrSymbol?: string | null,
-  termMonths?: number | null,
-  bondMargin?: number | null
-): string {
-  if (seriesOrSymbol) {
-    const s = seriesOrSymbol.toUpperCase();
-    for (const prefix of ['TOS', 'COI', 'ROR', 'DOR', 'OTS', 'EDO']) {
-      if (s.includes(prefix)) {
-        return prefix;
-      }
-    }
-  }
-  if (termMonths === 36) return 'TOS';
-  if (termMonths === 48) return 'COI';
-  if (termMonths === 12) return 'ROR';
-  if (termMonths === 24) return 'DOR';
-  if (termMonths === 3) return 'OTS';
-  if (termMonths === 120) return 'EDO';
-  if (bondMargin != null && bondMargin > 0) return 'EDO';
-  if (bondMargin == null || bondMargin === 0) return 'TOS';
-  if (seriesOrSymbol && seriesOrSymbol.toUpperCase().startsWith('PL_BOND')) return 'TOS';
-  return 'EDO';
+export interface BondFamilySpec {
+  family: string;
+  tenureMonths: number;
+  interestType: 'FIXED' | 'INFLATION';
+  nameKey: string;
+  descriptionKey: string;
+  termOptionKey: string;
 }
 
-export type EtfCategory = 'SP500' | 'ALL_WORLD' | 'DEVELOPED' | 'EMERGING' | 'OTHER';
+export const BOND_FAMILY_SPECS: readonly BondFamilySpec[] = [
+  {
+    family: 'OTS',
+    tenureMonths: 3,
+    interestType: 'FIXED',
+    nameKey: 'dashboard.threeMonth',
+    descriptionKey: 'dashboard.fixedRate',
+    termOptionKey: 'transactionModal.termMonthsOptionOTS',
+  },
+  {
+    family: 'ROR',
+    tenureMonths: 12,
+    interestType: 'FIXED',
+    nameKey: 'dashboard.oneYear',
+    descriptionKey: 'dashboard.variableRate',
+    termOptionKey: 'transactionModal.termMonthsOptionROR',
+  },
+  {
+    family: 'DOR',
+    tenureMonths: 24,
+    interestType: 'FIXED',
+    nameKey: 'dashboard.twoYear',
+    descriptionKey: 'dashboard.variableRate',
+    termOptionKey: 'transactionModal.termMonthsOptionDOR',
+  },
+  {
+    family: 'TOS',
+    tenureMonths: 36,
+    interestType: 'FIXED',
+    nameKey: 'dashboard.threeYear',
+    descriptionKey: 'dashboard.fixedRate',
+    termOptionKey: 'transactionModal.termMonthsOptionTOS',
+  },
+  {
+    family: 'COI',
+    tenureMonths: 48,
+    interestType: 'INFLATION',
+    nameKey: 'dashboard.fourYear',
+    descriptionKey: 'dashboard.inflationIndexed',
+    termOptionKey: 'transactionModal.termMonthsOptionCOI',
+  },
+  {
+    family: 'ROS',
+    tenureMonths: 72,
+    interestType: 'INFLATION',
+    nameKey: 'dashboard.sixYear',
+    descriptionKey: 'dashboard.inflationIndexed',
+    termOptionKey: 'transactionModal.termMonthsOptionROS',
+  },
+  {
+    family: 'EDO',
+    tenureMonths: 120,
+    interestType: 'INFLATION',
+    nameKey: 'dashboard.tenYear',
+    descriptionKey: 'dashboard.antiInflation',
+    termOptionKey: 'transactionModal.termMonthsOptionEDO',
+  },
+  {
+    family: 'ROD',
+    tenureMonths: 144,
+    interestType: 'INFLATION',
+    nameKey: 'dashboard.twelveYear',
+    descriptionKey: 'dashboard.inflationIndexed',
+    termOptionKey: 'transactionModal.termMonthsOptionROD',
+  },
+] as const;
 
-export interface EtfProfile {
-  symbol: string;
-  name: string;
-  ter: number;
-  whtDrag: number;
-  volatility: number;
-  category: EtfCategory;
+export const BOND_SPEC_BY_FAMILY: Record<string, BondFamilySpec> = Object.fromEntries(
+  BOND_FAMILY_SPECS.map((spec) => [spec.family, spec])
+);
+
+export const BOND_SPEC_BY_TERM: Record<number, BondFamilySpec> = Object.fromEntries(
+  BOND_FAMILY_SPECS.map((spec) => [spec.tenureMonths, spec])
+);
+
+export function isInflationBondFamily(family?: string | null): boolean {
+  return family ? BOND_SPEC_BY_FAMILY[family.toUpperCase()]?.interestType === 'INFLATION' : false;
+}
+
+export function findKnownBondFamily(text?: string | null): string | null {
+  if (!text) return null;
+  const upper = text.toUpperCase();
+  return BOND_FAMILY_SPECS.find((spec) => upper.includes(spec.family))?.family ?? null;
 }
 
 export function isBondInstrument(inst?: { type?: string; symbol?: string } | null): boolean {
@@ -60,73 +118,32 @@ export function isBondItem(
       (inst &&
         (inst.type === 'BOND' ||
           inst.symbol.startsWith('PL_BOND') ||
-          inst.symbol.includes('EDO') ||
-          inst.symbol.includes('TOS') ||
-          inst.symbol.includes('COI') ||
-          inst.symbol.includes('ROR') ||
-          inst.symbol.includes('DOR') ||
-          inst.symbol.includes('OTS')))
+          BOND_FAMILY_SPECS.some((spec) => inst.symbol.includes(spec.family))))
   );
 }
 
-export function detectEtfProfile(symbol: string, name: string): EtfProfile {
-  const sym = (symbol || '').toUpperCase();
-  const nm = (name || '').toUpperCase();
+export function parseBondSeriesMetadata(val: string): {
+  tenure: number;
+  interestType: 'FIXED' | 'INFLATION';
+  issueDate: string;
+} | null {
+  const match = val.toUpperCase().trim().match(/^([A-Z]{3})(\d{2})(\d{2})$/);
+  if (!match) return null;
 
-  if (
-    sym.includes('SXR8') ||
-    sym.includes('CSSPX') ||
-    sym.includes('VUAA') ||
-    sym.includes('VUSA') ||
-    sym.includes('SPY') ||
-    sym.includes('VOO') ||
-    nm.includes('S&P 500') ||
-    nm.includes('SP 500')
-  ) {
-    return { symbol, name, ter: 0.07, whtDrag: 0.23, volatility: 15.5, category: 'SP500' };
-  }
+  const [, prefix, monthStr, yearStr] = match;
+  const spec = BOND_SPEC_BY_FAMILY[prefix];
+  if (!spec) return null;
 
-  if (
-    sym.includes('VWCE') ||
-    sym.includes('VWRA') ||
-    sym.includes('ISAC') ||
-    sym.includes('SSAC') ||
-    nm.includes('ALL-WORLD') ||
-    nm.includes('ALL WORLD') ||
-    nm.includes('ACWI')
-  ) {
-    return { symbol, name, ter: 0.22, whtDrag: 0.20, volatility: 14.8, category: 'ALL_WORLD' };
-  }
+  const month = Math.min(12, Math.max(1, parseInt(monthStr, 10)));
+  const totalMaturityMonths = (2000 + parseInt(yearStr, 10)) * 12 + (month - 1);
+  const totalIssueMonths = totalMaturityMonths - spec.tenureMonths;
+  const issueYear = Math.floor(totalIssueMonths / 12);
+  const issueMonth = (totalIssueMonths % 12) + 1;
+  const mm = String(issueMonth).padStart(2, '0');
 
-  if (
-    sym.includes('EUNL') ||
-    sym.includes('IWDA') ||
-    sym.includes('SWDA') ||
-    sym.includes('XDWD') ||
-    nm.includes('MSCI WORLD') ||
-    nm.includes('DEVELOPED')
-  ) {
-    return { symbol, name, ter: 0.20, whtDrag: 0.22, volatility: 14.6, category: 'DEVELOPED' };
-  }
-
-  if (
-    sym.includes('AMEM') ||
-    sym.includes('EIMI') ||
-    sym.includes('EMIM') ||
-    sym.includes('IS3N') ||
-    sym.includes('VFEM') ||
-    nm.includes('EMERGING')
-  ) {
-    return { symbol, name, ter: 0.18, whtDrag: 0.25, volatility: 18.5, category: 'EMERGING' };
-  }
-
-  return { symbol, name, ter: 0.20, whtDrag: 0.25, volatility: 15.0, category: 'OTHER' };
+  return {
+    tenure: spec.tenureMonths,
+    interestType: spec.interestType,
+    issueDate: `${issueYear}-${mm}-01`,
+  };
 }
-
-export const CORRELATION_MATRIX: Record<EtfCategory, Record<EtfCategory, number>> = {
-  SP500: { SP500: 1.00, ALL_WORLD: 0.96, DEVELOPED: 0.97, EMERGING: 0.72, OTHER: 0.85 },
-  ALL_WORLD: { SP500: 0.96, ALL_WORLD: 1.00, DEVELOPED: 0.98, EMERGING: 0.82, OTHER: 0.88 },
-  DEVELOPED: { SP500: 0.97, ALL_WORLD: 0.98, DEVELOPED: 1.00, EMERGING: 0.74, OTHER: 0.86 },
-  EMERGING: { SP500: 0.72, ALL_WORLD: 0.82, DEVELOPED: 0.74, EMERGING: 1.00, OTHER: 0.75 },
-  OTHER: { SP500: 0.85, ALL_WORLD: 0.88, DEVELOPED: 0.86, EMERGING: 0.75, OTHER: 1.00 },
-};

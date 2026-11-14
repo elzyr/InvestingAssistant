@@ -10,8 +10,6 @@ import java.math.BigDecimal;
 import java.time.LocalDateTime;
 import java.util.UUID;
 import pl.investassist.common.enums.Currency;
-import pl.investassist.portfolio.entity.Portfolio;
-import pl.investassist.portfolio.entity.Transaction;
 import pl.investassist.portfolio.enums.TransactionType;
 
 public record CreateTransactionRequest(
@@ -28,7 +26,9 @@ public record CreateTransactionRequest(
     @PositiveOrZero @Digits(integer = 6, fraction = 4) BigDecimal bondMargin,
     @Positive Integer termMonths,
     @Positive @Digits(integer = 34, fraction = 4) BigDecimal baseAmount,
-    @Positive @Digits(integer = 4, fraction = 6) BigDecimal exchangeRateToBase) {
+    @Positive @Digits(integer = 4, fraction = 8) BigDecimal exchangeRateToBase,
+    @Positive @Digits(integer = 4, fraction = 8) BigDecimal instrumentToTxRate,
+    @jakarta.validation.constraints.DecimalMin("0.00") @jakarta.validation.constraints.DecimalMax("100.00") @Digits(integer = 3, fraction = 2) BigDecimal withholdingTaxPct) {
 
   public CreateTransactionRequest(
       UUID instrumentId,
@@ -56,25 +56,73 @@ public record CreateTransactionRequest(
         bondMargin,
         termMonths,
         baseAmount,
+        null,
+        null,
         null);
   }
 
-  public Transaction toEntity(Portfolio portfolio) {
-    Transaction transaction = new Transaction();
-    transaction.setPortfolio(portfolio);
-    transaction.setInstrumentId(instrumentId);
-    transaction.setTransactionType(transactionType);
-    transaction.setQuantity(quantity);
-    transaction.setPrice(price);
-    transaction.setCommission(commission);
-    transaction.setCurrency(currency);
-    transaction.setExecutedAt(executedAt != null ? executedAt : LocalDateTime.now());
-    transaction.setSeriesName(seriesName);
-    transaction.setBondRate(bondRate);
-    transaction.setBondMargin(bondMargin);
-    transaction.setTermMonths(termMonths);
-    transaction.setBaseAmount(baseAmount);
-    transaction.setExchangeRateToBase(exchangeRateToBase);
-    return transaction;
+  public CreateTransactionRequest(
+      UUID instrumentId,
+      TransactionType transactionType,
+      BigDecimal price,
+      BigDecimal quantity,
+      BigDecimal commission,
+      Currency currency,
+      LocalDateTime executedAt,
+      String seriesName,
+      BigDecimal bondRate,
+      BigDecimal bondMargin,
+      Integer termMonths,
+      BigDecimal baseAmount,
+      BigDecimal exchangeRateToBase) {
+    this(
+        instrumentId,
+        transactionType,
+        price,
+        quantity,
+        commission,
+        currency,
+        executedAt,
+        seriesName,
+        bondRate,
+        bondMargin,
+        termMonths,
+        baseAmount,
+        exchangeRateToBase,
+        null,
+        null);
+  }
+
+  public CreateTransactionRequest(
+      UUID instrumentId,
+      TransactionType transactionType,
+      BigDecimal price,
+      BigDecimal quantity,
+      BigDecimal commission,
+      Currency currency,
+      LocalDateTime executedAt,
+      String seriesName,
+      BigDecimal bondRate,
+      BigDecimal bondMargin,
+      Integer termMonths,
+      BigDecimal baseAmount,
+      BigDecimal exchangeRateToBase,
+      BigDecimal instrumentToTxRate) {
+    this(
+        instrumentId,
+        transactionType,
+        price,
+        quantity,
+        commission,
+        currency,
+        executedAt,
+        seriesName,
+        bondRate,
+        bondMargin,
+        termMonths,
+        baseAmount,
+        exchangeRateToBase,
+        instrumentToTxRate,
+        null);
   }
 }

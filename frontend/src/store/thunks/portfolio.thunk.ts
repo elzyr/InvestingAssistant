@@ -1,167 +1,215 @@
-import i18n from '../../i18n/config.ts';
 import { createAsyncThunk } from '@reduxjs/toolkit';
-import { isAxiosError } from 'axios';
+import { extractApiErrorMessage } from '../../api/client.ts';
 import { portfolioService } from '../../services/portfolio.service.ts';
 import { instrumentService } from '../../services/instrument.service.ts';
-import { marketService, type PriceQuote } from '../../services/market.service.ts';
+import { marketService } from '../../services/market.service.ts';
 import type {
   PortfolioResponse,
   CreatePortfolioRequest,
-  PositionResponse,
   TransactionResponse,
   CreateTransactionRequest,
 } from '../../types/portfolio.ts';
+import type {
+  AnnualReportResponse,
+  PortfolioTimelineResponse,
+  PortfolioValuationResponse,
+  ProjectionRequestPayload,
+  ProjectionResponse,
+} from '../../types/valuation.types.ts';
+import type { TaxMode, TimeframeOption } from '../../types/dashboard.ts';
 import type { InstrumentResponse } from '../../types/instrument.ts';
+import type { HoldingItem, PortfolioStatsResponse } from '../../types/analytics.types.ts';
 import type { Currency } from '../../types/auth.ts';
-import type { RootState, AppDispatch } from '../store.ts';
+import type { RootState } from '../store.ts';
 
-function getErrorMessage(error: unknown, fallback: string): string {
-  if (isAxiosError<{ message?: string }>(error)) {
-    return error.response?.data?.message || error.message || fallback;
+const CACHE_TTL_MS = 60000;
+
+export function valuationKey(portfolioId: string, taxMode: TaxMode): string {
+  return `${portfolioId}:${taxMode}`;
+}
+
+export function timelineKey(
+  portfolioId: string,
+  timeframe: TimeframeOption,
+  taxMode: TaxMode
+): string {
+  return `${portfolioId}:${timeframe}:${taxMode}`;
+}
+
+export function reportKey(portfolioId: string, year: number, taxMode: TaxMode): string {
+  return `${portfolioId}:${year}:${taxMode}`;
+}
+
+let inFlightInstruments: Promise<InstrumentResponse[]> | null = null;
+const inFlightTransactions = new Map<string, number>();
+
+function revisionFlightKey(key: string, revision: number): string {
+  return `${key}@${revision}`;
+}
+
+function loadInstrumentsShared(): Promise<InstrumentResponse[]> {
+  if (!inFlightInstruments) {
+    inFlightInstruments = instrumentService.getInstruments().finally(() => {
+      inFlightInstruments = null;
+    });
   }
-  return fallback;
+  return inFlightInstruments;
+}
+
+function shouldFetchKeyed(
+  inFlight: Map<string, number>,
+  flightKey: string,
+  cacheKey: string,
+  lastFetchedMap: Record<string, number> | undefined,
+  dataMap: Record<string, unknown>,
+  force?: boolean
+): boolean {
+  if (!force && (inFlight.get(flightKey) ?? 0) > 0) return false;
+  if (dataMap[cacheKey] === undefined) return true;
+  if (!lastFetchedMap) return Boolean(force);
+  const last = lastFetchedMap[cacheKey];
+  if (!force && last && Date.now() - last < CACHE_TTL_MS) {
+    return false;
+  }
+  return true;
+}
+
+async function withInFlightKey<T>(
+  inFlight: Map<string, number>,
+  flightKey: string,
+  task: () => Promise<T>
+): Promise<T> {
+  inFlight.set(flightKey, (inFlight.get(flightKey) ?? 0) + 1);
+  try {
+    return await task();
+  } finally {
+    const remaining = (inFlight.get(flightKey) ?? 1) - 1;
+    if (remaining <= 0) {
+      inFlight.delete(flightKey);
+    } else {
+      inFlight.set(flightKey, remaining);
+    }
+  }
+}
+
+function createKeyedCachedThunk<TArg extends { force?: boolean }, TResult>(config: {
+  typePrefix: string;
+  getKey: (arg: TArg) => string;
+  fetch: (arg: TArg) => Promise<TResult>;
+  getDataMap: (state: RootState['portfolio']) => Record<string, unknown>;
+  getLastFetchedMap?: (state: RootState['portfolio']) => Record<string, number>;
+  errorMessageKey: string;
+}) {
+  const inFlight = new Map<string, number>();
+  return createAsyncThunk<
+    { key: string; data: TResult; requestRevision: number },
+    TArg,
+    { state: RootState; rejectValue: string }
+  >(
+    config.typePrefix,
+    async (arg, { getState, rejectWithValue }) => {
+      const requestRevision = getState().portfolio.cacheRevision;
+      const key = config.getKey(arg);
+      const flightKey = revisionFlightKey(key, requestRevision);
+      try {
+        const data = await withInFlightKey(inFlight, flightKey, () => config.fetch(arg));
+        return { key, data, requestRevision };
+      } catch (error: unknown) {
+        return rejectWithValue(extractApiErrorMessage(error, config.errorMessageKey, true));
+      }
+    },
+    {
+      condition: (arg, { getState }) => {
+        const portfolioState = getState().portfolio;
+        const key = config.getKey(arg);
+        return shouldFetchKeyed(
+          inFlight,
+          revisionFlightKey(key, portfolioState.cacheRevision),
+          key,
+          config.getLastFetchedMap?.(portfolioState),
+          config.getDataMap(portfolioState),
+          arg.force
+        );
+      },
+    }
+  );
 }
 
 export const fetchPortfolios = createAsyncThunk<
   PortfolioResponse[],
-  Currency | undefined,
-  { rejectValue: string }
->('portfolio/fetchPortfolios', async (defaultCurrency = 'PLN', { rejectWithValue }) => {
-  try {
-    const portfolios = await portfolioService.getPortfolios();
-    if (portfolios.length === 0) {
-      const defaultPortfolio = await portfolioService.createPortfolio({
-        name: i18n.t('common.defaultPortfolioName'),
-        baseCurrency: defaultCurrency,
-      });
-      return [defaultPortfolio];
-    }
-    return portfolios;
-  } catch (error: unknown) {
-    return rejectWithValue(getErrorMessage(error, i18n.t('errors.fetchPortfolios')));
-  }
-});
-
-export const fetchPositions = createAsyncThunk<
-  {
-    positions: PositionResponse[];
-    instruments: Record<string, InstrumentResponse>;
-    quotes: Record<string, PriceQuote>;
-    rates: Record<string, number>;
-    historicalPrices: Record<string, Record<string, number>>;
-    historicalSortedDates: Record<string, string[]>;
-  },
-  string | { portfolioId: string; force?: boolean },
+  Currency | { defaultCurrency?: Currency; defaultName?: string } | undefined,
   { state: RootState; rejectValue: string }
 >(
-  'portfolio/fetchPositions',
-  async (arg, { getState, rejectWithValue }) => {
-    const portfolioId = typeof arg === 'string' ? arg : arg.portfolioId;
+  'portfolio/fetchPortfolios',
+  async (arg, { rejectWithValue }) => {
+    const defaultCurrency = typeof arg === 'string' ? arg : arg?.defaultCurrency ?? 'PLN';
+    const defaultName = (typeof arg === 'object' ? arg?.defaultName : undefined) || 'Main';
     try {
-      const currentState = getState().portfolio;
-      const positions = await portfolioService.getPositions(portfolioId);
-      const missingInstrument = positions.some((p) => !currentState.instruments[p.instrumentId]);
-      const fetchedInstruments =
-        Object.keys(currentState.instruments).length > 0 && !missingInstrument
-          ? []
-          : await instrumentService.getInstruments();
-
-      const instrumentsMap: Record<string, InstrumentResponse> = {
-        ...currentState.instruments,
-      };
-      fetchedInstruments.forEach((inst) => {
-        instrumentsMap[inst.id] = inst;
-      });
-
-      const activePortfolio = currentState.portfolios.find((p) => p.id === portfolioId);
-      const baseCurrency = activePortfolio?.baseCurrency || 'PLN';
-
-      const quotes: Record<string, PriceQuote> = { ...currentState.quotes };
-      const historicalPrices: Record<string, Record<string, number>> = {
-        ...currentState.historicalPrices,
-      };
-      const historicalSortedDates: Record<string, string[]> = {
-        ...currentState.historicalSortedDates,
-      };
-
-      const uniqueInstrumentIds = Array.from(new Set(positions.map((p) => p.instrumentId)));
-      const distinctSymbols = Array.from(
-        new Set(
-          uniqueInstrumentIds
-            .map((instId) => instrumentsMap[instId]?.symbol)
-            .filter((sym): sym is string => Boolean(sym))
-        )
-      );
-
-      if (distinctSymbols.length > 0) {
-        try {
-          const batchQuotes = await marketService.getBatchPrices(distinctSymbols);
-          Object.assign(quotes, batchQuotes);
-        } catch {
-          void 0;
-        }
-        for (const sym of distinctSymbols) {
-          if (!quotes[sym]) {
-            const inst = Object.values(instrumentsMap).find((i) => i.symbol === sym);
-            quotes[sym] = {
-              symbol: sym,
-              price: null,
-              currency: inst?.currency || 'USD',
-              source: 'unavailable',
-              isUnavailable: true,
-            };
-          }
-        }
+      const portfolios = await portfolioService.getPortfolios();
+      if (portfolios.length === 0) {
+        const defaultPortfolio = await portfolioService.createPortfolio({
+          name: defaultName,
+          baseCurrency: defaultCurrency,
+        });
+        return [defaultPortfolio];
       }
-      const rates: Record<string, number> = { [baseCurrency]: 1 };
-      const distinctCurrencies = Array.from(new Set(positions.map((p) => p.currency))).filter(
-        (curr): curr is Currency => !!curr && curr !== baseCurrency
-      );
-
-      await Promise.all(
-        distinctCurrencies.map(async (curr) => {
-          try {
-            const fx = await marketService.getExchangeRate(curr, baseCurrency);
-            if (fx && fx.rate) {
-              rates[curr] = fx.rate;
-            }
-          } catch {
-            void 0;
-          }
-        })
-      );
-
-      return {
-        positions,
-        instruments: instrumentsMap,
-        quotes,
-        rates,
-        historicalPrices,
-        historicalSortedDates,
-      };
+      return portfolios;
     } catch (error: unknown) {
-      return rejectWithValue(getErrorMessage(error, i18n.t('errors.fetchPositions')));
+      return rejectWithValue(extractApiErrorMessage(error, 'errors.fetchPortfolios', true));
     }
   },
   {
-    condition: (arg, { getState }) => {
-      const portfolioId = typeof arg === 'string' ? arg : arg.portfolioId;
-      const force = typeof arg === 'object' && Boolean(arg.force);
-      const last = getState().portfolio.positionsLastFetchedAt?.[portfolioId];
-      if (!force && last && Date.now() - last < 60000) {
-        return false;
-      }
-      return true;
+    condition: (_, { getState }) => {
+      const { portfoliosStatus, portfolios } = getState().portfolio;
+      return portfoliosStatus !== 'loading' && portfolios.length === 0;
     },
   }
 );
 
+export const fetchValuation = createKeyedCachedThunk<
+  { portfolioId: string; taxMode?: TaxMode; force?: boolean },
+  PortfolioValuationResponse
+>({
+  typePrefix: 'portfolio/fetchValuation',
+  getKey: ({ portfolioId, taxMode = 'NETTO' }) => valuationKey(portfolioId, taxMode),
+  fetch: ({ portfolioId, taxMode = 'NETTO' }) => portfolioService.getValuation(portfolioId, taxMode),
+  getDataMap: (state) => state.valuations,
+  getLastFetchedMap: (state) => state.valuationsLastFetchedAt,
+  errorMessageKey: 'errors.fetchPositions',
+});
+
+export const fetchTimeline = createKeyedCachedThunk<
+  { portfolioId: string; timeframe?: TimeframeOption; taxMode?: TaxMode; force?: boolean },
+  PortfolioTimelineResponse
+>({
+  typePrefix: 'portfolio/fetchTimeline',
+  getKey: ({ portfolioId, timeframe = 'YTD', taxMode = 'NETTO' }) =>
+    timelineKey(portfolioId, timeframe, taxMode),
+  fetch: ({ portfolioId, timeframe = 'YTD', taxMode = 'NETTO' }) =>
+    portfolioService.getTimeline(portfolioId, timeframe, taxMode),
+  getDataMap: (state) => state.timelines,
+  getLastFetchedMap: (state) => state.timelinesLastFetchedAt,
+  errorMessageKey: 'errors.fetchPositions',
+});
+
+export const fetchAnnualReport = createKeyedCachedThunk<
+  { portfolioId: string; year: number; taxMode?: TaxMode; force?: boolean },
+  AnnualReportResponse
+>({
+  typePrefix: 'portfolio/fetchAnnualReport',
+  getKey: ({ portfolioId, year, taxMode = 'NETTO' }) => reportKey(portfolioId, year, taxMode),
+  fetch: ({ portfolioId, year, taxMode = 'NETTO' }) =>
+    portfolioService.getAnnualReport(portfolioId, year, taxMode),
+  getDataMap: (state) => state.reports,
+  getLastFetchedMap: (state) => state.reportsLastFetchedAt,
+  errorMessageKey: 'errors.generalError',
+});
+
 export const fetchTransactions = createAsyncThunk<
   {
     transactions: TransactionResponse[];
-    instruments?: Record<string, InstrumentResponse>;
-    quotes?: Record<string, PriceQuote>;
-    rates?: Record<string, number>;
+    instruments: Record<string, InstrumentResponse>;
+    requestRevision: number;
   },
   string | { portfolioId: string; force?: boolean },
   { state: RootState; rejectValue: string }
@@ -169,197 +217,131 @@ export const fetchTransactions = createAsyncThunk<
   'portfolio/fetchTransactions',
   async (arg, { getState, rejectWithValue }) => {
     const portfolioId = typeof arg === 'string' ? arg : arg.portfolioId;
+    const requestRevision = getState().portfolio.cacheRevision;
+    const flightKey = revisionFlightKey(portfolioId, requestRevision);
     try {
-      const txs = await portfolioService.getTransactions(portfolioId);
-      const state = getState().portfolio;
-      let instrumentsMap: Record<string, InstrumentResponse> | undefined;
-      let ratesMap: Record<string, number> | undefined;
+      return await withInFlightKey(inFlightTransactions, flightKey, async () => {
+        const existingInstruments = { ...getState().portfolio.instruments };
+        const [transactions, catalog] = await Promise.all([
+          portfolioService.getTransactions(portfolioId),
+          Object.keys(existingInstruments).length === 0
+            ? loadInstrumentsShared().catch(() => [])
+            : Promise.resolve<InstrumentResponse[]>([]),
+        ]);
 
-      if (
-        Object.keys(state.instruments).length === 0 ||
-        txs.some((t) => !state.instruments[t.instrumentId])
-      ) {
-        try {
-          const fetchedInstruments = await instrumentService.getInstruments();
-          instrumentsMap = { ...state.instruments };
-          for (const inst of fetchedInstruments) {
-            instrumentsMap[inst.id] = inst;
+        for (const inst of catalog) {
+          existingInstruments[inst.id] = inst;
+        }
+        if (transactions.some((tx) => !existingInstruments[tx.instrumentId])) {
+          const refreshed = await loadInstrumentsShared().catch(() => []);
+          for (const inst of refreshed) {
+            existingInstruments[inst.id] = inst;
           }
-        } catch {
-          void 0;
         }
-      }
 
-      const effectiveInstruments = instrumentsMap || state.instruments;
-      const distinctTxSymbols = Array.from(
-        new Set(
-          txs
-            .map((t) => effectiveInstruments[t.instrumentId]?.symbol)
-            .filter((sym): sym is string => Boolean(sym && !sym.startsWith('PL_BOND') && !state.quotes[sym]))
-        )
-      );
-      let quotesMap: Record<string, PriceQuote> | undefined;
-      if (distinctTxSymbols.length > 0) {
-        try {
-          quotesMap = await marketService.getBatchPrices(distinctTxSymbols);
-        } catch {
-          void 0;
-        }
-      }
-
-      const activePortfolio = state.portfolios.find((p) => p.id === portfolioId);
-      const baseCurrency = activePortfolio?.baseCurrency || 'PLN';
-      const foreignCurrencies = Array.from(new Set(txs.map((t) => t.currency))).filter(
-        (c): c is Currency => Boolean(c && c !== baseCurrency && !state.rates[c])
-      );
-      if (foreignCurrencies.length > 0) {
-        ratesMap = { ...state.rates };
-        await Promise.all(
-          foreignCurrencies.map(async (curr) => {
-            try {
-              const fx = await marketService.getExchangeRate(curr, baseCurrency);
-              if (fx && fx.rate) {
-                ratesMap![curr] = fx.rate;
-              }
-            } catch {
-              void 0;
-            }
-          })
-        );
-      }
-
-      return { transactions: txs, instruments: instrumentsMap, quotes: quotesMap, rates: ratesMap };
+        return { transactions, instruments: existingInstruments, requestRevision };
+      });
     } catch (error: unknown) {
-      return rejectWithValue(getErrorMessage(error, i18n.t('errors.fetchTransactions')));
+      return rejectWithValue(extractApiErrorMessage(error, 'errors.fetchTransactions', true));
     }
   },
   {
     condition: (arg, { getState }) => {
+      const portfolioState = getState().portfolio;
       const portfolioId = typeof arg === 'string' ? arg : arg.portfolioId;
       const force = typeof arg === 'object' && Boolean(arg.force);
-      const last = getState().portfolio.transactionsLastFetchedAt?.[portfolioId];
-      if (!force && last && Date.now() - last < 60000) {
-        return false;
-      }
-      return true;
+      return shouldFetchKeyed(
+        inFlightTransactions,
+        revisionFlightKey(portfolioId, portfolioState.cacheRevision),
+        portfolioId,
+        portfolioState.transactionsLastFetchedAt,
+        portfolioState.transactionsByPortfolio,
+        force
+      );
     },
   }
 );
 
-export const fetchInflation = createAsyncThunk<
-  { cpi: number | null },
-  void,
-  { rejectValue: string }
->('portfolio/fetchInflation', async (_, { rejectWithValue }) => {
-  try {
-    const data = await marketService.getInflation();
-    return { cpi: data.currentCpi };
-  } catch (error: unknown) {
-    return rejectWithValue(getErrorMessage(error, i18n.t('errors.fetchInflation')));
-  }
+export const fetchPortfolioStats = createKeyedCachedThunk<
+  { key: string; holdings: HoldingItem[]; force?: boolean },
+  PortfolioStatsResponse
+>({
+  typePrefix: 'portfolio/fetchPortfolioStats',
+  getKey: ({ key }) => key,
+  fetch: ({ holdings }) => marketService.getPortfolioStats({ holdings }),
+  getDataMap: (state) => state.portfolioStats,
+  errorMessageKey: 'errors.generalError',
 });
 
-export const createTransaction = createAsyncThunk<
-  TransactionResponse,
-  { portfolioId: string; request: CreateTransactionRequest },
-  { dispatch: AppDispatch; rejectValue: string }
->(
+function createMutationThunk<TArg, TResult = TransactionResponse>(
+  typePrefix: string,
+  task: (arg: TArg) => Promise<TResult>,
+  errorMessageKey: string
+) {
+  return createAsyncThunk<TResult, TArg, { rejectValue: string }>(
+    typePrefix,
+    async (arg, { rejectWithValue }) => {
+      try {
+        return await task(arg);
+      } catch (error: unknown) {
+        return rejectWithValue(extractApiErrorMessage(error, errorMessageKey, true));
+      }
+    }
+  );
+}
+
+export const createTransaction = createMutationThunk<{
+  portfolioId: string;
+  request: CreateTransactionRequest;
+}>(
   'portfolio/createTransaction',
-  async ({ portfolioId, request }, { dispatch, rejectWithValue }) => {
-    try {
-      const response = await portfolioService.createTransaction(portfolioId, request);
-      dispatch(fetchPositions({ portfolioId, force: true }));
-      dispatch(fetchTransactions({ portfolioId, force: true }));
-      return response;
-    } catch (error: unknown) {
-      return rejectWithValue(getErrorMessage(error, i18n.t('errors.saveTransaction')));
-    }
-  }
+  ({ portfolioId, request }) => portfolioService.createTransaction(portfolioId, request),
+  'errors.saveTransaction'
 );
 
-export const updateTransaction = createAsyncThunk<
-  TransactionResponse,
-  { portfolioId: string; transactionId: string; request: CreateTransactionRequest },
-  { dispatch: AppDispatch; rejectValue: string }
->(
+export const updateTransaction = createMutationThunk<{
+  portfolioId: string;
+  transactionId: string;
+  request: CreateTransactionRequest;
+}>(
   'portfolio/updateTransaction',
-  async ({ portfolioId, transactionId, request }, { dispatch, rejectWithValue }) => {
-    try {
-      const response = await portfolioService.updateTransaction(portfolioId, transactionId, request);
-      dispatch(fetchPositions({ portfolioId, force: true }));
-      dispatch(fetchTransactions({ portfolioId, force: true }));
-      return response;
-    } catch (error: unknown) {
-      return rejectWithValue(getErrorMessage(error, i18n.t('errors.updateTransaction')));
-    }
-  }
+  ({ portfolioId, transactionId, request }) =>
+    portfolioService.updateTransaction(portfolioId, transactionId, request),
+  'errors.updateTransaction'
 );
 
-export const deleteTransaction = createAsyncThunk<
-  void,
+export const deleteTransaction = createMutationThunk<
   { portfolioId: string; transactionId: string },
-  { dispatch: AppDispatch; rejectValue: string }
+  void
 >(
   'portfolio/deleteTransaction',
-  async ({ portfolioId, transactionId }, { dispatch, rejectWithValue }) => {
-    try {
-      await portfolioService.deleteTransaction(portfolioId, transactionId);
-      dispatch(fetchPositions({ portfolioId, force: true }));
-      dispatch(fetchTransactions({ portfolioId, force: true }));
-    } catch (error: unknown) {
-      return rejectWithValue(getErrorMessage(error, i18n.t('errors.deleteTransaction')));
-    }
-  }
+  ({ portfolioId, transactionId }) =>
+    portfolioService.deleteTransaction(portfolioId, transactionId),
+  'errors.deleteTransaction'
 );
 
-export const createPortfolio = createAsyncThunk<
-  PortfolioResponse,
-  CreatePortfolioRequest,
-
-  { rejectValue: string }
->(
+export const createPortfolio = createMutationThunk<CreatePortfolioRequest, PortfolioResponse>(
   'portfolio/createPortfolio',
-  async (request, { rejectWithValue }) => {
-    try {
-      return await portfolioService.createPortfolio(request);
-    } catch (error: unknown) {
-      return rejectWithValue(getErrorMessage(error, i18n.t('errors.createPortfolio')));
-    }
-  }
+  (request) => portfolioService.createPortfolio(request),
+  'errors.createPortfolio'
 );
 
-export const fetchHistoricalPrices = createAsyncThunk<
-  {
-    symbol: string;
-    prices: Record<string, number>;
-    sortedDates: string[];
-  },
-  { symbol: string; period?: string; interval?: string; currency?: string; force?: boolean },
+export const fetchProjection = createAsyncThunk<
+  { portfolioId: string; data: ProjectionResponse; requestRevision: number },
+  { portfolioId: string; request: ProjectionRequestPayload },
   { state: RootState; rejectValue: string }
 >(
-  'portfolio/fetchHistoricalPrices',
-  async ({ symbol, period = '5y', interval = '1d', currency }, { rejectWithValue }) => {
+  'portfolio/fetchProjection',
+  async ({ portfolioId, request }, { getState, signal, rejectWithValue }) => {
+    const requestRevision = getState().portfolio.cacheRevision;
     try {
-      const hist = await marketService.getHistoricalPrices(symbol, period, interval, currency);
-      const dateMap: Record<string, number> = {};
-      const dates: string[] = [];
-      if (hist && Array.isArray(hist.history)) {
-        for (const pt of hist.history) {
-          dateMap[pt.date] = pt.close;
-          dates.push(pt.date);
-        }
-        dates.sort();
-      }
-      return { symbol, prices: dateMap, sortedDates: dates };
+      const data = await portfolioService.getProjection(portfolioId, request, signal);
+      return { portfolioId, data, requestRevision };
     } catch (error: unknown) {
-      return rejectWithValue(getErrorMessage(error, i18n.t('errors.fetchHistory', { symbol })));
+      if (signal.aborted) {
+        throw error;
+      }
+      return rejectWithValue(extractApiErrorMessage(error, 'errors.generalError', true));
     }
-  },
-  {
-    condition: ({ symbol, force }, { getState }) => {
-      if (force) return true;
-      const existing = getState().portfolio.historicalPrices[symbol];
-      return !existing || Object.keys(existing).length === 0;
-    },
   }
 );

@@ -1,6 +1,6 @@
 import type { Currency } from './auth.ts';
 
-export type InstrumentType = 'STOCK' | 'ETF' | 'BOND' | 'SAVINGS_ACCOUNT';
+export type InstrumentType = 'STOCK' | 'ETF' | 'BOND';
 
 export interface InstrumentResponse {
   id: string;
@@ -8,4 +8,5 @@ export interface InstrumentResponse {
   name: string;
   type: InstrumentType;
   currency: Currency;
+  assetCategory?: string;
 }

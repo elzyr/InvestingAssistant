@@ -21,7 +21,7 @@ import pl.investassist.auth.service.AuthService;
 @RequestMapping("/api/auth")
 public class AuthController {
 
-  @Value("${app.security.cookie-secure:false}")
+  @Value("${app.security.cookie-secure:true}")
   private boolean cookieSecure;
 
   private final long refreshExpirationSeconds;
@@ -74,7 +74,10 @@ public class AuthController {
   }
 
   private String extractToken(String cookieToken, RefreshTokenRequest request) {
-    return cookieToken != null ? cookieToken : (request != null ? request.refreshToken() : null);
+    if (cookieToken != null && !cookieToken.isBlank()) {
+      return cookieToken;
+    }
+    return request != null ? request.refreshToken() : null;
   }
 
   private ResponseEntity<AuthResponse> responseWithCookie(HttpStatus status, AuthResponse response) {

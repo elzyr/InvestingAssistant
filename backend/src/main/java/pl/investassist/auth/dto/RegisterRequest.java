@@ -11,7 +11,8 @@ public record RegisterRequest(
         @Size(max = 255, message = "Email cannot exceed 255 characters")
         String email,
     @NotBlank(message = "Password cannot be blank")
-        @Size(min = 8, max = 72, message = "Password must be between 8 and 72 characters long")
+        @Size(min = 8, message = "Password must be at least 8 characters long")
+        @BcryptPasswordLimit
         String password,
     @NotBlank(message = "First name cannot be blank")
         @Size(max = 255, message = "First name cannot exceed 255 characters")

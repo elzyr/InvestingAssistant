@@ -1,12 +1,11 @@
 import React, { useState } from 'react';
 import { NavLink, Outlet, useNavigate } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
-import { useAppSelector, useAppDispatch } from '../../store/hooks.ts';
+import { useAppSelector, useAppDispatch } from '../../store/store.ts';
 import { logoutThunk } from '../../store/thunks/auth.thunk.ts';
 import {
   LayoutDashboard,
   CalendarDays,
-  AlertTriangle,
   LogOut,
   Menu,
   X,
@@ -33,8 +32,40 @@ export const AppLayout: React.FC = () => {
   const navItems = [
     { to: '/', label: t('nav.overview'), icon: LayoutDashboard },
     { to: '/reports', label: t('nav.reports'), icon: CalendarDays },
-    { to: '/stress-testing', label: t('nav.stressTesting'), icon: AlertTriangle },
   ];
+
+  const renderLanguageButton = () => (
+    <button
+      onClick={toggleLanguage}
+      className="p-1.5 rounded-lg border border-zinc-800 bg-zinc-900/50 hover:bg-zinc-800 text-zinc-400 hover:text-zinc-200 transition text-[11px] font-mono flex items-center gap-1 cursor-pointer"
+      title={t('common.language')}
+    >
+      <Globe className="w-3.5 h-3.5" />
+      <span className="uppercase font-semibold">{i18n.language.slice(0, 2)}</span>
+    </button>
+  );
+
+  const renderNavLinks = (onItemClick?: () => void) => (
+    <nav className="space-y-1">
+      {navItems.map((item) => (
+        <NavLink
+          key={item.to}
+          to={item.to}
+          onClick={onItemClick}
+          className={({ isActive }) =>
+            `flex items-center gap-3 px-3 py-2 rounded-lg text-xs font-medium transition ${
+              isActive
+                ? 'bg-zinc-800/80 text-white font-semibold'
+                : 'text-zinc-400 hover:text-zinc-200 hover:bg-zinc-900/60'
+            }`
+          }
+        >
+          <item.icon className="w-4 h-4" />
+          {item.label}
+        </NavLink>
+      ))}
+    </nav>
+  );
 
   return (
     <div className="min-h-screen bg-[#09090b] text-zinc-100 flex flex-col md:flex-row antialiased">
@@ -49,34 +80,10 @@ export const AppLayout: React.FC = () => {
                 InvestingAssistant
               </span>
             </div>
-            <button
-              onClick={toggleLanguage}
-              className="p-1.5 rounded-lg border border-zinc-800 bg-zinc-900/50 hover:bg-zinc-800 text-zinc-400 hover:text-zinc-200 transition text-[11px] font-mono flex items-center gap-1 cursor-pointer"
-              title={t('common.language')}
-            >
-              <Globe className="w-3.5 h-3.5" />
-              <span className="uppercase font-semibold">{i18n.language.slice(0, 2)}</span>
-            </button>
+            {renderLanguageButton()}
           </div>
 
-          <nav className="space-y-1">
-            {navItems.map((item) => (
-              <NavLink
-                key={item.to}
-                to={item.to}
-                className={({ isActive }) =>
-                  `flex items-center gap-3 px-3 py-2 rounded-lg text-xs font-medium transition ${
-                    isActive
-                      ? 'bg-zinc-800/80 text-white font-semibold'
-                      : 'text-zinc-400 hover:text-zinc-200 hover:bg-zinc-900/60'
-                  }`
-                }
-              >
-                <item.icon className="w-4 h-4" />
-                {item.label}
-              </NavLink>
-            ))}
-          </nav>
+          {renderNavLinks()}
         </div>
 
         <div className="border-t border-zinc-800/80 pt-4 px-2">
@@ -110,14 +117,7 @@ export const AppLayout: React.FC = () => {
           </span>
         </div>
         <div className="flex items-center gap-2">
-          <button
-            onClick={toggleLanguage}
-            className="p-1.5 rounded-lg border border-zinc-800 bg-zinc-900/50 hover:bg-zinc-800 text-zinc-400 hover:text-zinc-200 transition text-[11px] font-mono flex items-center gap-1 cursor-pointer"
-            title={t('common.language')}
-          >
-            <Globe className="w-3.5 h-3.5" />
-            <span className="uppercase font-semibold">{i18n.language.slice(0, 2)}</span>
-          </button>
+          {renderLanguageButton()}
           <button
             onClick={() => setMobileMenuOpen(!mobileMenuOpen)}
             className="p-1 rounded-lg text-zinc-400 hover:text-zinc-200 hover:bg-zinc-900 transition"
@@ -129,25 +129,7 @@ export const AppLayout: React.FC = () => {
 
       {mobileMenuOpen && (
         <div className="md:hidden border-b border-zinc-800/80 bg-[#0c0d12] p-4 space-y-3">
-          <nav className="space-y-1">
-            {navItems.map((item) => (
-              <NavLink
-                key={item.to}
-                to={item.to}
-                onClick={() => setMobileMenuOpen(false)}
-                className={({ isActive }) =>
-                  `flex items-center gap-3 px-3 py-2 rounded-lg text-xs font-medium transition ${
-                    isActive
-                      ? 'bg-zinc-800/80 text-white font-semibold'
-                      : 'text-zinc-400 hover:text-zinc-200 hover:bg-zinc-900/60'
-                  }`
-                }
-              >
-                <item.icon className="w-4 h-4" />
-                {item.label}
-              </NavLink>
-            ))}
-          </nav>
+          {renderNavLinks(() => setMobileMenuOpen(false))}
           <div className="border-t border-zinc-800/80 pt-3 flex items-center justify-between">
             <span className="text-xs text-zinc-400">
               {user?.email} ({user?.baseCurrency})

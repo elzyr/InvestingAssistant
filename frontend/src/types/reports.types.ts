@@ -10,7 +10,23 @@ export interface MonthlyCategoryBreakdown {
   sharePct: number;
 }
 
-export type ReportMonthStatus = 'RECORDED' | 'UPCOMING';
+export interface MonthlyPositionBreakdown {
+  key: string;
+  symbol: string;
+  name: string;
+  categoryCode: string;
+  color: string;
+  invested: number;
+  currentValue: number;
+  profitGross: number;
+  profitNet: number;
+  profitNetMom: number;
+  returnGrossPct: number;
+  returnNetPct: number;
+  sharePct: number;
+}
+
+export type ReportMonthStatus = 'RECORDED' | 'BEFORE_PORTFOLIO' | 'FUTURE';
 
 export interface MonthlyReportRecord {
   monthIndex: number;
@@ -29,6 +45,7 @@ export interface MonthlyReportRecord {
   realProfitPct: number | null;
   status: ReportMonthStatus;
   breakdown: MonthlyCategoryBreakdown[];
+  positions: MonthlyPositionBreakdown[];
   baseCurrency?: string;
 }
 

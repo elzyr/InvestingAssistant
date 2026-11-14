@@ -41,6 +41,15 @@ public class InstrumentController {
     return ResponseEntity.ok(instrumentService.getInstruments(search, type, page, size));
   }
 
+  @PostMapping("/discover")
+  public ResponseEntity<List<InstrumentResponse>> discoverInstruments(
+      @RequestParam(required = false) String search,
+      @RequestParam(required = false) InstrumentType type,
+      @RequestParam(required = false) Integer page,
+      @RequestParam(required = false) Integer size) {
+    return ResponseEntity.ok(instrumentService.discoverInstruments(search, type, page, size));
+  }
+
   @GetMapping("/{id}")
   public ResponseEntity<InstrumentResponse> getInstrumentById(@PathVariable UUID id) {
     InstrumentResponse response = instrumentService.getInstrument(id);

@@ -6,29 +6,24 @@ export interface HoldingItem {
 
 export interface PortfolioStatsRequest {
   holdings: HoldingItem[];
-  benchmarkSymbol?: string;
 }
 
 export interface InstrumentMetric {
   symbol: string;
   weight: number;
   value?: number;
-  annualReturn: number;
-  annualVolatility: number;
-  ter: number;
-  trailingPe: number;
-  dividendYield: number;
-  beta: number;
-  dailyReturns?: number[];
+  annualReturn: number | null;
+  annualVolatility: number | null;
+  ter: number | null;
+  currency?: string | null;
 }
 
 export interface PortfolioStatsResponse {
-  weightedReturn: number;
-  weightedVolatility: number;
-  weightedTer: number;
-  weightedPe: number;
-  weightedDividendYield: number;
-  portfolioBeta: number;
+  weightedReturn: number | null;
+  weightedVolatility: number | null;
+  weightedTer: number | null;
   instruments: InstrumentMetric[];
+  symbols?: string[];
   correlationMatrix?: Record<string, Record<string, number>>;
+  covarianceMatrix?: Record<string, Record<string, number>>;
 }

@@ -19,6 +19,7 @@ public class PortfolioService {
     this.portfolioRepository = portfolioRepository;
   }
 
+  @Transactional
   public PortfolioResponse createPortfolio(UUID userId, CreatePortfolioRequest request) {
     Portfolio savedPortfolio = portfolioRepository.save(request.toEntity(userId));
     return PortfolioResponse.from(savedPortfolio);

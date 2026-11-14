@@ -1,9 +1,9 @@
 package pl.investassist.security;
 
+import tools.jackson.databind.ObjectMapper;
 import io.jsonwebtoken.Claims;
 import io.jsonwebtoken.JwtParser;
 import io.jsonwebtoken.Jwts;
-import io.jsonwebtoken.security.Keys;
 import jakarta.annotation.PostConstruct;
 import jakarta.servlet.FilterChain;
 import jakarta.servlet.ServletException;
@@ -16,9 +16,11 @@ import java.net.URLDecoder;
 import java.nio.charset.StandardCharsets;
 import java.util.Collections;
 import java.util.Enumeration;
+import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Locale;
+import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
 import javax.crypto.SecretKey;
@@ -28,6 +30,7 @@ import org.springframework.core.annotation.Order;
 import org.springframework.http.HttpHeaders;
 import org.springframework.stereotype.Component;
 import org.springframework.web.filter.OncePerRequestFilter;
+import pl.investassist.auth.service.JwtService;
 
 @Component
 @Order(Ordered.HIGHEST_PRECEDENCE + 1)
@@ -59,11 +62,7 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
 
   @PostConstruct
   void init() {
-    byte[] keyBytes = secretKey != null ? secretKey.getBytes(StandardCharsets.UTF_8) : new byte[0];
-    if (keyBytes.length < 32) {
-      throw new IllegalStateException("jwt.secret must be set and at least 32 bytes (HS256)");
-    }
-    SecretKey signingKey = Keys.hmacShaKeyFor(keyBytes);
+    SecretKey signingKey = JwtService.hmacKeyFromSecret(secretKey);
     this.jwtParser = Jwts.parser().verifyWith(signingKey).build();
   }
 
@@ -101,7 +100,8 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
     }
 
     if ("OPTIONS".equalsIgnoreCase(request.getMethod()) || isPublicEndpoint(request.getMethod(), path)) {
-      filterChain.doFilter(new StripUserIdRequestWrapper(request), response);
+      filterChain.doFilter(
+          HeaderOverrideRequestWrapper.strip(request, STRIPPED_SECURITY_HEADERS), response);
       return;
     }
 
@@ -137,7 +137,7 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
     String role = claims.get("role", String.class);
 
     HttpServletRequest authenticatedRequest =
-        new AuthenticatedUserRequestWrapper(request, userId, email, role);
+        HeaderOverrideRequestWrapper.withUser(request, userId, email, role);
 
     filterChain.doFilter(authenticatedRequest, response);
   }
@@ -158,83 +158,69 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
         && (path.equals("/api/instruments") || path.matches("^/api/instruments/[0-9a-fA-F-]+$"));
   }
 
+  private static final ObjectMapper ERROR_MAPPER = new ObjectMapper();
+
   private void sendUnauthorized(HttpServletResponse response, String message) throws IOException {
     response.setStatus(HttpServletResponse.SC_UNAUTHORIZED);
     response.setContentType("application/json");
-    response.getWriter().write("{\"message\":\"" + message + "\",\"timestamp\":" + System.currentTimeMillis() + "}");
+    ERROR_MAPPER.writeValue(
+        response.getWriter(),
+        Map.of("message", message, "timestamp", System.currentTimeMillis()));
   }
 
-  private static class StripUserIdRequestWrapper extends HttpServletRequestWrapper {
-    public StripUserIdRequestWrapper(HttpServletRequest request) {
+  private static final class HeaderOverrideRequestWrapper extends HttpServletRequestWrapper {
+    private final Map<String, String> overridesByLowerName;
+    private final Map<String, String> displayNamesByLowerName;
+
+    private HeaderOverrideRequestWrapper(HttpServletRequest request, Map<String, String> overrides) {
       super(request);
+      this.overridesByLowerName = new LinkedHashMap<>();
+      this.displayNamesByLowerName = new LinkedHashMap<>();
+      overrides.forEach((key, value) -> {
+        String lower = key.toLowerCase(Locale.ROOT);
+        this.overridesByLowerName.put(lower, value);
+        if (value != null) {
+          this.displayNamesByLowerName.put(lower, key);
+        }
+      });
     }
 
-    @Override
-    public String getHeader(String name) {
-      if (name != null && STRIPPED_SECURITY_HEADERS.contains(name.toLowerCase(Locale.ROOT))) {
-        return null;
+    static HeaderOverrideRequestWrapper strip(HttpServletRequest request, Set<String> headers) {
+      Map<String, String> stripped = new LinkedHashMap<>();
+      for (String h : headers) {
+        stripped.put(h, null);
       }
-      return super.getHeader(name);
+      return new HeaderOverrideRequestWrapper(request, stripped);
     }
 
-    @Override
-    public Enumeration<String> getHeaders(String name) {
-      if (name != null && STRIPPED_SECURITY_HEADERS.contains(name.toLowerCase(Locale.ROOT))) {
-        return Collections.emptyEnumeration();
-      }
-      return super.getHeaders(name);
-    }
-
-    @Override
-    public Enumeration<String> getHeaderNames() {
-      Enumeration<String> originalNames = super.getHeaderNames();
-      if (originalNames == null) {
-        return Collections.emptyEnumeration();
-      }
-      List<String> names = Collections.list(originalNames).stream()
-          .filter(h -> h != null && !STRIPPED_SECURITY_HEADERS.contains(h.toLowerCase(Locale.ROOT)))
-          .toList();
-      return Collections.enumeration(names);
-    }
-  }
-
-  private static class AuthenticatedUserRequestWrapper extends HttpServletRequestWrapper {
-    private final String userId;
-    private final String email;
-    private final String role;
-
-    public AuthenticatedUserRequestWrapper(
+    static HeaderOverrideRequestWrapper withUser(
         HttpServletRequest request, String userId, String email, String role) {
-      super(request);
-      this.userId = userId;
-      this.email = email;
-      this.role = role;
+      Map<String, String> headers = new LinkedHashMap<>();
+      headers.put("X-User-Id", userId);
+      headers.put("X-User-Email", email);
+      headers.put("X-User-Role", role);
+      return new HeaderOverrideRequestWrapper(request, headers);
     }
 
     @Override
     public String getHeader(String name) {
-      if ("X-User-Id".equalsIgnoreCase(name)) {
-        return userId;
-      }
-      if ("X-User-Email".equalsIgnoreCase(name)) {
-        return email;
-      }
-      if ("X-User-Role".equalsIgnoreCase(name)) {
-        return role;
+      if (name != null) {
+        String lower = name.toLowerCase(Locale.ROOT);
+        if (overridesByLowerName.containsKey(lower)) {
+          return overridesByLowerName.get(lower);
+        }
       }
       return super.getHeader(name);
     }
 
     @Override
     public Enumeration<String> getHeaders(String name) {
-      if ("X-User-Id".equalsIgnoreCase(name)) {
-        return Collections.enumeration(List.of(userId));
-      }
-      if ("X-User-Email".equalsIgnoreCase(name)) {
-        return email != null ? Collections.enumeration(List.of(email)) : Collections.emptyEnumeration();
-      }
-      if ("X-User-Role".equalsIgnoreCase(name)) {
-        return role != null ? Collections.enumeration(List.of(role)) : Collections.emptyEnumeration();
+      if (name != null) {
+        String lower = name.toLowerCase(Locale.ROOT);
+        if (overridesByLowerName.containsKey(lower)) {
+          String val = overridesByLowerName.get(lower);
+          return val != null ? Collections.enumeration(List.of(val)) : Collections.emptyEnumeration();
+        }
       }
       return super.getHeaders(name);
     }
@@ -246,21 +232,12 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
       if (originalNames != null) {
         while (originalNames.hasMoreElements()) {
           String h = originalNames.nextElement();
-          if (h != null
-              && !"X-User-Id".equalsIgnoreCase(h)
-              && !"X-User-Email".equalsIgnoreCase(h)
-              && !"X-User-Role".equalsIgnoreCase(h)) {
+          if (h != null && !overridesByLowerName.containsKey(h.toLowerCase(Locale.ROOT))) {
             names.add(h);
           }
         }
       }
-      names.add("X-User-Id");
-      if (email != null) {
-        names.add("X-User-Email");
-      }
-      if (role != null) {
-        names.add("X-User-Role");
-      }
+      names.addAll(displayNamesByLowerName.values());
       return Collections.enumeration(names);
     }
   }

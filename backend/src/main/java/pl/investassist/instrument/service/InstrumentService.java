@@ -1,15 +1,19 @@
 package pl.investassist.instrument.service;
 
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Locale;
-import java.util.Optional;
+import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
-import java.util.Map;
-import java.util.HashMap;
 import java.util.stream.Collectors;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.dao.DataIntegrityViolationException;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.Pageable;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -17,21 +21,24 @@ import org.springframework.web.server.ResponseStatusException;
 import pl.investassist.common.enums.Currency;
 import pl.investassist.common.enums.InstrumentType;
 import pl.investassist.common.exception.ResourceNotFoundException;
+import pl.investassist.common.util.PaginationUtils;
 import pl.investassist.instrument.dto.CreateInstrumentRequest;
 import pl.investassist.instrument.dto.InstrumentResponse;
 import pl.investassist.instrument.entity.Instrument;
 import pl.investassist.instrument.repository.InstrumentRepository;
-import pl.investassist.portfolio.client.MarketDataClient;
+import pl.investassist.portfolio.port.MarketDataPort;
 
 @Service
 public class InstrumentService {
 
+  private static final Logger log = LoggerFactory.getLogger(InstrumentService.class);
+
   private final InstrumentRepository instrumentRepository;
-  private final MarketDataClient marketDataClient;
+  private final MarketDataPort marketDataClient;
 
   public InstrumentService(
       InstrumentRepository instrumentRepository,
-      MarketDataClient marketDataClient) {
+      MarketDataPort marketDataClient) {
     this.instrumentRepository = instrumentRepository;
     this.marketDataClient = marketDataClient;
   }
@@ -58,26 +65,26 @@ public class InstrumentService {
                 () -> new ResourceNotFoundException("Instrument not found with UUID: " + uuid)));
   }
 
-  public List<InstrumentResponse> getInstruments(String search, InstrumentType type) {
-    return getInstruments(search, type, null, null);
+  @Transactional(readOnly = true)
+  public List<InstrumentResponse> getInstruments(String search, InstrumentType type, Integer page, Integer size) {
+    Pageable pageable = PaginationUtils.toBoundedPageable(page, size);
+    String searchQuery = search != null ? search.trim() : "";
+    Page<Instrument> paged = instrumentRepository.searchInstruments(type, searchQuery, pageable);
+    return paged != null ? paged.getContent().stream().map(InstrumentResponse::from).toList() : List.of();
   }
 
-  public List<InstrumentResponse> getInstruments(String search, InstrumentType type, Integer page, Integer size) {
-    String searchQuery = (search != null) ? search : "";
-    if ((search == null || search.trim().length() < 2) && page != null && size != null && size > 0) {
-      try {
-        org.springframework.data.domain.Page<Instrument> paged =
-            instrumentRepository.searchInstruments(type, searchQuery, org.springframework.data.domain.PageRequest.of(page, size));
-        if (paged != null) {
-          return paged.getContent().stream().map(InstrumentResponse::from).toList();
-        }
-      } catch (Exception ignored) {
-      }
+  @Transactional
+  public List<InstrumentResponse> discoverInstruments(String search, InstrumentType type, Integer page, Integer size) {
+    Pageable pageable = PaginationUtils.toBoundedPageable(page, size);
+    String searchQuery = search != null ? search.trim() : "";
+
+    if (searchQuery.length() < 2) {
+      Page<Instrument> paged = instrumentRepository.searchInstruments(type, searchQuery, pageable);
+      return paged != null ? paged.getContent().stream().map(InstrumentResponse::from).toList() : List.of();
     }
 
-    List<Instrument> dbInstruments = new ArrayList<>(
-        instrumentRepository.searchInstruments(type, searchQuery)
-    );
+    Page<Instrument> dbPage = instrumentRepository.searchInstruments(type, searchQuery, Pageable.unpaged());
+    List<Instrument> dbInstruments = dbPage != null ? new ArrayList<>(dbPage.getContent()) : new ArrayList<>();
     Set<String> existingSymbols = new HashSet<>();
     for (Instrument inst : dbInstruments) {
       if (inst.getSymbol() != null) {
@@ -85,25 +92,22 @@ public class InstrumentService {
       }
     }
 
-    if (search != null && search.trim().length() >= 2) {
-      try {
-        List<InstrumentResponse> externalList = marketDataClient.searchInstruments(search.trim());
-        List<Instrument> savedNew = saveDiscoveredInstruments(externalList, type, searchQuery, existingSymbols);
-        dbInstruments.addAll(savedNew);
-      } catch (Exception ignored) {
-      }
+    try {
+      List<InstrumentResponse> externalList = marketDataClient.searchInstruments(searchQuery);
+      List<Instrument> savedNew = saveDiscoveredInstruments(externalList, type, searchQuery, existingSymbols);
+      dbInstruments.addAll(savedNew);
+    } catch (Exception e) {
+      log.warn("External instrument discovery failed for query='{}': {}", searchQuery, e.getMessage());
     }
 
     List<InstrumentResponse> all = dbInstruments.stream()
         .map(InstrumentResponse::from)
         .toList();
 
-    if (page != null && size != null && size > 0) {
-      int fromIndex = page * size;
-      if (fromIndex >= all.size()) {
-        return List.of();
-      }
-      return all.subList(fromIndex, Math.min(fromIndex + size, all.size()));
+    if (pageable.isPaged()) {
+      int fromIndex = (int) Math.min(pageable.getOffset(), all.size());
+      int toIndex = Math.min(fromIndex + pageable.getPageSize(), all.size());
+      return all.subList(fromIndex, toIndex);
     }
 
     return all;
@@ -128,12 +132,7 @@ public class InstrumentService {
       return added;
     }
 
-    List<Instrument> existingInDb = null;
-    try {
-      existingInDb = instrumentRepository.findBySymbolInIgnoreCase(symbols);
-    } catch (Exception ignored) {
-    }
-
+    List<Instrument> existingInDb = instrumentRepository.findBySymbolInIgnoreCase(symbols);
     Map<String, Instrument> existingMap = new HashMap<>();
     if (existingInDb != null) {
       for (Instrument inst : existingInDb) {
@@ -144,56 +143,79 @@ public class InstrumentService {
     }
 
     List<Instrument> newInstruments = new ArrayList<>();
+    Set<String> pendingSymbols = new HashSet<>();
     for (InstrumentResponse ext : externalList) {
       if (ext.symbol() == null || ext.symbol().isBlank()) {
         continue;
       }
       String symUpper = ext.symbol().trim().toUpperCase(Locale.ROOT);
       Instrument existing = existingMap.get(symUpper);
-      if (existing == null && existingMap.isEmpty()) {
-        Optional<Instrument> fallbackOpt = instrumentRepository.findBySymbolIgnoreCase(ext.symbol());
-        if (fallbackOpt.isPresent()) {
-          existing = fallbackOpt.get();
-        }
-      }
 
       if (existing != null) {
-        if (matchesFilter(existing, type, searchQuery) && existingSymbols.add(symUpper)) {
-          added.add(existing);
-        }
-      } else {
+        addIfMatching(existing, type, searchQuery, existingSymbols, added);
+      } else if (ext.currency() != null && pendingSymbols.add(symUpper)) {
         Instrument instrument = new Instrument();
         instrument.setSymbol(symUpper);
         instrument.setName(ext.name() != null && !ext.name().isBlank() ? ext.name() : ext.symbol());
         instrument.setType(ext.type() != null ? ext.type() : InstrumentType.STOCK);
-        instrument.setCurrency(ext.currency() != null ? ext.currency() : Currency.USD);
+        instrument.setCurrency(ext.currency());
+        instrument.setAssetCategory(ext.assetCategory());
         newInstruments.add(instrument);
       }
     }
 
-    if (newInstruments.size() == 1) {
-      try {
-        Instrument saved = instrumentRepository.save(newInstruments.get(0));
-        if (saved != null && matchesFilter(saved, type, searchQuery) && existingSymbols.add(saved.getSymbol().toUpperCase(Locale.ROOT))) {
-          added.add(saved);
+    if (newInstruments.isEmpty()) {
+      return added;
+    }
+
+    try {
+      List<Instrument> savedAll = instrumentRepository.saveAll(newInstruments);
+      if (savedAll != null) {
+        for (Instrument saved : savedAll) {
+          addIfMatching(saved, type, searchQuery, existingSymbols, added);
         }
-      } catch (Exception ignored) {
       }
-    } else if (newInstruments.size() > 1) {
-      try {
-        List<Instrument> savedAll = instrumentRepository.saveAll(newInstruments);
-        if (savedAll != null) {
-          for (Instrument s : savedAll) {
-            if (matchesFilter(s, type, searchQuery) && existingSymbols.add(s.getSymbol().toUpperCase(Locale.ROOT))) {
-              added.add(s);
-            }
-          }
-        }
-      } catch (Exception ignored) {
+    } catch (DataIntegrityViolationException e) {
+      log.debug("Batch instrument insert hit concurrent duplicate, falling back to per-symbol upsert: {}", e.getMessage());
+      for (Instrument inst : newInstruments) {
+        saveOrFetchSingle(inst, type, searchQuery, existingSymbols, added);
       }
     }
 
     return added;
+  }
+
+  private void saveOrFetchSingle(
+      Instrument inst,
+      InstrumentType type,
+      String searchQuery,
+      Set<String> existingSymbols,
+      List<Instrument> added) {
+    try {
+      Instrument saved = instrumentRepository.save(inst);
+      if (saved != null) {
+        addIfMatching(saved, type, searchQuery, existingSymbols, added);
+      }
+    } catch (DataIntegrityViolationException ex) {
+      instrumentRepository
+          .findBySymbolIgnoreCase(inst.getSymbol())
+          .ifPresent(existing -> addIfMatching(existing, type, searchQuery, existingSymbols, added));
+    }
+  }
+
+  private void addIfMatching(
+      Instrument inst,
+      InstrumentType type,
+      String searchQuery,
+      Set<String> existingSymbols,
+      List<Instrument> added) {
+    if (inst.getSymbol() == null) {
+      return;
+    }
+    String symUpper = inst.getSymbol().toUpperCase(Locale.ROOT);
+    if (matchesFilter(inst, type, searchQuery) && existingSymbols.add(symUpper)) {
+      added.add(inst);
+    }
   }
 
   private boolean matchesFilter(Instrument inst, InstrumentType type, String query) {

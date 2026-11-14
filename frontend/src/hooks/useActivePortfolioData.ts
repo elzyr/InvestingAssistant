@@ -1,174 +1,205 @@
-import { useEffect, useCallback } from 'react';
-import { useAppDispatch, useAppSelector } from '../store/hooks.ts';
+import { useCallback, useEffect } from 'react';
+import { useAppDispatch, useAppSelector } from '../store/store.ts';
 import {
+  fetchAnnualReport,
   fetchPortfolios,
-  fetchPositions,
+  fetchTimeline,
   fetchTransactions,
-  fetchHistoricalPrices,
-  fetchInflation,
+  fetchValuation,
+  reportKey,
+  timelineKey,
+  valuationKey,
 } from '../store/thunks/portfolio.thunk.ts';
-import { setYearMonthlyCpi } from '../store/slices/portfolio.slice.ts';
-import { marketService } from '../services/market.service.ts';
 import type { Currency } from '../types/auth.ts';
+import type { TaxMode, TimeframeOption } from '../types/dashboard.ts';
+import type { TransactionResponse } from '../types/portfolio.ts';
 
-export function useActivePortfolioData(
-  selectedYear?: number,
-  options?: { skipPositions?: boolean; skipHistory?: boolean }
-) {
+export interface ActivePortfolioFetchParams {
+  activePortfolioId: string | null;
+  baseCurrency?: Currency;
+  taxMode: TaxMode;
+  timeframe: TimeframeOption;
+  reportYear?: number;
+  skipValuation?: boolean;
+  skipTimeline?: boolean;
+  skipTransactions?: boolean;
+  force?: boolean;
+}
+
+export function dispatchPortfolioDataLoad(
+  dispatch: (action: unknown) => unknown,
+  params: ActivePortfolioFetchParams
+): unknown {
+  const {
+    activePortfolioId,
+    baseCurrency,
+    taxMode,
+    timeframe,
+    reportYear,
+    skipValuation,
+    skipTimeline,
+    skipTransactions,
+    force = false,
+  } = params;
+
+  if (!activePortfolioId) {
+    if (force) {
+      return dispatch(fetchPortfolios(baseCurrency));
+    }
+    return undefined;
+  }
+
+  const forceOpt = force ? { force: true } : {};
+  const promises: Array<unknown> = [];
+  if (!skipTransactions) {
+    promises.push(dispatch(fetchTransactions(force ? { portfolioId: activePortfolioId, force: true } : activePortfolioId)));
+  }
+  if (!skipValuation) {
+    promises.push(dispatch(fetchValuation({ portfolioId: activePortfolioId, taxMode, ...forceOpt })));
+  }
+  if (!skipTimeline) {
+    promises.push(dispatch(fetchTimeline({ portfolioId: activePortfolioId, timeframe, taxMode, ...forceOpt })));
+  }
+  if (reportYear != null) {
+    promises.push(dispatch(fetchAnnualReport({ portfolioId: activePortfolioId, year: reportYear, taxMode, ...forceOpt })));
+  }
+  return Promise.all(promises);
+}
+
+const EMPTY_TRANSACTIONS: TransactionResponse[] = [];
+
+export interface ActivePortfolioDataOptions {
+  taxMode?: TaxMode;
+  timeframe?: TimeframeOption;
+  reportYear?: number;
+  skipValuation?: boolean;
+  skipTimeline?: boolean;
+  skipTransactions?: boolean;
+}
+
+export function useActivePortfolioData(options?: ActivePortfolioDataOptions) {
   const dispatch = useAppDispatch();
-  const user = useAppSelector((state) => state.auth.user);
-  const baseCurrency: Currency = user?.baseCurrency || 'PLN';
+  const taxMode: TaxMode = options?.taxMode ?? 'NETTO';
+  const timeframe: TimeframeOption = options?.timeframe ?? 'YTD';
+  const reportYear = options?.reportYear;
 
   const {
     portfolios,
+    portfoliosStatus,
     activePortfolioId,
-    positions,
-    transactions,
+    valuations,
+    timelines,
+    latestTimelineByPortfolio,
+    reports,
+    transactionsByPortfolio,
     instruments,
-    quotes,
-    rates,
-    historicalPrices,
-    historicalSortedDates,
-    cpi,
-    monthlyCpi: monthlyCpiByYear,
+    portfolioStats,
+    portfolioStatsErrors,
+    projection,
     loading,
-    isInitialLoading,
-    isPositionsLoading,
-    isTransactionsLoading,
+    valuationPendingCount,
+    timelinePendingCount,
+    reportPendingCount,
+    transactionsPendingCount,
     error,
+    cacheRevision,
   } = useAppSelector((state) => state.portfolio);
+  const isValuationLoading = valuationPendingCount > 0;
+  const isTimelineLoading = timelinePendingCount > 0;
+  const isReportLoading = reportPendingCount > 0;
+  const isTransactionsLoading = transactionsPendingCount > 0;
+  const { user } = useAppSelector((state) => state.auth);
 
-  const monthlyCpi = selectedYear ? (monthlyCpiByYear[selectedYear] || {}) : {};
-  const activePortfolio = portfolios.find((p) => p.id === activePortfolioId);
+  const activePortfolio =
+    portfolios.find((p) => p.id === activePortfolioId) || portfolios[0] || null;
+  const baseCurrency = activePortfolio?.baseCurrency || user?.baseCurrency || 'PLN';
+  const transactions = activePortfolioId
+    ? transactionsByPortfolio[activePortfolioId] ?? EMPTY_TRANSACTIONS
+    : EMPTY_TRANSACTIONS;
 
-  useEffect(() => {
-    if (portfolios.length === 0) {
-      dispatch(fetchPortfolios(baseCurrency));
-    }
-  }, [dispatch, portfolios.length, baseCurrency]);
+  const vKey = activePortfolioId ? valuationKey(activePortfolioId, taxMode) : '';
+  const tKey = activePortfolioId ? timelineKey(activePortfolioId, timeframe, taxMode) : '';
+  const rKey =
+    activePortfolioId && reportYear != null ? reportKey(activePortfolioId, reportYear, taxMode) : '';
 
-  useEffect(() => {
-    if (activePortfolioId) {
-      if (!options?.skipPositions) {
-        dispatch(fetchPositions(activePortfolioId));
-      }
-      dispatch(fetchTransactions(activePortfolioId));
-    }
-  }, [dispatch, activePortfolioId, options?.skipPositions]);
-
-  useEffect(() => {
-    if (options?.skipHistory) return;
-    const equitySymbols = new Set<string>();
-    for (const pos of positions) {
-      const inst = instruments[pos.instrumentId];
-      if (inst && inst.type !== 'BOND' && !inst.symbol.startsWith('PL_BOND') && !pos.seriesName) {
-        equitySymbols.add(inst.symbol);
-      }
-    }
-    for (const tx of transactions) {
-      const inst = instruments[tx.instrumentId];
-      if (inst && inst.type !== 'BOND' && !inst.symbol.startsWith('PL_BOND') && !tx.seriesName) {
-        equitySymbols.add(inst.symbol);
-      }
-    }
-    for (const sym of equitySymbols) {
-      if (!historicalPrices[sym]) {
-        dispatch(fetchHistoricalPrices({ symbol: sym }));
-      }
-    }
-  }, [dispatch, positions, transactions, instruments, historicalPrices, options?.skipHistory]);
+  const valuation = vKey ? valuations[vKey] ?? null : null;
+  const timeline =
+    (tKey ? timelines[tKey] : undefined) ??
+    (vKey ? latestTimelineByPortfolio[vKey] : undefined) ??
+    null;
+  const report = rKey ? reports[rKey] ?? null : null;
 
   useEffect(() => {
-    if (cpi === null) {
-      dispatch(fetchInflation());
+    if (portfoliosStatus === 'idle' && portfolios.length === 0) {
+      dispatch(fetchPortfolios(user?.baseCurrency));
     }
-  }, [dispatch, cpi]);
+  }, [dispatch, portfoliosStatus, portfolios.length, user?.baseCurrency]);
 
   useEffect(() => {
-    if (selectedYear && !monthlyCpiByYear[selectedYear]) {
-      marketService
-        .getMonthlyInflation(selectedYear)
-        .then((points) => {
-          if (Array.isArray(points)) {
-            const map: Record<number, number> = {};
-            for (const p of points) {
-              if (p.year === selectedYear) {
-                map[p.month - 1] = p.rate;
-              }
-            }
-            dispatch(setYearMonthlyCpi({ year: selectedYear, data: map }));
-          }
-        })
-        .catch(() => {});
-    }
-  }, [dispatch, selectedYear, monthlyCpiByYear]);
+    dispatchPortfolioDataLoad(dispatch, {
+      activePortfolioId,
+      taxMode,
+      timeframe,
+      reportYear,
+      skipValuation: options?.skipValuation,
+      skipTimeline: options?.skipTimeline,
+      skipTransactions: options?.skipTransactions,
+      force: false,
+    });
+  }, [
+    dispatch,
+    activePortfolioId,
+    taxMode,
+    timeframe,
+    reportYear,
+    options?.skipValuation,
+    options?.skipTimeline,
+    options?.skipTransactions,
+    cacheRevision,
+  ]);
 
   const refreshData = useCallback(() => {
-    if (activePortfolioId) {
-      if (!options?.skipPositions) {
-        dispatch(fetchPositions({ portfolioId: activePortfolioId, force: true }));
-      }
-      dispatch(fetchTransactions({ portfolioId: activePortfolioId, force: true }));
-    }
-    if (!options?.skipHistory) {
-      const equitySymbols = new Set<string>();
-      for (const pos of positions) {
-        const inst = instruments[pos.instrumentId];
-        if (inst && inst.type !== 'BOND' && !inst.symbol.startsWith('PL_BOND') && !pos.seriesName) {
-          equitySymbols.add(inst.symbol);
-        }
-      }
-      for (const tx of transactions) {
-        const inst = instruments[tx.instrumentId];
-        if (inst && inst.type !== 'BOND' && !inst.symbol.startsWith('PL_BOND') && !tx.seriesName) {
-          equitySymbols.add(inst.symbol);
-        }
-      }
-      for (const sym of equitySymbols) {
-        dispatch(fetchHistoricalPrices({ symbol: sym, force: true }));
-      }
-    }
-    dispatch(fetchInflation());
-    if (selectedYear) {
-      marketService
-        .getMonthlyInflation(selectedYear)
-        .then((points) => {
-          if (Array.isArray(points)) {
-            const map: Record<number, number> = {};
-            for (const p of points) {
-              if (p.year === selectedYear) {
-                map[p.month - 1] = p.rate;
-              }
-            }
-            dispatch(setYearMonthlyCpi({ year: selectedYear, data: map }));
-          }
-        })
-        .catch(() => {});
-    }
-  }, [dispatch, activePortfolioId, selectedYear, options?.skipPositions, options?.skipHistory, positions, instruments]);
-
-
+    dispatchPortfolioDataLoad(dispatch, {
+      activePortfolioId,
+      baseCurrency: user?.baseCurrency,
+      taxMode,
+      timeframe,
+      reportYear,
+      skipValuation: options?.skipValuation,
+      skipTimeline: options?.skipTimeline,
+      skipTransactions: options?.skipTransactions,
+      force: true,
+    });
+  }, [
+    dispatch,
+    activePortfolioId,
+    user?.baseCurrency,
+    taxMode,
+    timeframe,
+    reportYear,
+    options?.skipValuation,
+    options?.skipTimeline,
+    options?.skipTransactions,
+  ]);
 
   return {
     dispatch,
     portfolios,
     activePortfolio,
     activePortfolioId,
-    positions,
+    valuation,
+    timeline,
+    report,
     transactions,
     instruments,
-    quotes,
-    rates,
-    historicalPrices,
-    historicalSortedDates,
-    cpi,
-    rawCpi: cpi,
-    monthlyCpi,
-    monthlyCpiByYear,
-    baseCurrency: activePortfolio?.baseCurrency || baseCurrency,
-    loading,
-    isInitialLoading,
-    isPositionsLoading,
+    portfolioStats,
+    portfolioStatsErrors,
+    projection,
+    baseCurrency,
+    loading: loading || isValuationLoading || isTimelineLoading || isReportLoading,
+    isValuationLoading,
+    isTimelineLoading,
+    isReportLoading,
     isTransactionsLoading,
     error,
     refreshData,
