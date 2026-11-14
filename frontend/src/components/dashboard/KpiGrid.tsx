@@ -10,7 +10,7 @@ interface KpiCardProps {
 }
 
 const KpiCard = ({ title, value, subValue, isAccent, detail }: KpiCardProps) => (
-  <div className="bg-[#10121a] border border-zinc-850 hover:border-zinc-750 transition-colors rounded-xl p-3 sm:p-3.5 flex flex-col justify-between h-full min-h-[96px]">
+  <div className="bg-[#10121a] border border-zinc-800/90 hover:border-zinc-700 transition-colors rounded-xl p-3 sm:p-3.5 flex flex-col justify-between h-full min-h-[96px]">
     <div className="flex items-center justify-between gap-1 mb-1">
       <span className="text-[11px] font-mono uppercase text-zinc-400 font-semibold tracking-wider truncate">
         {title}

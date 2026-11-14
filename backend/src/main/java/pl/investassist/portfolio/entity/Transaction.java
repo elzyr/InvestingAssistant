@@ -45,13 +45,13 @@ public class Transaction {
   @Column(name = "currency", nullable = false)
   private Currency currency;
 
-  @Column(precision = 38, scale = 8, nullable = false)
+  @Column(precision = 18, scale = 8, nullable = false)
   private BigDecimal exchangeRate = BigDecimal.ONE;
 
   @Column(precision = 38, scale = 4, nullable = false)
   private BigDecimal baseAmount;
 
-  @Column(name = "exchange_rate_to_base", precision = 10, scale = 6)
+  @Column(name = "exchange_rate_to_base", precision = 18, scale = 8)
   private BigDecimal exchangeRateToBase;
 
   @Column(name = "executed_at", nullable = false)
@@ -67,6 +67,17 @@ public class Transaction {
   private BigDecimal bondMargin;
 
   private Integer termMonths;
+
+  @Column(name = "withholding_tax_pct", precision = 5, scale = 2)
+  private BigDecimal withholdingTaxPct;
+
+  public BigDecimal getWithholdingTaxPct() {
+    return withholdingTaxPct;
+  }
+
+  public void setWithholdingTaxPct(BigDecimal withholdingTaxPct) {
+    this.withholdingTaxPct = withholdingTaxPct;
+  }
 
   public Transaction() {}
 

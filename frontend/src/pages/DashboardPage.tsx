@@ -1,8 +1,8 @@
 import { useState, useEffect, useMemo } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useActivePortfolioData } from '../hooks/useActivePortfolioData.ts';
-import { clearPortfolioError, setActivePortfolioId } from '../store/slices/portfolio.slice.ts';
-import { fetchPortfolioStats } from '../store/thunks/portfolio.thunk.ts';
+import { clearPortfolioError, clearProjection, setActivePortfolioId } from '../store/slices/portfolio.slice.ts';
+import { fetchPortfolioStats, fetchProjection } from '../store/thunks/portfolio.thunk.ts';
 import { ErrorBanner } from '../components/common/ErrorBanner.tsx';
 import { TransactionModal } from '../components/portfolio/TransactionModal.tsx';
 import { CreatePortfolioModal } from '../components/portfolio/CreatePortfolioModal.tsx';
@@ -12,13 +12,17 @@ import { KpiGrid } from '../components/dashboard/KpiGrid.tsx';
 import { PortfolioChart } from '../components/dashboard/PortfolioChart.tsx';
 import { FilterBar } from '../components/dashboard/FilterBar.tsx';
 import { PositionsTable } from '../components/dashboard/PositionsTable.tsx';
-import { generateUnifiedPortfolioTimeline } from '../utils/engines/timeline/index.ts';
-import { enrichPortfolioHoldings } from '../utils/domain/holdings.ts';
-import { isIkePortfolio } from '../utils/domain/tax.ts';
 import {
-  buildDashboardPositions,
-  buildDashboardSummary,
-} from '../utils/engines/dashboard.ts';
+  formatTimelineChartPoints,
+  formatValuationPositions,
+  formatValuationSummary,
+} from '../utils/valuationFormatters.ts';
+import {
+  horizonToYears,
+  mapProjectionResponseToChartPoints,
+} from '../utils/projectionSimulator.ts';
+import { roundOneDecimal } from '../utils/reportsFormatters.ts';
+import { computeAverageMonthlyDca } from '../utils/portfolioSimulation.ts';
 import type {
   TaxMode,
   TimeframeOption,
@@ -33,26 +37,6 @@ import type { TransactionResponse } from '../types/portfolio.ts';
 export const DashboardPage = () => {
   const { t, i18n } = useTranslation();
 
-  const {
-    dispatch,
-    activePortfolioId,
-    portfolios,
-    activePortfolio,
-    positions,
-    transactions,
-    instruments,
-    quotes,
-    rates,
-    historicalPrices,
-    historicalSortedDates,
-    cpi,
-    portfolioStats,
-    baseCurrency,
-    loading,
-    error,
-    refreshData,
-  } = useActivePortfolioData();
-
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [isCreatePortfolioOpen, setIsCreatePortfolioOpen] = useState(false);
   const [isHistoryOpen, setIsHistoryOpen] = useState(false);
@@ -61,210 +45,207 @@ export const DashboardPage = () => {
   const [timeframe, setTimeframe] = useState<TimeframeOption>('YTD');
   const [metricMode, setMetricMode] = useState<ChartMetricMode>('PLN');
   const [projectionHorizon, setProjectionHorizon] = useState<ProjectionHorizonOption>('OFF');
-  const [userMonthlyDca, setUserMonthlyDca] = useState<number | null>(null);
-  const [dcaBondShare, setDcaBondShare] = useState<number>(0.5);
-  const [userEtfReturnOverride, setUserEtfReturnOverride] = useState<{
+  const [userMonthlyDcaOverride, setUserMonthlyDcaOverride] = useState<{
     portfolioId: string | null;
     value: number;
   } | null>(null);
+  const [userDcaBondShareOverride, setUserDcaBondShareOverride] = useState<{
+    portfolioId: string | null;
+    value: number;
+  } | null>(null);
+  const [userEtfReturnOverride, setUserEtfReturnOverride] = useState<{
+    portfolioId: string | null;
+    value: number | null;
+  } | null>(null);
   const [bondRollover, setBondRollover] = useState<boolean>(true);
   const [inflationAdjustMode, setInflationAdjustMode] = useState<InflationAdjustMode>('NOMINAL');
-  const [targetGoal, setTargetGoal] = useState<number | null>(null);
+  const [targetGoalOverride, setTargetGoalOverride] = useState<{
+    portfolioId: string | null;
+    value: number | null;
+  } | null>(null);
   const [nowTimestamp] = useState(() => Date.now());
+
+  const {
+    dispatch,
+    activePortfolioId,
+    portfolios,
+    valuation,
+    timeline,
+    transactions,
+    instruments,
+    portfolioStats,
+    portfolioStatsErrors,
+    projection: projectionData,
+    baseCurrency,
+    loading,
+    error,
+    refreshData,
+  } = useActivePortfolioData({ taxMode, timeframe });
 
   const [searchQuery, setSearchQuery] = useState('');
   const [activeFilter, setActiveFilter] = useState<AssetFilterType>('ALL');
   const [sortBy, setSortBy] = useState<SortOption>('value');
 
-  const handleRefresh = () => {
-    refreshData();
-  };
-
-  const enrichedHoldings = useMemo(
-    () =>
-      enrichPortfolioHoldings({
-        positions,
-        transactions,
-        instruments,
-        quotes,
-        rates,
-        baseCurrency,
-        cpi,
-        nowTimestamp,
-        historicalPrices,
-        historicalSortedDates,
-      }),
-    [positions, transactions, instruments, quotes, rates, baseCurrency, cpi, nowTimestamp, historicalPrices, historicalSortedDates]
-  );
-
   const { empiricalRequestKey, equityStatsPayload } = useMemo(() => {
-    const equities = enrichedHoldings.filter((h) => !h.isBond);
+    const equities = valuation?.projectionSeed?.equityWeights || [];
     if (!activePortfolioId || equities.length === 0) {
       return { empiricalRequestKey: null, equityStatsPayload: [] };
     }
-    const totalEquityVal = equities.reduce((sum, h) => sum + Math.max(0, h.totalValue), 0);
-    const payload = equities.map((h) => ({ symbol: h.ticker, weight: 0, value: h.totalValue }));
+    const payload = equities.map((ew) => ({
+      symbol: ew.symbol,
+      weight: 0,
+      value: ew.valueBase,
+    }));
     const weightsKey = equities
-      .map((h) => {
-        const weightPerMille = totalEquityVal > 0 ? Math.round((h.totalValue / totalEquityVal) * 1000) : 0;
-        return `${h.ticker}:${weightPerMille}`;
-      })
+      .map((ew) => `${ew.symbol}:${Math.round(ew.weightPct * 10)}`)
       .sort()
       .join('|');
     return {
       empiricalRequestKey: `${activePortfolioId}|${weightsKey}`,
       equityStatsPayload: payload,
     };
-  }, [activePortfolioId, enrichedHoldings]);
+  }, [activePortfolioId, valuation]);
 
   const empiricalStats = empiricalRequestKey ? (portfolioStats[empiricalRequestKey] ?? null) : null;
+  const empiricalStatsError = empiricalRequestKey
+    ? (portfolioStatsErrors[empiricalRequestKey] ?? null)
+    : null;
 
   useEffect(() => {
-    if (!empiricalRequestKey || equityStatsPayload.length === 0 || empiricalStats) {
+    if (
+      !empiricalRequestKey ||
+      equityStatsPayload.length === 0 ||
+      empiricalStats ||
+      empiricalStatsError
+    ) {
       return;
     }
     dispatch(fetchPortfolioStats({ key: empiricalRequestKey, holdings: equityStatsPayload }));
-  }, [dispatch, empiricalRequestKey, equityStatsPayload, empiricalStats]);
+  }, [dispatch, empiricalRequestKey, equityStatsPayload, empiricalStats, empiricalStatsError]);
 
   const defaultExpectedEtfReturn =
     empiricalStats?.weightedReturn != null
-      ? Math.round(empiricalStats.weightedReturn * 1000) / 10
-      : 8.5;
+      ? roundOneDecimal(empiricalStats.weightedReturn * 100)
+      : null;
 
   const expectedEtfReturn =
     userEtfReturnOverride && userEtfReturnOverride.portfolioId === activePortfolioId
       ? userEtfReturnOverride.value
       : defaultExpectedEtfReturn;
 
-  const totalPortfolioValue = useMemo(() => {
-    return enrichedHoldings.reduce((sum, h) => sum + h.totalValue, 0);
-  }, [enrichedHoldings]);
+  const totalPortfolioCost = valuation?.summary?.totalInvested ?? 0;
 
-  const totalPortfolioCost = useMemo(() => {
-    return enrichedHoldings.reduce((sum, h) => sum + h.totalCost, 0);
-  }, [enrichedHoldings]);
+  const defaultDca = useMemo(
+    () => computeAverageMonthlyDca(transactions, totalPortfolioCost, nowTimestamp),
+    [transactions, totalPortfolioCost, nowTimestamp]
+  );
 
-  const defaultDca = useMemo(() => {
-    if (transactions.length > 0 && totalPortfolioCost > 0) {
-      const timestamps = transactions.map((t) => new Date(t.executedAt).getTime());
-      const earliest = Math.min(...timestamps);
-      const monthsElapsed = Math.max(1, (nowTimestamp - earliest) / (1000 * 60 * 60 * 24 * 30.4375));
-      const avgMonthly = totalPortfolioCost / monthsElapsed;
-      return Math.max(100, Math.round(avgMonthly / 100) * 100);
+  const monthlyDca =
+    userMonthlyDcaOverride && userMonthlyDcaOverride.portfolioId === activePortfolioId
+      ? userMonthlyDcaOverride.value
+      : defaultDca;
+
+  const defaultDcaBondShare = useMemo(() => {
+    const seed = valuation?.projectionSeed;
+    if (!seed || seed.startTotalValue <= 0) return 0.5;
+    const share = seed.startBondValue / seed.startTotalValue;
+    return Math.min(1, Math.max(0, Number(share.toFixed(2))));
+  }, [valuation]);
+
+  const dcaBondShare =
+    userDcaBondShareOverride && userDcaBondShareOverride.portfolioId === activePortfolioId
+      ? userDcaBondShareOverride.value
+      : defaultDcaBondShare;
+
+  const targetGoal =
+    targetGoalOverride && targetGoalOverride.portfolioId === activePortfolioId
+      ? targetGoalOverride.value
+      : null;
+
+  const userEtfReturnVal =
+    userEtfReturnOverride && userEtfReturnOverride.portfolioId === activePortfolioId
+      ? userEtfReturnOverride.value
+      : null;
+
+  useEffect(() => {
+    const horizonYears = horizonToYears(projectionHorizon);
+    if (!activePortfolioId || horizonYears <= 0) {
+      dispatch(clearProjection());
+      return;
     }
-    return 0;
-  }, [transactions, totalPortfolioCost, nowTimestamp]);
+    let activePromise: { abort: () => void } | null = null;
+    const timer = setTimeout(() => {
+      activePromise = dispatch(
+        fetchProjection({
+          portfolioId: activePortfolioId,
+          request: {
+            horizonYears,
+            monthlyDca,
+            dcaEquityShare: Number((1 - dcaBondShare).toFixed(4)),
+            taxMode,
+            realMode: inflationAdjustMode === 'REAL',
+            bondRollover,
+            targetGoal,
+            etfReturnOverridePct: userEtfReturnVal,
+          },
+        })
+      );
+    }, 180);
 
-  const monthlyDca = userMonthlyDca ?? defaultDca;
-
-  const isIkeAccount = isIkePortfolio(activePortfolio);
-  const shouldApplyTax = taxMode === 'NETTO' && !isIkeAccount;
+    return () => {
+      clearTimeout(timer);
+      activePromise?.abort();
+    };
+  }, [
+    dispatch,
+    activePortfolioId,
+    projectionHorizon,
+    monthlyDca,
+    dcaBondShare,
+    taxMode,
+    inflationAdjustMode,
+    bondRollover,
+    targetGoal,
+    userEtfReturnVal,
+  ]);
 
   const dashboardPositions = useMemo(
-    () =>
-      buildDashboardPositions({
-        enrichedHoldings,
-        transactions,
-        totalPortfolioValue,
-        baseCurrency,
-        rates,
-        shouldApplyTax,
-        nowTimestamp,
-        t,
-        locale: i18n.language,
-      }),
-    [enrichedHoldings, transactions, totalPortfolioValue, baseCurrency, rates, shouldApplyTax, nowTimestamp, t, i18n.language]
+    () => formatValuationPositions(valuation, t, i18n.language),
+    [valuation, t, i18n.language]
   );
 
   const dashboardSummary = useMemo(
-    () =>
-      buildDashboardSummary({
-        totalPortfolioValue,
-        totalPortfolioCost,
-        enrichedHoldings,
-        positions,
-        transactions,
-        baseCurrency,
-        rates,
-        cpi,
-        taxMode,
-        shouldApplyTax,
-        isIkeAccount,
-        nowTimestamp,
-        t: (k: string, d?: string) => (d !== undefined ? t(k, d) : t(k)),
-      }),
-    [
-      totalPortfolioValue,
-      totalPortfolioCost,
-      enrichedHoldings,
-      positions,
-      transactions,
-      baseCurrency,
-      rates,
-      cpi,
-      taxMode,
-      shouldApplyTax,
-      isIkeAccount,
-      nowTimestamp,
-      t,
-    ]
+    () => formatValuationSummary(valuation, t),
+    [valuation, t]
   );
 
-  const chartData = useMemo(() => {
-    const instrumentPrices: Record<string, number> = {};
-    enrichedHoldings.forEach((h) => {
-      instrumentPrices[h.instrumentId] = h.currentPrice;
-    });
+  const historicalPoints = useMemo(
+    () => formatTimelineChartPoints(timeline, t, i18n.language),
+    [timeline, t, i18n.language]
+  );
 
-    return generateUnifiedPortfolioTimeline({
-      transactions,
-      positions,
-      instruments,
-      totalPortfolioValue,
-      totalPortfolioCost,
-      taxMode,
-      timeframe,
-      projectionHorizon,
-      cpi,
-      rates,
-      baseCurrency,
-      instrumentPrices,
-      monthlyDca,
-      dcaBondShare,
-      expectedEtfReturn,
-      etfVolatility: empiricalStats?.weightedVolatility != null ? Math.round(empiricalStats.weightedVolatility * 1000) / 10 : undefined,
-      empiricalTer: empiricalStats?.weightedTer != null ? Math.round(empiricalStats.weightedTer * 10000) / 100 : undefined,
-      correlationMatrix: empiricalStats?.correlationMatrix,
-      bondRollover,
-      isIkeAccount,
-      historicalPrices,
-      historicalSortedDates,
-      inflationAdjustMode,
-      targetGoal,
+  const activeProjection = projectionHorizon === 'OFF' ? null : projectionData;
+
+  const chartData = useMemo(() => {
+    if (projectionHorizon === 'OFF' || historicalPoints.length === 0 || !activeProjection) {
+      return historicalPoints;
+    }
+    const future = mapProjectionResponseToChartPoints(activeProjection, {
       locale: i18n.language,
+      weightedTer:
+        empiricalStats?.weightedTer != null
+          ? Math.round(empiricalStats.weightedTer * 10000) / 100
+          : undefined,
+      diversifiedVolatility:
+        empiricalStats?.weightedVolatility != null
+          ? roundOneDecimal(empiricalStats.weightedVolatility * 100)
+          : undefined,
     });
+    return [...historicalPoints, ...future];
   }, [
-    transactions,
-    positions,
-    instruments,
-    totalPortfolioValue,
-    totalPortfolioCost,
-    taxMode,
-    timeframe,
+    historicalPoints,
     projectionHorizon,
-    cpi,
-    rates,
-    baseCurrency,
-    enrichedHoldings,
-    monthlyDca,
-    dcaBondShare,
-    expectedEtfReturn,
-    bondRollover,
-    isIkeAccount,
-    historicalPrices,
-    historicalSortedDates,
-    inflationAdjustMode,
-    targetGoal,
+    activeProjection,
     empiricalStats,
     i18n.language,
   ]);
@@ -282,16 +263,13 @@ export const DashboardPage = () => {
         return matchesQuery && matchesType;
       })
       .sort((a, b) => {
-        if (sortBy === 'share' || sortBy === 'value') return b.sharePercent - a.sharePercent;
-        if (sortBy === 'profit') {
-          const profitA = parseFloat(a.profitPercentFormatted.replace(/[^0-9.-]/g, '')) || 0;
-          const profitB = parseFloat(b.profitPercentFormatted.replace(/[^0-9.-]/g, '')) || 0;
-          return profitB - profitA;
-        }
+        if (sortBy === 'value') return b.valueBase - a.valueBase;
+        if (sortBy === 'share') return b.sharePercent - a.sharePercent;
+        if (sortBy === 'profit') return b.profitPct - a.profitPct;
         if (sortBy === 'name') return a.ticker.localeCompare(b.ticker);
         if (sortBy === 'xirr') {
-          const hasA = a.xirr != null && !a.isXirrFallback;
-          const hasB = b.xirr != null && !b.isXirrFallback;
+          const hasA = a.xirr != null;
+          const hasB = b.xirr != null;
           if (!hasA && !hasB) return b.sharePercent - a.sharePercent;
           if (!hasA) return 1;
           if (!hasB) return -1;
@@ -312,12 +290,25 @@ export const DashboardPage = () => {
         onTaxModeChange={setTaxMode}
         onSelectPortfolio={(id) => dispatch(setActivePortfolioId(id))}
         onCreatePortfolio={() => setIsCreatePortfolioOpen(true)}
-        onRefresh={handleRefresh}
-        onAddTransaction={() => setIsModalOpen(true)}
-        onOpenTransactionHistory={() => setIsHistoryOpen(true)}
+        onRefresh={refreshData}
+        onAddTransaction={() => {
+          if (activePortfolioId) setIsModalOpen(true);
+        }}
+        onOpenTransactionHistory={() => {
+          if (activePortfolioId) setIsHistoryOpen(true);
+        }}
       />
 
       <ErrorBanner error={error} onDismiss={() => dispatch(clearPortfolioError())} />
+
+      {valuation?.positions?.some((p) => p.isPriceUnavailable || p.isCpiUnavailable) && (
+        <div
+          role="status"
+          className="mb-4 rounded-xl border border-amber-500/40 bg-amber-500/10 px-4 py-2.5 text-sm text-amber-200"
+        >
+          {t('dashboard.marketDataDegraded')}
+        </div>
+      )}
 
       <KpiGrid summary={dashboardSummary} />
 
@@ -332,9 +323,13 @@ export const DashboardPage = () => {
         projectionHorizon={projectionHorizon}
         onProjectionHorizonChange={setProjectionHorizon}
         monthlyDca={monthlyDca}
-        onMonthlyDcaChange={setUserMonthlyDca}
+        onMonthlyDcaChange={(val) =>
+          setUserMonthlyDcaOverride({ portfolioId: activePortfolioId, value: val })
+        }
         dcaBondShare={dcaBondShare}
-        onDcaBondShareChange={setDcaBondShare}
+        onDcaBondShareChange={(val) =>
+          setUserDcaBondShareOverride({ portfolioId: activePortfolioId, value: val })
+        }
         expectedEtfReturn={expectedEtfReturn}
         onExpectedEtfReturnChange={(val) =>
           setUserEtfReturnOverride({ portfolioId: activePortfolioId, value: val })
@@ -344,8 +339,11 @@ export const DashboardPage = () => {
         inflationAdjustMode={inflationAdjustMode}
         onInflationAdjustModeChange={setInflationAdjustMode}
         targetGoal={targetGoal}
-        onTargetGoalChange={setTargetGoal}
+        onTargetGoalChange={(val) =>
+          setTargetGoalOverride({ portfolioId: activePortfolioId, value: val })
+        }
         empiricalStats={empiricalStats}
+        proxyWarnings={activeProjection?.proxyWarnings}
       />
 
       <FilterBar
@@ -360,7 +358,7 @@ export const DashboardPage = () => {
       <PositionsTable
         positions={filteredPositions}
         taxMode={taxMode}
-        onAddTransaction={() => setIsModalOpen(true)}
+        onAddTransaction={activePortfolioId ? () => setIsModalOpen(true) : undefined}
         onEditTransaction={(txId) => {
           const tx = transactions.find((t) => t.id === txId);
           if (tx) {
@@ -369,31 +367,36 @@ export const DashboardPage = () => {
         }}
       />
 
-      <TransactionModal
-        isOpen={isModalOpen || Boolean(editingTx)}
-        onClose={() => {
-          setIsModalOpen(false);
-          setEditingTx(null);
-        }}
-        portfolioId={activePortfolioId || ''}
-        defaultCurrency={baseCurrency}
-        transaction={editingTx}
-        instrument={editingTx ? instruments[editingTx.instrumentId] : undefined}
-      />
+      {activePortfolioId && (
+        <>
+          <TransactionModal
+            isOpen={isModalOpen || Boolean(editingTx)}
+            onClose={() => {
+              setIsModalOpen(false);
+              setEditingTx(null);
+            }}
+            portfolioId={activePortfolioId}
+            defaultCurrency={baseCurrency}
+            transaction={editingTx}
+            instrument={editingTx ? instruments[editingTx.instrumentId] : undefined}
+          />
 
-      <TransactionHistoryModal
-        isOpen={isHistoryOpen}
-        onClose={() => setIsHistoryOpen(false)}
-        portfolioId={activePortfolioId || ''}
-        transactions={transactions}
-        instruments={instruments}
-        baseCurrency={baseCurrency}
-        onEditTransaction={(tx) => setEditingTx(tx)}
-      />
+          <TransactionHistoryModal
+            isOpen={isHistoryOpen}
+            onClose={() => setIsHistoryOpen(false)}
+            portfolioId={activePortfolioId}
+            transactions={transactions}
+            instruments={instruments}
+            baseCurrency={baseCurrency}
+            onEditTransaction={(tx) => setEditingTx(tx)}
+          />
+        </>
+      )}
 
       <CreatePortfolioModal
         isOpen={isCreatePortfolioOpen}
         onClose={() => setIsCreatePortfolioOpen(false)}
+        defaultCurrency={baseCurrency}
       />
     </div>
   );

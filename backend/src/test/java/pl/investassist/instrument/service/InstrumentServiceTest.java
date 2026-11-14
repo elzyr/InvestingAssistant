@@ -46,7 +46,7 @@ class InstrumentServiceTest {
   }
 
   @Test
-  void getInstruments_whenSearchHasAtLeastTwoCharsAndNotInDb_callsMarketDataClientAndSavesBatchWithoutNPlusOne() {
+  void discoverInstruments_whenSearchHasAtLeastTwoCharsAndNotInDb_callsMarketDataClientAndSavesBatchWithoutNPlusOne() {
     when(instrumentRepository.searchInstruments(eq(null), eq("AMZN"), eq(Pageable.unpaged())))
         .thenReturn(new PageImpl<>(List.of()));
     when(marketDataClient.searchInstruments("AMZN"))
@@ -62,7 +62,7 @@ class InstrumentServiceTest {
               return items;
             });
 
-    List<InstrumentResponse> results = instrumentService.getInstruments("AMZN", null, null, null);
+    List<InstrumentResponse> results = instrumentService.discoverInstruments("AMZN", null, null, null);
 
     verify(marketDataClient).searchInstruments("AMZN");
     verify(instrumentRepository, never()).findBySymbolIgnoreCase(anyString());
@@ -75,18 +75,29 @@ class InstrumentServiceTest {
   }
 
   @Test
-  void getInstruments_whenSearchLengthLessThanTwoChars_doesNotCallMarketDataClient() {
-    when(instrumentRepository.searchInstruments(eq(null), eq("A"), eq(Pageable.unpaged())))
+  void getInstruments_neverCallsMarketDataClientEvenWhenQueryHasAtLeastTwoChars() {
+    when(instrumentRepository.searchInstruments(eq(null), eq("AMZN"), eq(org.springframework.data.domain.PageRequest.of(0, 20))))
         .thenReturn(new PageImpl<>(List.of()));
 
-    List<InstrumentResponse> results = instrumentService.getInstruments("A", null, null, null);
+    List<InstrumentResponse> results = instrumentService.getInstruments("AMZN", null, null, null);
 
     verify(marketDataClient, never()).searchInstruments(anyString());
     assertThat(results).isEmpty();
   }
 
   @Test
-  void getInstruments_whenExternalSearchReturnsExistingSymbol_doesNotSaveDuplicate() {
+  void discoverInstruments_whenSearchLengthLessThanTwoChars_doesNotCallMarketDataClient() {
+    when(instrumentRepository.searchInstruments(eq(null), eq("A"), eq(org.springframework.data.domain.PageRequest.of(0, 20))))
+        .thenReturn(new PageImpl<>(List.of()));
+
+    List<InstrumentResponse> results = instrumentService.discoverInstruments("A", null, null, null);
+
+    verify(marketDataClient, never()).searchInstruments(anyString());
+    assertThat(results).isEmpty();
+  }
+
+  @Test
+  void discoverInstruments_whenExternalSearchReturnsExistingSymbol_doesNotSaveDuplicate() {
     Instrument existing = new Instrument();
     existing.setId(UUID.randomUUID());
     existing.setSymbol("AMZN");
@@ -102,7 +113,7 @@ class InstrumentServiceTest {
                 new InstrumentResponse(null, "AMZN", "Amazon.com Inc.", InstrumentType.STOCK, Currency.USD)));
     when(instrumentRepository.findBySymbolInIgnoreCase(Set.of("AMZN"))).thenReturn(List.of(existing));
 
-    List<InstrumentResponse> results = instrumentService.getInstruments("AMZN", null, null, null);
+    List<InstrumentResponse> results = instrumentService.discoverInstruments("AMZN", null, null, null);
 
     verify(marketDataClient).searchInstruments("AMZN");
     verify(instrumentRepository, never()).saveAll(any());
@@ -111,7 +122,7 @@ class InstrumentServiceTest {
   }
 
   @Test
-  void getInstruments_whenMarketDataClientThrowsException_returnsExistingDbItemsWithoutFailing() {
+  void discoverInstruments_whenMarketDataClientThrowsException_returnsExistingDbItemsWithoutFailing() {
     Instrument local = new Instrument();
     local.setId(UUID.randomUUID());
     local.setSymbol("AMZ_LOCAL");
@@ -124,14 +135,14 @@ class InstrumentServiceTest {
     when(marketDataClient.searchInstruments("AMZ"))
         .thenThrow(new RuntimeException("Market data service offline"));
 
-    List<InstrumentResponse> results = instrumentService.getInstruments("AMZ", null, null, null);
+    List<InstrumentResponse> results = instrumentService.discoverInstruments("AMZ", null, null, null);
 
     assertThat(results).hasSize(1);
     assertThat(results.get(0).symbol()).isEqualTo("AMZ_LOCAL");
   }
 
   @Test
-  void getInstruments_whenExternalInstrumentsDiscovered_fetchesInBatchAndSavesViaSaveAll() {
+  void discoverInstruments_whenExternalInstrumentsDiscovered_fetchesInBatchAndSavesViaSaveAll() {
     when(instrumentRepository.searchInstruments(eq(null), eq("TECH"), eq(Pageable.unpaged())))
         .thenReturn(new PageImpl<>(List.of()));
     when(marketDataClient.searchInstruments("TECH"))
@@ -141,7 +152,7 @@ class InstrumentServiceTest {
                 new InstrumentResponse(null, "MSFT", "Microsoft Corp.", InstrumentType.STOCK, Currency.USD)));
     when(instrumentRepository.findBySymbolInIgnoreCase(any())).thenReturn(List.of());
 
-    instrumentService.getInstruments("TECH", null, null, null);
+    instrumentService.discoverInstruments("TECH", null, null, null);
 
     verify(instrumentRepository).findBySymbolInIgnoreCase(any());
     verify(instrumentRepository).saveAll(any());
@@ -149,7 +160,7 @@ class InstrumentServiceTest {
   }
 
   @Test
-  void getInstruments_whenConcurrentDuplicateOnBatchInsert_savesRemainingInstrumentsIndividually() {
+  void discoverInstruments_whenConcurrentDuplicateOnBatchInsert_savesRemainingInstrumentsIndividually() {
     Instrument existingAapl = new Instrument();
     existingAapl.setId(UUID.randomUUID());
     existingAapl.setSymbol("AAPL");
@@ -178,7 +189,7 @@ class InstrumentServiceTest {
         });
     when(instrumentRepository.findBySymbolIgnoreCase("AAPL")).thenReturn(Optional.of(existingAapl));
 
-    List<InstrumentResponse> results = instrumentService.getInstruments("AA", null, null, null);
+    List<InstrumentResponse> results = instrumentService.discoverInstruments("AA", null, null, null);
 
     assertThat(results).extracting(InstrumentResponse::symbol).containsExactlyInAnyOrder("AAPL", "AAOI");
   }
@@ -189,7 +200,7 @@ class InstrumentServiceTest {
         .isInstanceOf(IllegalArgumentException.class);
     assertThatThrownBy(() -> instrumentService.getInstruments("AA", null, 0, 0))
         .isInstanceOf(IllegalArgumentException.class);
-    assertThatThrownBy(() -> instrumentService.getInstruments("AA", null, 0, 101))
+    assertThatThrownBy(() -> instrumentService.getInstruments("AA", null, 0, 51))
         .isInstanceOf(IllegalArgumentException.class);
   }
 }

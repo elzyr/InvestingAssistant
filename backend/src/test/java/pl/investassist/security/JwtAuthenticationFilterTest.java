@@ -267,4 +267,22 @@ class JwtAuthenticationFilterTest {
     filter.doFilter(request, response, chain);
     assertThat(response.getStatus()).isEqualTo(HttpServletResponse.SC_OK);
   }
+
+  @Test
+  void security_cors() throws Exception {
+    var bean = new SecurityConfig().corsFilter(java.util.List.of("https://app.example.com"));
+    var corsFilter = bean.getFilter();
+
+    MockHttpServletRequest allowedReq = new MockHttpServletRequest("GET", "/api/portfolios");
+    allowedReq.addHeader("Origin", "https://app.example.com");
+    MockHttpServletResponse allowedRes = new MockHttpServletResponse();
+    corsFilter.doFilter(allowedReq, allowedRes, new MockFilterChain());
+    assertThat(allowedRes.getHeader("Access-Control-Allow-Origin")).isEqualTo("https://app.example.com");
+
+    MockHttpServletRequest blockedReq = new MockHttpServletRequest("GET", "/api/portfolios");
+    blockedReq.addHeader("Origin", "https://evil.example.com");
+    MockHttpServletResponse blockedRes = new MockHttpServletResponse();
+    corsFilter.doFilter(blockedReq, blockedRes, new MockFilterChain());
+    assertThat(blockedRes.getHeader("Access-Control-Allow-Origin")).isNull();
+  }
 }

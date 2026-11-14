@@ -1,50 +1,85 @@
-import i18n from '../i18n/config.ts';
+export function normalizeZero(val: number): number {
+  return Object.is(val, -0) || Math.abs(val) < 1e-9 ? 0 : val;
+}
 
-function getLocale(): string {
-  return i18n?.language?.startsWith('en') ? 'en-US' : 'pl-PL';
+export function roundOneDecimal(val: number): number {
+  return Math.round(val * 10) / 10;
+}
+
+export function sanitizeNearZero(val: number, threshold = 0.005): number {
+  return Math.abs(val) < threshold ? 0 : val;
 }
 
 export function formatNumberWithSpaces(val: number): string {
-  return Math.round(val).toString().replace(/\B(?=(\d{3})+(?!\d))/g, ' ');
+  const rounded = normalizeZero(Math.round(val));
+  return rounded.toString().replace(/\B(?=(\d{3})+(?!\d))/g, ' ');
 }
 
 export function formatSignedNumberWithSpaces(val: number): string {
-  const rounded = Math.round(val);
+  const rounded = normalizeZero(Math.round(val));
   const sign = rounded > 0 ? '+' : rounded < 0 ? '-' : '';
   const abs = Math.abs(rounded).toString().replace(/\B(?=(\d{3})+(?!\d))/g, ' ');
   return `${sign}${abs}`;
 }
 
-export function formatMoney(amount: number, currency: string, showSign = false): string {
-  return `${ showSign ? formatSignedNumberWithSpaces(amount) : formatNumberWithSpaces(amount) } ${currency}`;
+export function formatSignedFixedPercent(
+  pct: number,
+  decimals = 1,
+  plusForZero = true
+): string {
+  const factor = Math.pow(10, decimals);
+  const rounded = normalizeZero(Math.round(pct * factor) / factor);
+  const sign = rounded > 0 || (rounded === 0 && plusForZero) ? '+' : rounded < 0 ? '-' : '';
+  return `${sign}${Math.abs(rounded).toFixed(decimals)}%`;
 }
 
-export function formatPLN(amount: number, forceSign = false, currency = 'PLN'): string {
-  const fmt = new Intl.NumberFormat(getLocale(), {
+export function formatMoney(amount: number, currency: string, showSign = false): string {
+  return `${showSign ? formatSignedNumberWithSpaces(amount) : formatNumberWithSpaces(amount)} ${currency}`;
+}
+
+export function formatCurrency(
+  amount: number,
+  forceSign = false,
+  currency = 'PLN',
+  locale = 'pl-PL'
+): string {
+  const clean = sanitizeNearZero(amount);
+  const fmt = new Intl.NumberFormat(locale, {
     style: 'currency',
     currency,
     minimumFractionDigits: 2,
     maximumFractionDigits: 2,
   });
-  const formatted = fmt.format(Math.abs(amount));
-  if (amount < 0) return `-${formatted}`;
-  if (forceSign && amount > 0) return `+${formatted}`;
+  const formatted = fmt.format(Math.abs(clean));
+  if (clean < 0) return `-${formatted}`;
+  if (forceSign && clean > 0) return `+${formatted}`;
   return formatted;
 }
 
-export function formatPercent(pct: number, forceSign = false): string {
-  const fmt = new Intl.NumberFormat(getLocale(), {
-    minimumFractionDigits: 2,
-    maximumFractionDigits: 2,
+export function formatPercent(
+  pct: number,
+  forceSign = false,
+  decimals = 2,
+  locale = 'pl-PL'
+): string {
+  const clean = sanitizeNearZero(pct, 0.5 / Math.pow(10, decimals));
+  const fmt = new Intl.NumberFormat(locale, {
+    minimumFractionDigits: decimals,
+    maximumFractionDigits: decimals,
   });
-  const formatted = `${fmt.format(Math.abs(pct))}%`;
-  if (pct < 0) return `-${formatted}`;
-  if (forceSign && pct > 0) return `+${formatted}`;
+  const formatted = `${fmt.format(Math.abs(clean))}%`;
+  if (clean < 0) return `-${formatted}`;
+  if (forceSign && clean > 0) return `+${formatted}`;
   return formatted;
 }
 
-export function getValueColorClass(val: number): string {
-  if (val > 0) return 'text-emerald-400';
-  if (val < 0) return 'text-rose-400';
+export function formatSignedPercentPoints(val: number, decimals = 2): string {
+  return formatSignedFixedPercent(val, decimals).replace('%', ' pp');
+}
+
+export function getValueColorClass(val: number, threshold = 0.005): string {
+  const clean = sanitizeNearZero(val, threshold);
+  if (clean > 0) return 'text-emerald-400';
+  if (clean < 0) return 'text-rose-400';
   return 'text-zinc-400';
 }

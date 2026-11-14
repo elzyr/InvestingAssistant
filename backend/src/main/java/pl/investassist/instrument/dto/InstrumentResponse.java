@@ -1,14 +1,23 @@
 package pl.investassist.instrument.dto;
 
-import java.io.Serializable;
 import java.util.UUID;
+import pl.investassist.common.enums.AssetCategory;
 import pl.investassist.common.enums.Currency;
 import pl.investassist.common.enums.InstrumentType;
 import pl.investassist.instrument.entity.Instrument;
 
 public record InstrumentResponse(
-    UUID id, String symbol, String name, InstrumentType type, Currency currency)
-    implements Serializable {
+    UUID id,
+    String symbol,
+    String name,
+    InstrumentType type,
+    Currency currency,
+    AssetCategory assetCategory) {
+
+  public InstrumentResponse(
+      UUID id, String symbol, String name, InstrumentType type, Currency currency) {
+    this(id, symbol, name, type, currency, null);
+  }
 
   public static InstrumentResponse from(Instrument entity) {
     if (entity == null) {
@@ -19,6 +28,7 @@ public record InstrumentResponse(
         entity.getSymbol(),
         entity.getName(),
         entity.getType(),
-        entity.getCurrency());
+        entity.getCurrency(),
+        entity.getAssetCategory());
   }
 }

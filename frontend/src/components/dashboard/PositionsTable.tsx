@@ -2,16 +2,16 @@ import { useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { ChevronDown, AlertTriangle, Pencil } from 'lucide-react';
 import type { Position, TaxMode } from '../../types/dashboard.ts';
+import { formatSignedFixedPercent } from '../../utils/reportsFormatters.ts';
 
 function formatReturnWithXirr(
   profitPercentFormatted: string,
   xirr: number | null | undefined,
-  isXirrFallback: boolean | undefined,
   annualizedUnit: string
 ): string {
-  if (xirr != null && !isXirrFallback) {
-    const xirrPct = (xirr * 100).toFixed(1);
-    return `${profitPercentFormatted} · ${xirrPct}% ${annualizedUnit}`;
+  if (xirr != null) {
+    const xirrPct = formatSignedFixedPercent(xirr * 100, 1, false);
+    return `${profitPercentFormatted} · ${xirrPct} ${annualizedUnit}`;
   }
   return profitPercentFormatted;
 }
@@ -56,10 +56,8 @@ const PositionRow = ({
           {position.fxDecomposition && (
             <div className="mt-1 flex items-center gap-1 font-mono text-[10px] text-zinc-400">
               <span className="bg-zinc-800/80 px-1.5 py-0.5 rounded border border-zinc-700/50">
-                {t('dashboard.market')}: {position.fxDecomposition.marketReturnPct >= 0 ? '+' : ''}
-                {position.fxDecomposition.marketReturnPct.toFixed(1)}% · {t('dashboard.fx')}:{' '}
-                {position.fxDecomposition.fxReturnPct >= 0 ? '+' : ''}
-                {position.fxDecomposition.fxReturnPct.toFixed(1)}%
+                {t('dashboard.market')}: {formatSignedFixedPercent(position.fxDecomposition.marketReturnPct, 1)} · {t('dashboard.fx')}:{' '}
+                {formatSignedFixedPercent(position.fxDecomposition.fxReturnPct, 1)}
               </span>
             </div>
           )}
@@ -71,8 +69,15 @@ const PositionRow = ({
 
         <div className="text-right font-mono text-xs text-zinc-300 flex items-center justify-end gap-1">
           <span>{position.priceFormatted}</span>
-          {position.isPriceUnavailable && (
-            <span title={t('dashboard.priceUnavailable')} className="inline-flex items-center">
+          {(position.isPriceUnavailable || position.isCpiUnavailable) && (
+            <span
+              title={
+                position.isPriceUnavailable
+                  ? t('dashboard.priceUnavailable')
+                  : t('dashboard.bondCpiUnavailable')
+              }
+              className="inline-flex items-center"
+            >
               <AlertTriangle className="w-3.5 h-3.5 text-amber-400 shrink-0 cursor-help" />
             </span>
           )}
@@ -87,7 +92,7 @@ const PositionRow = ({
             {position.profitFormatted}
           </span>
           <span className={`font-mono text-[11px] font-medium ${position.isProfit ? 'text-emerald-400/90' : 'text-rose-400/90'}`}>
-            {formatReturnWithXirr(position.profitPercentFormatted, position.xirr, position.isXirrFallback, annualizedUnit)}
+            {formatReturnWithXirr(position.profitPercentFormatted, position.xirr, annualizedUnit)}
           </span>
         </div>
 
@@ -125,7 +130,7 @@ const PositionRow = ({
           </div>
 
           {position.subPositions!.map((sub) => {
-            const isSubProfit = !sub.profitFormatted.startsWith('-');
+            const isSubProfit = sub.isProfit;
             return (
               <div
                 key={sub.id}
@@ -139,10 +144,8 @@ const PositionRow = ({
                   {sub.fxDecomposition && (
                     <div className="mt-0.5 flex items-center gap-1 font-mono text-[10px] text-zinc-400">
                       <span className="bg-zinc-800/60 px-1.5 py-0.5 rounded border border-zinc-700/40">
-                        {t('dashboard.market')}: {sub.fxDecomposition.marketReturnPct >= 0 ? '+' : ''}
-                        {sub.fxDecomposition.marketReturnPct.toFixed(1)}% · {t('dashboard.fx')}:{' '}
-                        {sub.fxDecomposition.fxReturnPct >= 0 ? '+' : ''}
-                        {sub.fxDecomposition.fxReturnPct.toFixed(1)}%
+                        {t('dashboard.market')}: {formatSignedFixedPercent(sub.fxDecomposition.marketReturnPct, 1)} · {t('dashboard.fx')}:{' '}
+                        {formatSignedFixedPercent(sub.fxDecomposition.fxReturnPct, 1)}
                       </span>
                     </div>
                   )}
@@ -176,7 +179,7 @@ const PositionRow = ({
                     {sub.profitFormatted}
                   </span>
                   <span className={`text-[11px] font-medium block ${isSubProfit ? 'text-emerald-400/90' : 'text-rose-400/90'}`}>
-                    {formatReturnWithXirr(sub.profitPercentFormatted, sub.xirr, sub.isXirrFallback, annualizedUnit)}
+                    {formatReturnWithXirr(sub.profitPercentFormatted, sub.xirr, annualizedUnit)}
                   </span>
                 </div>
 
@@ -218,7 +221,7 @@ export const PositionsTable = ({
   onEditTransaction,
 }: PositionsTableProps) => {
   const { t } = useTranslation();
-  const [expandedIds, setExpandedIds] = useState<Set<string>>(new Set(['bond-EDO']));
+  const [expandedIds, setExpandedIds] = useState<Set<string>>(() => new Set());
 
   const handleToggle = (id: string) => {
     setExpandedIds((prev) => {

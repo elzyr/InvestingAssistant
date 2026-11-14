@@ -1,8 +1,9 @@
 package pl.investassist.common.exception;
 
 import com.fasterxml.jackson.annotation.JsonInclude;
+import jakarta.validation.ConstraintViolationException;
 import java.time.Instant;
-import java.util.HashMap;
+import java.util.LinkedHashMap;
 import java.util.Locale;
 import java.util.Map;
 import org.slf4j.Logger;
@@ -37,10 +38,13 @@ public class GlobalExceptionHandler extends ResponseEntityExceptionHandler {
 
   private String resolveMessage(String messageOrKey, String defaultCode) {
     Locale locale = LocaleContextHolder.getLocale();
-    if (messageOrKey != null) {
+    if (messageOrKey != null && !messageOrKey.isBlank()) {
       try {
         return messageSource.getMessage(messageOrKey, null, locale);
       } catch (NoSuchMessageException ignored) {
+        if (!messageOrKey.startsWith("error.")) {
+          return messageOrKey;
+        }
       }
     }
     if (defaultCode != null) {
@@ -76,6 +80,11 @@ public class GlobalExceptionHandler extends ResponseEntityExceptionHandler {
     return buildError(HttpStatus.BAD_REQUEST, resolveMessage(ex.getMessage(), "error.bad_request"));
   }
 
+  @ExceptionHandler(ConstraintViolationException.class)
+  public ResponseEntity<ErrorResponse> handleConstraintViolation(ConstraintViolationException ex) {
+    return buildError(HttpStatus.BAD_REQUEST, resolveMessage(ex.getMessage(), "error.bad_request"));
+  }
+
   @ExceptionHandler(DataIntegrityViolationException.class)
   public ResponseEntity<ErrorResponse> handleDataIntegrityViolation(DataIntegrityViolationException ex) {
     return buildError(HttpStatus.CONFLICT, resolveMessage(null, "error.database_integrity"));
@@ -99,11 +108,17 @@ public class GlobalExceptionHandler extends ResponseEntityExceptionHandler {
       HttpHeaders headers,
       HttpStatusCode status,
       WebRequest request) {
-    Map<String, String> fieldErrors = new HashMap<>();
+    Map<String, String> fieldErrors = new LinkedHashMap<>();
     for (FieldError error : ex.getBindingResult().getFieldErrors()) {
-      fieldErrors.put(error.getField(), error.getDefaultMessage());
+      fieldErrors.putIfAbsent(error.getField(), error.getDefaultMessage());
     }
-    String message = "Validation failed: " + fieldErrors;
+    Locale locale = LocaleContextHolder.getLocale();
+    String message;
+    try {
+      message = messageSource.getMessage("error.validation_failed", new Object[] {fieldErrors}, locale);
+    } catch (NoSuchMessageException ignored) {
+      message = "Validation failed: " + fieldErrors;
+    }
     ErrorResponse body = new ErrorResponse(message, Instant.now().toEpochMilli(), fieldErrors);
     return ResponseEntity.status(HttpStatus.BAD_REQUEST).body(body);
   }
@@ -114,7 +129,7 @@ public class GlobalExceptionHandler extends ResponseEntityExceptionHandler {
       HttpHeaders headers,
       HttpStatusCode status,
       WebRequest request) {
-    String message = "Malformed JSON request";
+    String message = resolveMessage("error.malformed_json", "error.bad_request");
     ErrorResponse body = new ErrorResponse(message, Instant.now().toEpochMilli());
     return ResponseEntity.status(HttpStatus.BAD_REQUEST).body(body);
   }

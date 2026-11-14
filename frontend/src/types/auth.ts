@@ -1,4 +1,5 @@
-export type Currency = 'USD' | 'EUR' | 'PLN';
+export type Currency = 'USD' | 'EUR' | 'PLN' | 'GBP' | 'CHF';
+export const SUPPORTED_CURRENCIES: readonly Currency[] = ['PLN', 'EUR', 'USD', 'GBP', 'CHF'];
 export type Role = 'USER' | 'ADMIN';
 
 export interface LoginRequest {

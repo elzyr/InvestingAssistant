@@ -1,7 +1,7 @@
 import i18n from './i18n/config.ts';
 import { lazy, Suspense, useEffect } from 'react';
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
-import { useAppDispatch } from './store/hooks.ts';
+import { useAppDispatch } from './store/store.ts';
 import { checkAuthThunk } from './store/thunks/auth.thunk.ts';
 
 import { ProtectedRoute } from './routes/ProtectedRoute.tsx';
@@ -10,7 +10,6 @@ import { AppLayout } from './components/layout/AppLayout.tsx';
 const LoginPage = lazy(() => import('./pages/LoginPage.tsx').then((m) => ({ default: m.LoginPage })));
 const RegisterPage = lazy(() => import('./pages/RegisterPage.tsx').then((m) => ({ default: m.RegisterPage })));
 const DashboardPage = lazy(() => import('./pages/DashboardPage.tsx').then((m) => ({ default: m.DashboardPage })));
-const MonteCarloPage = lazy(() => import('./pages/MonteCarloPage.tsx').then((m) => ({ default: m.MonteCarloPage })));
 const MonthlyReportsPage = lazy(() => import('./pages/MonthlyReportsPage.tsx').then((m) => ({ default: m.MonthlyReportsPage })));
 
 function App() {
@@ -31,7 +30,6 @@ function App() {
             <Route element={<AppLayout />}>
               <Route path="/" element={<DashboardPage />} />
               <Route path="/reports" element={<MonthlyReportsPage />} />
-              <Route path="/stress-testing" element={<MonteCarloPage />} />
             </Route>
           </Route>
 

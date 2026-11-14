@@ -10,5 +10,5 @@ public record LoginRequest(
         @Size(max = 255, message = "Email cannot exceed 255 characters")
         String email,
     @NotBlank(message = "Password cannot be blank")
-        @Size(max = 72, message = "Password cannot exceed 72 characters")
+        @BcryptPasswordLimit
         String password) {}

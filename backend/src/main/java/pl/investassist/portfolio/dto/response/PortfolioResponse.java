@@ -2,7 +2,6 @@ package pl.investassist.portfolio.dto.response;
 
 import java.time.LocalDateTime;
 import java.util.UUID;
-import pl.investassist.common.enums.AccountType;
 import pl.investassist.common.enums.Currency;
 import pl.investassist.portfolio.entity.Portfolio;
 
@@ -12,7 +11,6 @@ public record PortfolioResponse(
     String name,
     String description,
     Currency baseCurrency,
-    AccountType accountType,
     LocalDateTime createdAt) {
 
   public static PortfolioResponse from(Portfolio portfolio) {
@@ -25,7 +23,6 @@ public record PortfolioResponse(
         portfolio.getName(),
         portfolio.getDescription(),
         portfolio.getBaseCurrency(),
-        portfolio.getAccountType() != null ? portfolio.getAccountType() : AccountType.STANDARD,
         portfolio.getCreatedAt());
   }
 }

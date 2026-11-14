@@ -1,5 +1,6 @@
-import { Plus, RefreshCw, ChevronDown, FolderPlus, History } from 'lucide-react';
+import { Plus, RefreshCw, FolderPlus, History } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
+import { PortfolioSelector } from '../common/PortfolioSelector.tsx';
 import type { PortfolioResponse } from '../../types/portfolio.ts';
 import type { TaxMode } from '../../types/dashboard.ts';
 
@@ -42,20 +43,12 @@ export const DashboardHeader = ({
 
         {portfolios.length > 0 && (
           <div className="flex items-center gap-1.5">
-            <div className="relative">
-              <select
-                value={activePortfolioId || ''}
-                onChange={(e) => onSelectPortfolio(e.target.value)}
-                className="appearance-none bg-zinc-900 border border-zinc-750 border-zinc-700/80 rounded-lg px-2.5 py-1 pr-7 text-xs font-mono font-medium text-zinc-200 hover:border-zinc-600 focus:outline-none focus:border-emerald-500 transition cursor-pointer"
-              >
-                {portfolios.map((p) => (
-                  <option key={p.id} value={p.id} className="bg-zinc-900 text-zinc-200">
-                    {p.name} ({p.baseCurrency})
-                  </option>
-                ))}
-              </select>
-              <ChevronDown className="w-3.5 h-3.5 text-zinc-400 absolute right-2 top-1/2 -translate-y-1/2 pointer-events-none" />
-            </div>
+            <PortfolioSelector
+              portfolios={portfolios}
+              activePortfolioId={activePortfolioId}
+              onSelectPortfolio={onSelectPortfolio}
+              showCurrency
+            />
 
             <button
               onClick={onCreatePortfolio}
@@ -71,7 +64,7 @@ export const DashboardHeader = ({
           {t('dashboard.positionCount', { count: positionCount })}
         </span>
 
-        <div className="flex items-center bg-zinc-900 border border-zinc-750 border-zinc-700/80 rounded-lg p-0.5 ml-1 font-mono">
+        <div className="flex items-center bg-zinc-900 border border-zinc-700/80 rounded-lg p-0.5 ml-1 font-mono">
           <button
             type="button"
             onClick={() => onTaxModeChange('NETTO')}
@@ -112,7 +105,8 @@ export const DashboardHeader = ({
         {onOpenTransactionHistory && (
           <button
             onClick={onOpenTransactionHistory}
-            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-zinc-900 hover:bg-zinc-800 border border-zinc-700/80 text-zinc-200 font-semibold text-xs tracking-tight transition cursor-pointer"
+            disabled={!activePortfolioId}
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-zinc-900 hover:bg-zinc-800 border border-zinc-700/80 text-zinc-200 font-semibold text-xs tracking-tight transition cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
             title={t('dashboard.transactionHistory')}
           >
             <History className="w-3.5 h-3.5 text-zinc-400" />
@@ -122,7 +116,8 @@ export const DashboardHeader = ({
 
         <button
           onClick={onAddTransaction}
-          className="flex items-center gap-1.5 px-3.5 py-1.5 rounded-lg bg-emerald-400 hover:bg-emerald-300 text-zinc-950 font-bold text-xs tracking-tight shadow-md hover:shadow-emerald-500/20 transition-all cursor-pointer"
+          disabled={!activePortfolioId}
+          className="flex items-center gap-1.5 px-3.5 py-1.5 rounded-lg bg-emerald-400 hover:bg-emerald-300 text-zinc-950 font-bold text-xs tracking-tight shadow-md hover:shadow-emerald-500/20 transition-all cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:bg-emerald-400"
         >
           <Plus className="w-3.5 h-3.5 stroke-[2.5]" />
           <span>{t('dashboard.transactionButton')}</span>

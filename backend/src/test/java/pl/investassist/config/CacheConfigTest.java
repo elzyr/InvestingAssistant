@@ -48,6 +48,48 @@ class CacheConfigTest {
 
     assertThat(searchConfig).isNotNull();
     assertThat(searchConfig.getTtlFunction().getTimeToLive("k", null)).isEqualTo(Duration.ofMinutes(15));
+    RedisCacheConfiguration projectionConfig =
+        redisManager.getCacheConfigurations().get(CacheConfig.CACHE_PORTFOLIO_PROJECTION);
+    assertThat(projectionConfig).isNotNull();
+    assertThat(projectionConfig.getTtlFunction().getTimeToLive("k", null)).isEqualTo(Duration.ofMinutes(5));
+    assertThat(CacheConfig.KEY_PREFIX).isEqualTo("investassist:java:v2:");
+  }
+
+  @Test
+  void redisCache_jsonRoundTrip() {
+    var serializer = CacheConfig.jsonSerializer();
+    var valuation = new pl.investassist.portfolio.dto.response.PortfolioValuationResponse(
+        java.util.UUID.randomUUID(),
+        "PLN",
+        pl.investassist.portfolio.valuation.TaxMode.NETTO,
+        new pl.investassist.portfolio.dto.response.PortfolioValuationResponse.ValuationSummaryDto(
+            new java.math.BigDecimal("1000.00"),
+            new java.math.BigDecimal("1050.00"),
+            java.math.BigDecimal.ZERO,
+            java.math.BigDecimal.ZERO,
+            new java.math.BigDecimal("900.00"),
+            new java.math.BigDecimal("150.00"),
+            java.math.BigDecimal.ZERO,
+            java.math.BigDecimal.ZERO,
+            new java.math.BigDecimal("100.00"),
+            new java.math.BigDecimal("11.11"),
+            new java.math.BigDecimal("28.50"),
+            null,
+            new java.math.BigDecimal("70.00"),
+            new java.math.BigDecimal("7.77"),
+            null,
+            new java.math.BigDecimal("2.50"),
+            1),
+        java.util.List.of(),
+        null);
+
+    byte[] bytes = serializer.serialize(valuation);
+    Object restored = serializer.deserialize(bytes);
+    assertThat(restored).isInstanceOf(pl.investassist.portfolio.dto.response.PortfolioValuationResponse.class);
+    assertThat(((pl.investassist.portfolio.dto.response.PortfolioValuationResponse) restored).portfolioId())
+        .isEqualTo(valuation.portfolioId());
+    assertThat(((pl.investassist.portfolio.dto.response.PortfolioValuationResponse) restored).summary().totalValue())
+        .isEqualByComparingTo("1000.00");
   }
 
   @Test

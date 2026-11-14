@@ -1,6 +1,7 @@
 package pl.investassist.security;
 
 import java.util.List;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.web.servlet.FilterRegistrationBean;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
@@ -20,11 +21,13 @@ public class SecurityConfig {
   }
 
   @Bean
-  public FilterRegistrationBean<CorsFilter> corsFilter() {
+  public FilterRegistrationBean<CorsFilter> corsFilter(
+      @Value("${app.cors.allowed-origins:http://localhost:5173,http://localhost:3000}")
+          List<String> allowedOrigins) {
     UrlBasedCorsConfigurationSource source = new UrlBasedCorsConfigurationSource();
     CorsConfiguration config = new CorsConfiguration();
     config.setAllowCredentials(true);
-    config.setAllowedOrigins(List.of("http://localhost:5173", "http://localhost:3000"));
+    config.setAllowedOrigins(allowedOrigins);
     config.setAllowedMethods(List.of("GET", "POST", "PUT", "DELETE", "OPTIONS", "PATCH"));
     config.setAllowedHeaders(List.of("*"));
     config.setExposedHeaders(List.of("Authorization", "X-User-Id"));

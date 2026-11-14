@@ -2,6 +2,7 @@ package pl.investassist.instrument.entity;
 
 import jakarta.persistence.*;
 import java.util.UUID;
+import pl.investassist.common.enums.AssetCategory;
 import pl.investassist.common.enums.Currency;
 import pl.investassist.common.enums.InstrumentType;
 
@@ -25,6 +26,10 @@ public class Instrument {
   @Enumerated(EnumType.STRING)
   @Column(nullable = false)
   private Currency currency;
+
+  @Enumerated(EnumType.STRING)
+  @Column(name = "asset_category", length = 32)
+  private AssetCategory assetCategory;
 
   public Instrument() {}
 
@@ -66,5 +71,13 @@ public class Instrument {
 
   public UUID getId() {
     return id;
+  }
+
+  public AssetCategory getAssetCategory() {
+    return assetCategory;
+  }
+
+  public void setAssetCategory(AssetCategory assetCategory) {
+    this.assetCategory = assetCategory;
   }
 }

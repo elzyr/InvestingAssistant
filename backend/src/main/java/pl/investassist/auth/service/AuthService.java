@@ -2,10 +2,10 @@ package pl.investassist.auth.service;
 
 import java.util.Locale;
 import java.util.UUID;
+import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.http.HttpStatus;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
-import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.server.ResponseStatusException;
 import pl.investassist.auth.dto.AuthResponse;
 import pl.investassist.auth.dto.LoginRequest;
@@ -36,7 +36,6 @@ public class AuthService {
     this.refreshTokenService = refreshTokenService;
   }
 
-  @Transactional
   public AuthResponse register(RegisterRequest request) {
     String normalizedEmail = request.email().trim().toLowerCase(Locale.ROOT);
     if (userRepository.existsByEmail(normalizedEmail)) {
@@ -56,7 +55,13 @@ public class AuthService {
             Role.USER,
             currency);
 
-    User savedUser = userRepository.save(user);
+    User savedUser;
+    try {
+      savedUser = userRepository.save(user);
+    } catch (DataIntegrityViolationException ex) {
+      throw new ResponseStatusException(
+          HttpStatus.CONFLICT, "User with email " + normalizedEmail + " already exists");
+    }
     return issueTokens(savedUser);
   }
 

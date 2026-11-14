@@ -1,6 +1,15 @@
-FROM eclipse-temurin:25-jdk-alpine AS build
+FROM eclipse-temurin:25-jdk-alpine AS jre
 
-RUN apk add --no-cache binutils
+RUN apk add --no-cache binutils && \
+    jlink \
+      --add-modules java.base,java.compiler,java.desktop,java.instrument,java.logging,java.management,java.naming,java.net.http,java.security.jgss,java.security.sasl,java.sql,java.sql.rowset,java.transaction.xa,java.xml,jdk.crypto.ec,jdk.net,jdk.unsupported \
+      --strip-debug \
+      --no-header-files \
+      --no-man-pages \
+      --compress=zip-9 \
+      --output /opt/jre
+
+FROM eclipse-temurin:25-jdk-alpine AS build
 
 WORKDIR /app
 
@@ -10,28 +19,9 @@ RUN sed -i 's/\r$//' mvnw && chmod +x mvnw
 RUN --mount=type=cache,target=/root/.m2 ./mvnw dependency:go-offline -B
 
 COPY src ./src
-RUN --mount=type=cache,target=/root/.m2 ./mvnw package -DskipTests -B
-
-RUN mkdir -p /app/extracted/snapshot-dependencies && \
+RUN --mount=type=cache,target=/root/.m2 ./mvnw package -DskipTests -B && \
     java -Djarmode=tools -jar target/*.jar extract --layers --launcher --destination /app/extracted && \
-    ( \
-      echo "java.base"; \
-      echo "java.instrument"; \
-      echo "jdk.crypto.ec"; \
-      for item in /app/extracted/spring-boot-loader /app/extracted/application/BOOT-INF/classes /app/extracted/dependencies/BOOT-INF/lib/*.jar; do \
-        jdeps --ignore-missing-deps -q --recursive --print-module-deps \
-          --class-path "/app/extracted/dependencies/BOOT-INF/lib/*" "$item" 2>/dev/null || \
-        jdeps --ignore-missing-deps -q --recursive --multi-release 25 --print-module-deps \
-          --class-path "/app/extracted/dependencies/BOOT-INF/lib/*" "$item" 2>/dev/null || true; \
-      done | tr ',' '\n'; \
-    ) | grep -v '^$' | sort -u | tr '\n' ',' | sed 's/,$//' > /tmp/modules.txt && \
-    jlink \
-      --add-modules "$(cat /tmp/modules.txt)" \
-      --strip-debug \
-      --no-header-files \
-      --no-man-pages \
-      --compress=zip-6 \
-      --output /opt/jre
+    mkdir -p /app/extracted/snapshot-dependencies
 
 FROM alpine:3.21
 
@@ -43,7 +33,7 @@ ENV PATH="$JAVA_HOME/bin:$PATH"
 
 WORKDIR /app
 
-COPY --from=build /opt/jre /opt/jre
+COPY --from=jre /opt/jre /opt/jre
 COPY --from=build --chown=appuser:appgroup /app/extracted/dependencies/ ./
 COPY --from=build --chown=appuser:appgroup /app/extracted/spring-boot-loader/ ./
 COPY --from=build --chown=appuser:appgroup /app/extracted/snapshot-dependencies/ ./

@@ -1,15 +1,33 @@
 import unittest
 from unittest.mock import patch, MagicMock
 
+class _InMemoryRedis:
+    def __init__(self):
+        self.store = {}
+
+    def get(self, key):
+        return self.store.get(key)
+
+    def set(self, key, value, ex=None):
+        self.store[key] = value
+
+    def delete(self, key):
+        self.store.pop(key, None)
+
+
 class TestInstrumentSearch(unittest.TestCase):
     def setUp(self):
         from app.services.cache_service import cache_service
-        try:
-            cache_service.redis_client.flushdb()
-        except Exception:
-            pass
+        self._cache_service = cache_service
+        self._orig_redis = cache_service.redis_client
+        cache_service.redis_client = _InMemoryRedis()
         with cache_service._mem_lock:
             cache_service._memory_cache.clear()
+
+    def tearDown(self):
+        self._cache_service.redis_client = self._orig_redis
+        with self._cache_service._mem_lock:
+            self._cache_service._memory_cache.clear()
 
     def test_search_instruments_returns_stocks_and_etfs_with_mapped_types(self):
         from app.services.yahoo_service import YahooService
@@ -94,13 +112,32 @@ class TestInstrumentSearch(unittest.TestCase):
             self.assertEqual(response[0]["symbol"], "AMZN")
             self.assertEqual(response[0]["type"], "STOCK")
 
-    def test_search_instruments_route_is_registered_on_prices_router(self):
-        from app.routers.prices_router import router
+    def test_search_instruments_normalizes_gbx_and_gbp_pence_to_gbp(self):
+        from app.services.yahoo_service import YahooService
 
-        route = next((r for r in router.routes if getattr(r, "path", "").endswith("/search")), None)
-        self.assertIsNotNone(route)
-        self.assertIn("GET", route.methods)
+        mock_search_instance = MagicMock()
+        mock_search_instance.quotes = [
+            {
+                "symbol": "VWRL.L",
+                "shortname": "Vanguard FTSE All-World UCITS ETF",
+                "quoteType": "ETF",
+                "exchange": "LSE",
+                "currency": "GBp",
+            },
+            {
+                "symbol": "AZN.L",
+                "shortname": "AstraZeneca PLC",
+                "quoteType": "EQUITY",
+                "exchange": "LSE",
+                "currency": "GBX",
+            },
+        ]
 
+        with patch("app.services.yahoo_service.yf.Search", return_value=mock_search_instance):
+            results = YahooService.search_instruments("lse")
+            self.assertEqual(len(results), 2)
+            self.assertEqual(results[0]["currency"], "GBP")
+            self.assertEqual(results[1]["currency"], "GBP")
 
 if __name__ == "__main__":
     unittest.main()

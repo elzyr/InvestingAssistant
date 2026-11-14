@@ -5,7 +5,7 @@ interface CustomAxiosRequestConfig extends InternalAxiosRequestConfig {
   _retry?: boolean;
 }
 
-const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || '';
+const API_BASE_URL = import.meta.env?.VITE_API_BASE_URL || '';
 
 let memoryToken: string | null = null;
 let onAuthExpiredCallback: (() => void) | null = null;
@@ -24,12 +24,25 @@ export const getAccessToken = (): string | null => {
 
 export const apiClient = axios.create({
   baseURL: API_BASE_URL,
-  timeout: 10000,
+  timeout: 45000,
   headers: {
     'Content-Type': 'application/json',
   },
   withCredentials: true,
 });
+
+export function extractApiErrorMessage(
+  error: unknown,
+  fallback: string,
+  preferFallbackOnTransport = false
+): string {
+  if (axios.isAxiosError<{ message?: string }>(error)) {
+    const serverMessage = error.response?.data?.message;
+    if (serverMessage) return serverMessage;
+    if (!preferFallbackOnTransport && error.message) return error.message;
+  }
+  return fallback;
+}
 
 apiClient.interceptors.request.use(
   (config: InternalAxiosRequestConfig) => {
@@ -50,7 +63,7 @@ export const refreshAuthResponse = (): Promise<AuthResponse> => {
       .post<AuthResponse>(
         `${API_BASE_URL}/api/auth/refresh`,
         {},
-        { withCredentials: true }
+        { withCredentials: true, timeout: 15000 }
       )
       .then((res) => {
         const authData = res.data;
@@ -58,9 +71,10 @@ export const refreshAuthResponse = (): Promise<AuthResponse> => {
         return authData;
       })
       .catch((err) => {
-        setAccessToken(null);
-        if (onAuthExpiredCallback) {
-          onAuthExpiredCallback();
+        const status = axios.isAxiosError(err) ? err.response?.status : undefined;
+        if (status === 401 || status === 403) {
+          setAccessToken(null);
+          onAuthExpiredCallback?.();
         }
         return Promise.reject(err);
       })

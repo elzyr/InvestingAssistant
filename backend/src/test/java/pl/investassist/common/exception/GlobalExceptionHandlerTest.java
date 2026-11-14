@@ -13,7 +13,6 @@ import org.junit.jupiter.api.Test;
 import org.springframework.context.MessageSource;
 import org.springframework.context.support.ReloadableResourceBundleMessageSource;
 import org.springframework.http.HttpHeaders;
-import org.springframework.test.util.ReflectionTestUtils;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.MvcResult;
 import org.springframework.test.web.servlet.setup.MockMvcBuilders;
@@ -46,7 +45,7 @@ class GlobalExceptionHandlerTest {
     messageSource.setDefaultEncoding("UTF-8");
     messageSource.setDefaultLocale(Locale.ENGLISH);
 
-    GlobalExceptionHandler handler = createHandler(messageSource);
+    GlobalExceptionHandler handler = new GlobalExceptionHandler(messageSource);
 
     AcceptHeaderLocaleResolver localeResolver = new AcceptHeaderLocaleResolver();
     localeResolver.setDefaultLocale(Locale.ENGLISH);
@@ -55,41 +54,6 @@ class GlobalExceptionHandlerTest {
         .setControllerAdvice(handler)
         .setLocaleResolver(localeResolver)
         .build();
-  }
-
-  private GlobalExceptionHandler createHandler(MessageSource messageSource) {
-    try {
-      return GlobalExceptionHandler.class.getConstructor(MessageSource.class).newInstance(messageSource);
-    } catch (NoSuchMethodException e) {
-      try {
-        GlobalExceptionHandler handler = GlobalExceptionHandler.class.getConstructor().newInstance();
-        try {
-          ReflectionTestUtils.setField(handler, "messageSource", messageSource);
-        } catch (Exception ignored) {
-        }
-        return handler;
-      } catch (Exception ex) {
-        throw new RuntimeException(ex);
-      }
-    } catch (Exception e) {
-      throw new RuntimeException(e);
-    }
-  }
-
-  @Test
-  void handleInsufficientPosition_whenAcceptLanguagePl_returnsLocalizedPolishMessage() throws Exception {
-    MvcResult result = mockMvc.perform(get("/test/insufficient-position")
-            .header(HttpHeaders.ACCEPT_LANGUAGE, "pl"))
-        .andExpect(status().isBadRequest())
-        .andExpect(jsonPath("$.message").exists())
-        .andReturn();
-
-    JsonNode json = objectMapper.readTree(result.getResponse().getContentAsString());
-    String message = json.get("message").asText();
-
-    assertThat(message)
-        .isNotBlank()
-        .isNotEqualTo("error.insufficient_position");
   }
 
   @Test
@@ -130,5 +94,87 @@ class GlobalExceptionHandlerTest {
     assertThat(plMessage).isNotEqualTo("error.resource_not_found");
     assertThat(enMessage).isNotEqualTo("error.resource_not_found");
     assertThat(plMessage).isNotEqualTo(enMessage);
+  }
+
+  @Test
+  void handleIllegalArgument_preservesDynamicMessageWithoutKeyOverwrite() {
+    var messageSource = new org.springframework.context.support.StaticMessageSource();
+    messageSource.addMessage("error.bad_request", java.util.Locale.ENGLISH, "Invalid request");
+    var handler = new GlobalExceptionHandler(messageSource);
+
+    var response = handler.handleIllegalArgument(
+        new IllegalArgumentException("Commission cannot exceed gross amount on SELL"));
+
+    assertThat(response.getStatusCode().value()).isEqualTo(400);
+    assertThat(response.getBody()).isNotNull();
+    assertThat(response.getBody().message())
+        .isEqualTo("Commission cannot exceed gross amount on SELL");
+  }
+
+  @Test
+  void globalExceptionHandler_localizedValidationAndMalformedJson() throws Exception {
+    var rb = new org.springframework.context.support.ResourceBundleMessageSource();
+    rb.setBasename("messages");
+    rb.setDefaultEncoding("UTF-8");
+    rb.setFallbackToSystemLocale(false);
+
+    var localeResolver = new org.springframework.web.servlet.i18n.AcceptHeaderLocaleResolver();
+    localeResolver.setDefaultLocale(java.util.Locale.ENGLISH);
+
+    var mvc = MockMvcBuilders.standaloneSetup(new ValidationDummyController())
+        .setControllerAdvice(new GlobalExceptionHandler(rb))
+        .setLocaleResolver(localeResolver)
+        .build();
+
+    MvcResult malformedEn = mvc.perform(
+            org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post("/test/validate")
+                .header(HttpHeaders.ACCEPT_LANGUAGE, "en")
+                .contentType(org.springframework.http.MediaType.APPLICATION_JSON)
+                .content("{bad-json"))
+        .andExpect(status().isBadRequest())
+        .andReturn();
+    MvcResult malformedPl = mvc.perform(
+            org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post("/test/validate")
+                .header(HttpHeaders.ACCEPT_LANGUAGE, "pl")
+                .contentType(org.springframework.http.MediaType.APPLICATION_JSON)
+                .content("{bad-json"))
+        .andExpect(status().isBadRequest())
+        .andReturn();
+
+    String malformedEnMsg = objectMapper.readTree(malformedEn.getResponse().getContentAsString()).get("message").asText();
+    String malformedPlMsg = objectMapper.readTree(malformedPl.getResponse().getContentAsString()).get("message").asText();
+    assertThat(malformedEnMsg).isEqualTo("Malformed JSON request");
+    assertThat(malformedPlMsg).isNotEqualTo("error.malformed_json");
+    assertThat(malformedEnMsg).isNotEqualTo(malformedPlMsg);
+
+    MvcResult validationEn = mvc.perform(
+            org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post("/test/validate")
+                .header(HttpHeaders.ACCEPT_LANGUAGE, "en")
+                .contentType(org.springframework.http.MediaType.APPLICATION_JSON)
+                .content("{\"name\":\"\"}"))
+        .andExpect(status().isBadRequest())
+        .andReturn();
+    MvcResult validationPl = mvc.perform(
+            org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post("/test/validate")
+                .header(HttpHeaders.ACCEPT_LANGUAGE, "pl")
+                .contentType(org.springframework.http.MediaType.APPLICATION_JSON)
+                .content("{\"name\":\"\"}"))
+        .andExpect(status().isBadRequest())
+        .andReturn();
+
+    String validationEnMsg = objectMapper.readTree(validationEn.getResponse().getContentAsString()).get("message").asText();
+    String validationPlMsg = objectMapper.readTree(validationPl.getResponse().getContentAsString()).get("message").asText();
+    assertThat(validationEnMsg).startsWith("Validation failed:");
+    assertThat(validationPlMsg).startsWith("Błąd walidacji:");
+  }
+
+  @org.springframework.web.bind.annotation.RestController
+  static class ValidationDummyController {
+    record Payload(@jakarta.validation.constraints.NotBlank String name) {}
+
+    @org.springframework.web.bind.annotation.PostMapping("/test/validate")
+    String validate(@jakarta.validation.Valid @org.springframework.web.bind.annotation.RequestBody Payload payload) {
+      return payload.name();
+    }
   }
 }

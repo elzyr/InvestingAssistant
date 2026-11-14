@@ -26,7 +26,7 @@ import pl.investassist.instrument.dto.CreateInstrumentRequest;
 import pl.investassist.instrument.dto.InstrumentResponse;
 import pl.investassist.instrument.entity.Instrument;
 import pl.investassist.instrument.repository.InstrumentRepository;
-import pl.investassist.portfolio.client.MarketDataClient;
+import pl.investassist.portfolio.port.MarketDataPort;
 
 @Service
 public class InstrumentService {
@@ -34,11 +34,11 @@ public class InstrumentService {
   private static final Logger log = LoggerFactory.getLogger(InstrumentService.class);
 
   private final InstrumentRepository instrumentRepository;
-  private final MarketDataClient marketDataClient;
+  private final MarketDataPort marketDataClient;
 
   public InstrumentService(
       InstrumentRepository instrumentRepository,
-      MarketDataClient marketDataClient) {
+      MarketDataPort marketDataClient) {
     this.instrumentRepository = instrumentRepository;
     this.marketDataClient = marketDataClient;
   }
@@ -65,8 +65,17 @@ public class InstrumentService {
                 () -> new ResourceNotFoundException("Instrument not found with UUID: " + uuid)));
   }
 
+  @Transactional(readOnly = true)
   public List<InstrumentResponse> getInstruments(String search, InstrumentType type, Integer page, Integer size) {
-    Pageable pageable = PaginationUtils.toPageable(page, size);
+    Pageable pageable = PaginationUtils.toBoundedPageable(page, size);
+    String searchQuery = search != null ? search.trim() : "";
+    Page<Instrument> paged = instrumentRepository.searchInstruments(type, searchQuery, pageable);
+    return paged != null ? paged.getContent().stream().map(InstrumentResponse::from).toList() : List.of();
+  }
+
+  @Transactional
+  public List<InstrumentResponse> discoverInstruments(String search, InstrumentType type, Integer page, Integer size) {
+    Pageable pageable = PaginationUtils.toBoundedPageable(page, size);
     String searchQuery = search != null ? search.trim() : "";
 
     if (searchQuery.length() < 2) {
@@ -144,12 +153,13 @@ public class InstrumentService {
 
       if (existing != null) {
         addIfMatching(existing, type, searchQuery, existingSymbols, added);
-      } else if (pendingSymbols.add(symUpper)) {
+      } else if (ext.currency() != null && pendingSymbols.add(symUpper)) {
         Instrument instrument = new Instrument();
         instrument.setSymbol(symUpper);
         instrument.setName(ext.name() != null && !ext.name().isBlank() ? ext.name() : ext.symbol());
         instrument.setType(ext.type() != null ? ext.type() : InstrumentType.STOCK);
-        instrument.setCurrency(ext.currency() != null ? ext.currency() : Currency.USD);
+        instrument.setCurrency(ext.currency());
+        instrument.setAssetCategory(ext.assetCategory());
         newInstruments.add(instrument);
       }
     }

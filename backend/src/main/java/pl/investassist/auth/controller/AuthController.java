@@ -21,7 +21,7 @@ import pl.investassist.auth.service.AuthService;
 @RequestMapping("/api/auth")
 public class AuthController {
 
-  @Value("${app.security.cookie-secure:false}")
+  @Value("${app.security.cookie-secure:true}")
   private boolean cookieSecure;
 
   private final long refreshExpirationSeconds;

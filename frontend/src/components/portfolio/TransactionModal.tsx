@@ -1,21 +1,16 @@
-import React, { useState, useEffect, useMemo, useRef } from 'react';
+import React from 'react';
 import { useTranslation } from 'react-i18next';
-import { isAxiosError, isCancel } from 'axios';
-import { X, ArrowDownRight, ArrowUpRight, Loader2, ShieldCheck, Sparkles, Trash2, Search, ChevronDown, Check } from 'lucide-react';
-import { instrumentService } from '../../services/instrument.service.ts';
-import { marketService } from '../../services/market.service.ts';
-import { standardizeDate } from '../../utils/domain/dates.ts';
-import { isBondInstrument } from '../../utils/domain/assets.ts';
-import { partitionInstruments } from '../../utils/instrumentSearch.ts';
-import { useAppDispatch, useAppSelector } from '../../store/hooks.ts';
-import {
-  createTransaction,
-  updateTransaction,
-  deleteTransaction,
-} from '../../store/thunks/portfolio.thunk.ts';
+import { ArrowDownRight, ArrowUpRight, Loader2, ShieldCheck, Sparkles, Trash2 } from 'lucide-react';
+import { Modal } from '../common/Modal.tsx';
+import { ErrorBanner } from '../common/ErrorBanner.tsx';
+import { InstrumentPicker } from './InstrumentPicker.tsx';
+import { BondAmountsFields, BondMetadataFields } from './BondTransactionFields.tsx';
+import { EquityTransactionFields } from './EquityTransactionFields.tsx';
+import { getTodayLocalDateStr } from './transactionFormReducer.ts';
+import { useTransactionForm } from './useTransactionForm.ts';
 import type { InstrumentResponse } from '../../types/instrument.ts';
 import type { Currency } from '../../types/auth.ts';
-import type { TransactionResponse, TransactionType } from '../../types/portfolio.ts';
+import type { TransactionResponse } from '../../types/portfolio.ts';
 
 export interface TransactionModalProps {
   isOpen: boolean;
@@ -26,10 +21,6 @@ export interface TransactionModalProps {
   instrument?: InstrumentResponse;
 }
 
-const getTodayLocalDateStr = () => {
-  return standardizeDate(new Date());
-};
-
 export const TransactionModal: React.FC<TransactionModalProps> = ({
   isOpen,
   onClose,
@@ -38,666 +29,91 @@ export const TransactionModal: React.FC<TransactionModalProps> = ({
   transaction,
   instrument,
 }) => {
-  const { t, i18n } = useTranslation();
-  const dispatch = useAppDispatch();
-  const reduxInstruments = useAppSelector((state) => state.portfolio.instruments);
-  const reduxQuotes = useAppSelector((state) => state.portfolio.quotes);
-  const reduxPositions = useAppSelector((state) => state.portfolio.positions);
-  const reduxTransactions = useAppSelector((state) => state.portfolio.transactions);
-  const [searchQuery, setSearchQuery] = useState('');
-  const [isPickerOpen, setIsPickerOpen] = useState(false);
-  const pickerRef = useRef<HTMLDivElement>(null);
-
-  const { ownedInstrumentIds, ownedSymbols } = useMemo(() => {
-    const ids = new Set<string>();
-    const symbols = new Set<string>();
-    for (const pos of reduxPositions) {
-      if (pos.instrumentId) ids.add(pos.instrumentId);
-      if (pos.seriesName) symbols.add(pos.seriesName);
-    }
-    for (const tx of reduxTransactions) {
-      if (tx.instrumentId) ids.add(tx.instrumentId);
-      if (tx.seriesName) symbols.add(tx.seriesName);
-    }
-    return { ownedInstrumentIds: ids, ownedSymbols: symbols };
-  }, [reduxPositions, reduxTransactions]);
-  const cachedInstruments = useMemo(() => {
-    return Object.values(reduxInstruments).filter((i) => i.type === 'ETF' || i.type === 'BOND' || i.type === 'STOCK');
-  }, [reduxInstruments]);
-  const initialInstrument = instrument || cachedInstruments[0];
-  const initialInstrumentIsBond = isBondInstrument(initialInstrument);
-  const initialQuote = initialInstrument ? reduxQuotes[initialInstrument.symbol] : undefined;
-  const [catalogInstruments, setCatalogInstruments] = useState<InstrumentResponse[]>([]);
-  const [loadingCatalog, setLoadingCatalog] = useState(false);
-  const [selectedInstrumentObj, setSelectedInstrumentObj] = useState<InstrumentResponse | null>(
-    initialInstrument || null
-  );
-  const isEdit = Boolean(transaction);
-
-  const { yourInstruments, allInstruments } = useMemo(() => {
-    return partitionInstruments({
-      catalogInstruments,
-      ownedInstruments: cachedInstruments,
-      ownedInstrumentIds,
-      ownedSymbols,
-      query: searchQuery,
-    });
-  }, [catalogInstruments, cachedInstruments, ownedInstrumentIds, ownedSymbols, searchQuery]);
-
-  const combinedList = useMemo(
-    () => [...yourInstruments, ...allInstruments],
-    [yourInstruments, allInstruments]
-  );
-  const [highlightedIndex, setHighlightedIndex] = useState<number>(0);
-
-  const handleSearchQueryChange = (val: string) => {
-    setSearchQuery(val);
-    setHighlightedIndex(0);
-    if (!val.trim()) {
-      setCatalogInstruments([]);
-      setLoadingCatalog(false);
-    } else if (isOpen && !transaction) {
-      setLoadingCatalog(true);
-    }
-  };
-
-  const handlePickerKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
-    if (combinedList.length === 0) return;
-    if (e.key === 'ArrowDown') {
-      e.preventDefault();
-      setHighlightedIndex((prev) => (prev + 1) % combinedList.length);
-    } else if (e.key === 'ArrowUp') {
-      e.preventDefault();
-      setHighlightedIndex((prev) => (prev - 1 + combinedList.length) % combinedList.length);
-    } else if (e.key === 'Enter') {
-      e.preventDefault();
-      const targetInst = combinedList[highlightedIndex];
-      if (targetInst) {
-        handleInstrumentSelect(targetInst);
-        setIsPickerOpen(false);
-      }
-    } else if (e.key === 'Escape') {
-      e.preventDefault();
-      setIsPickerOpen(false);
-    }
-  };
-
-  useEffect(() => {
-    const handleClickOutside = (e: MouseEvent) => {
-      if (pickerRef.current && !pickerRef.current.contains(e.target as Node)) {
-        setIsPickerOpen(false);
-      }
-    };
-    if (isPickerOpen) {
-      document.addEventListener('mousedown', handleClickOutside);
-    }
-    return () => {
-      document.removeEventListener('mousedown', handleClickOutside);
-    };
-  }, [isPickerOpen]);
-  const [selectedInstrumentId, setSelectedInstrumentId] = useState(initialInstrument?.id || '');
-  const [transactionType, setTransactionType] = useState<TransactionType>('BUY');
-  const [quantity, setQuantity] = useState<string>('10');
-  const [price, setPrice] = useState<string>(() => {
-    if (initialInstrumentIsBond) return '100.00';
-    if (initialQuote?.price) return initialQuote.price.toFixed(2);
-    return '100.00';
-  });
-  const [commission, setCommission] = useState<string>('0');
-  const [currency, setCurrency] = useState<Currency>(() => {
-    if (initialInstrumentIsBond) return 'PLN';
-    return (initialInstrument?.currency as Currency) || defaultCurrency;
-  });
-  const [transactionDate, setTransactionDate] = useState<string>(getTodayLocalDateStr);
-
-  const [seriesName, setSeriesName] = useState<string>('');
-  const [interestType, setInterestType] = useState<'FIXED' | 'INFLATION'>('FIXED');
-  const [bondRate, setBondRate] = useState<string>('');
-  const [bondMargin, setBondMargin] = useState<string>('');
-  const [termMonths, setTermMonths] = useState<string>('');
-
-  const [loadingPrice, setLoadingPrice] = useState(false);
-  const [submitting, setSubmitting] = useState(false);
-  const [deleting, setDeleting] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const [prevTxId, setPrevTxId] = useState<string | null>(null);
-
-  if (transaction && transaction.id !== prevTxId) {
-    setPrevTxId(transaction.id);
-    setSelectedInstrumentId(transaction.instrumentId);
-    setSelectedInstrumentObj(
-      cachedInstruments.find((i) => i.id === transaction.instrumentId) ||
-      catalogInstruments.find((i) => i.id === transaction.instrumentId) ||
-      null
-    );
-    setTransactionType(transaction.transactionType);
-    setQuantity(transaction.quantity?.toString() || '1');
-    setPrice(transaction.price?.toString() || '100');
-    setCommission(transaction.commission?.toString() || '0');
-    setCurrency(transaction.currency || 'PLN');
-    if (transaction.executedAt) {
-      setTransactionDate(standardizeDate(transaction.executedAt));
-    }
-    setSeriesName(transaction.seriesName || '');
-    setInterestType(transaction.bondMargin ? 'INFLATION' : 'FIXED');
-    if (transaction.bondRate !== undefined && transaction.bondRate !== null) {
-      setBondRate(transaction.bondRate.toString());
-    }
-    if (transaction.bondMargin !== undefined && transaction.bondMargin !== null) {
-      setBondMargin(transaction.bondMargin.toString());
-    }
-    if (transaction.termMonths) {
-      setTermMonths(transaction.termMonths.toString());
-    }
-  } else if (!transaction && prevTxId !== null) {
-    setPrevTxId(null);
-    setSelectedInstrumentId(initialInstrument?.id || '');
-    setSelectedInstrumentObj(initialInstrument || null);
-    setSearchQuery('');
-    setIsPickerOpen(false);
-    setTransactionType('BUY');
-    setQuantity('10');
-    setPrice(
-      initialInstrumentIsBond
-        ? '100.00'
-        : initialQuote?.price
-        ? initialQuote.price.toFixed(2)
-        : '100.00'
-    );
-    setCommission('0');
-    setCurrency(
-      initialInstrumentIsBond
-        ? 'PLN'
-        : ((initialInstrument?.currency as Currency) || defaultCurrency)
-    );
-    setTransactionDate(getTodayLocalDateStr());
-    setSeriesName('');
-    setInterestType('FIXED');
-    setBondRate('');
-    setBondMargin('');
-    setTermMonths('');
-    setError(null);
-  }
-
-  const effectiveInstrumentId =
-    selectedInstrumentId || initialInstrument?.id || combinedList[0]?.id || '';
-  const selectedInstrument =
-    selectedInstrumentObj ||
-    catalogInstruments.find((i) => i.id === effectiveInstrumentId) ||
-    cachedInstruments.find((i) => i.id === effectiveInstrumentId) ||
-    instrument;
-  const isBond = isBondInstrument(selectedInstrument) || transaction?.bondRate !== undefined || Boolean(transaction?.seriesName);
-
-  const priceAbortRef = useRef<AbortController | null>(null);
-
-  const handleInstrumentSelect = (inst: InstrumentResponse) => {
-    priceAbortRef.current?.abort();
-    priceAbortRef.current = null;
-    setSelectedInstrumentId(inst.id);
-    setSelectedInstrumentObj(inst);
-    const instrumentIsBond = isBondInstrument(inst);
-
-    if (instrumentIsBond) {
-      setCurrency('PLN');
-      setPrice('100.00');
-      setLoadingPrice(false);
-    } else {
-      setCurrency(inst.currency || 'USD');
-      const cached = reduxQuotes[inst.symbol];
-      if (cached?.price) {
-        setPrice(cached.price.toFixed(2));
-        setLoadingPrice(false);
-      } else {
-        const controller = new AbortController();
-        priceAbortRef.current = controller;
-        setLoadingPrice(true);
-        marketService
-          .getPrice(inst.symbol, undefined, controller.signal)
-          .then((quote) => {
-            if (!controller.signal.aborted && quote?.price) {
-              setPrice(quote.price.toFixed(2));
-            }
-          })
-          .catch((err: unknown) => {
-            if (!isCancel(err)) {
-              console.warn(`Failed to fetch price for ${inst.symbol}:`, err);
-            }
-          })
-          .finally(() => {
-            if (priceAbortRef.current === controller) {
-              priceAbortRef.current = null;
-              setLoadingPrice(false);
-            }
-          });
-      }
-    }
-  };
-
-  useEffect(() => {
-    return () => {
-      priceAbortRef.current?.abort();
-    };
-  }, [isOpen]);
-
-  const handleSeriesNameChange = (val: string) => {
-    setSeriesName(val);
-    const raw = val.toUpperCase().trim();
-    const match = raw.match(/^([A-Z]{3})(\d{2})(\d{2})$/);
-    if (match) {
-      const prefix = match[1];
-      const month = parseInt(match[2], 10);
-      const year = 2000 + parseInt(match[3], 10);
-
-      let tenure = 36;
-      let detectedType: 'FIXED' | 'INFLATION' = 'FIXED';
-
-      if (prefix === 'TOS') {
-        tenure = 36;
-        detectedType = 'FIXED';
-      } else if (prefix === 'EDO') {
-        tenure = 120;
-        detectedType = 'INFLATION';
-      } else if (prefix === 'COI') {
-        tenure = 48;
-        detectedType = 'INFLATION';
-      } else if (prefix === 'DOR') {
-        tenure = 24;
-        detectedType = 'FIXED';
-      } else if (prefix === 'ROR') {
-        tenure = 12;
-        detectedType = 'FIXED';
-      } else if (prefix === 'OTS') {
-        tenure = 3;
-        detectedType = 'FIXED';
-      } else if (prefix === 'ROS') {
-        tenure = 72;
-        detectedType = 'INFLATION';
-      } else if (prefix === 'ROD') {
-        tenure = 144;
-        detectedType = 'INFLATION';
-      }
-
-      setInterestType(detectedType);
-      setTermMonths(tenure.toString());
-
-      const issueYear = year - Math.round(tenure / 12);
-      const safeMonth = Math.min(12, Math.max(1, month));
-      const mm = String(safeMonth).padStart(2, '0');
-      setTransactionDate(`${issueYear}-${mm}-01`);
-    }
-  };
-
-  const selectedInstrumentIdRef = useRef(selectedInstrumentId);
-  const initialInstrumentRef = useRef(initialInstrument);
-  const handleInstrumentSelectRef = useRef(handleInstrumentSelect);
-
-  useEffect(() => {
-    selectedInstrumentIdRef.current = selectedInstrumentId;
-    initialInstrumentRef.current = initialInstrument;
-    handleInstrumentSelectRef.current = handleInstrumentSelect;
-  });
-
-  useEffect(() => {
-    const trimmed = searchQuery.trim();
-    if (!isOpen || transaction || !trimmed) return;
-
-    const controller = new AbortController();
-    const timer = setTimeout(async () => {
-      try {
-        const data = await instrumentService.getInstruments(trimmed, undefined, controller.signal);
-        if (controller.signal.aborted) return;
-        const filtered = data.filter((i) => i.type === 'ETF' || i.type === 'BOND' || i.type === 'STOCK');
-        setCatalogInstruments(filtered);
-        if (!selectedInstrumentIdRef.current && filtered.length > 0 && !initialInstrumentRef.current) {
-          handleInstrumentSelectRef.current(filtered[0]);
-        }
-      } catch (err: unknown) {
-        if (controller.signal.aborted || isCancel(err)) return;
-        if (isAxiosError<{ message?: string }>(err)) {
-          setError(err.response?.data?.message || t('transactionModal.errorLoadingInstruments'));
-        } else {
-          setError(t('transactionModal.errorLoadingInstruments'));
-        }
-      } finally {
-        if (!controller.signal.aborted) setLoadingCatalog(false);
-      }
-    }, 250);
-    return () => {
-      controller.abort();
-      clearTimeout(timer);
-    };
-  }, [isOpen, transaction, searchQuery, t]);
-
   if (!isOpen) return null;
 
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!effectiveInstrumentId) {
-      setError(t('transactionModal.errorSelectInstrument'));
-      return;
-    }
-    const q = parseFloat(quantity);
-    const p = isBond && transactionType === 'BUY' ? 100.0 : parseFloat(price);
-    const c = parseFloat(commission) || 0;
+  return (
+    <TransactionModalContent
+      key={`${transaction?.id ?? 'new'}-${instrument?.id ?? ''}`}
+      onClose={onClose}
+      portfolioId={portfolioId}
+      defaultCurrency={defaultCurrency}
+      transaction={transaction}
+      instrument={instrument}
+    />
+  );
+};
 
-    if (isNaN(q) || q <= 0) {
-      setError(t('transactionModal.errorQuantityPositive'));
-      return;
-    }
-    if (isNaN(p) || p <= 0) {
-      setError(t('transactionModal.errorPricePositive'));
-      return;
-    }
-
-    if (isBond && transactionType === 'BUY') {
-      const parsedRate = parseFloat(bondRate);
-      if (isNaN(parsedRate) || parsedRate < 0) {
-        setError(t('transactionModal.errorBondRatePositive'));
-        return;
-      }
-      if (interestType === 'INFLATION') {
-        const parsedMargin = parseFloat(bondMargin);
-        if (isNaN(parsedMargin) || parsedMargin < 0) {
-          setError(t('transactionModal.errorBondMarginPositive'));
-          return;
-        }
-      }
-    }
-
-    setSubmitting(true);
-    setError(null);
-
-    const executedAt = transactionDate ? `${standardizeDate(transactionDate)}T12:00:00` : undefined;
-    const requestPayload = {
-      instrumentId: effectiveInstrumentId,
-      transactionType,
-      quantity: q,
-      price: p,
-      commission: c,
-      currency: isBond ? 'PLN' : currency,
-      executedAt,
-      seriesName: isBond && seriesName.trim() ? seriesName.trim() : undefined,
-      bondRate: isBond && bondRate ? parseFloat(bondRate) : undefined,
-      bondMargin: isBond && interestType === 'INFLATION' && bondMargin ? parseFloat(bondMargin) : undefined,
-      termMonths: isBond && termMonths ? parseInt(termMonths, 10) : undefined,
-    };
-
-    try {
-      if (isEdit && transaction) {
-        await dispatch(
-          updateTransaction({
-            portfolioId,
-            transactionId: transaction.id,
-            request: requestPayload,
-          })
-        ).unwrap();
-      } else {
-        await dispatch(
-          createTransaction({
-            portfolioId,
-            request: requestPayload,
-          })
-        ).unwrap();
-      }
-      onClose();
-    } catch (err: unknown) {
-      if (typeof err === 'string') {
-        setError(err);
-      } else {
-        setError(isEdit ? t('transactionModal.errorUpdateFailed') : t('transactionModal.errorCreateFailed'));
-      }
-    } finally {
-      setSubmitting(false);
-    }
-  };
-
-  const handleDelete = async () => {
-    if (!transaction || !window.confirm(t('transactionModal.confirmDelete'))) {
-      return;
-    }
-    setDeleting(true);
-    setError(null);
-    try {
-      await dispatch(
-        deleteTransaction({
-          portfolioId,
-          transactionId: transaction.id,
-        })
-      ).unwrap();
-      onClose();
-    } catch (err: unknown) {
-      setError(typeof err === 'string' ? err : t('transactionModal.errorDeleteFailed'));
-    } finally {
-      setDeleting(false);
-    }
-  };
-
-  const parsedQty = parseFloat(quantity) || 0;
-  const bondTotalNominal = parsedQty * 100;
+const TransactionModalContent: React.FC<Omit<TransactionModalProps, 'isOpen'>> = ({
+  onClose,
+  portfolioId,
+  defaultCurrency = 'PLN',
+  transaction,
+  instrument,
+}) => {
+  const { t } = useTranslation();
+  const {
+    state,
+    setField,
+    isEdit,
+    isBond,
+    effectiveInstrumentId,
+    selectedInstrument,
+    cachedInstruments,
+    ownedInstrumentIds,
+    ownedSymbols,
+    handleInstrumentSelect,
+    handleSeriesNameChange,
+    handleSubmit,
+    handleDelete,
+  } = useTransactionForm({
+    onClose,
+    portfolioId,
+    defaultCurrency,
+    transaction,
+    instrument,
+  });
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/75 backdrop-blur-xs">
-      <div className="bg-[#101115] border border-zinc-800 rounded-lg max-w-md w-full shadow-2xl overflow-hidden max-h-[92vh] flex flex-col">
-        <div className="px-5 py-4 border-b border-zinc-800 flex items-center justify-between shrink-0">
-          <h2 className="text-sm font-semibold uppercase tracking-wider text-white flex items-center gap-2">
-            {isBond && <ShieldCheck className={`w-4 h-4 ${isEdit ? 'text-amber-400' : 'text-emerald-400'}`} />}
-            {isEdit
-              ? `${t('transactionModal.editTitle')}: ${seriesName || selectedInstrument?.symbol || 'Instrument'}`
-              : isBond
-              ? t('transactionModal.buyBondTitle')
-              : t('transactionModal.addTitle')}
-          </h2>
-          <button onClick={onClose} className="text-zinc-400 hover:text-zinc-200 transition">
-            <X className="w-4 h-4" />
-          </button>
-        </div>
-
-        <form onSubmit={handleSubmit} className="p-5 space-y-4 overflow-y-auto">
-          {error && (
-            <div className="p-2.5 rounded bg-rose-950/40 border border-rose-800/60 text-xs text-rose-300">
-              {error}
-            </div>
-          )}
+    <Modal
+      isOpen={true}
+      onClose={onClose}
+      closeTitle={t('common.cancel')}
+      title={
+        <h2 className="text-sm font-semibold uppercase tracking-wider text-white flex items-center gap-2">
+          {isBond && <ShieldCheck className={`w-4 h-4 ${isEdit ? 'text-amber-400' : 'text-emerald-400'}`} />}
+          {isEdit
+            ? `${t('transactionModal.editTitle')}: ${state.seriesName || selectedInstrument?.symbol || 'Instrument'}`
+            : isBond
+            ? t('transactionModal.buyBondTitle')
+            : t('transactionModal.addTitle')}
+        </h2>
+      }
+    >
+      <form onSubmit={handleSubmit} className="p-5 space-y-4 overflow-y-auto">
+          <ErrorBanner error={state.error} />
 
           {!isEdit && (
-            <div className="relative" ref={pickerRef}>
-              <label className="block text-xs text-zinc-400 mb-1.5">
-                {t('transactionModal.instrument')}
-              </label>
-              {loadingCatalog && catalogInstruments.length === 0 && cachedInstruments.length === 0 ? (
-                <div className="text-xs text-zinc-500 py-2">{t('transactionModal.loadingCatalog')}</div>
-              ) : (
-                <>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setIsPickerOpen((prev) => {
-                        if (!prev) setHighlightedIndex(0);
-                        return !prev;
-                      });
-                    }}
-                    className="w-full flex items-center justify-between bg-zinc-900 border border-zinc-800 rounded px-3 py-2 text-xs text-zinc-100 font-sans focus:outline-none focus:border-zinc-600 transition"
-                  >
-                    <span className="truncate">
-                      {selectedInstrument
-                        ? `${selectedInstrument.symbol} — ${selectedInstrument.name} (${selectedInstrument.currency})`
-                        : t('transactionModal.selectInstrument')}
-                    </span>
-                    <ChevronDown className={`w-3.5 h-3.5 text-zinc-400 transition-transform shrink-0 ml-2 ${isPickerOpen ? 'rotate-180' : ''}`} />
-                  </button>
-
-                  {isPickerOpen && (
-                    <div className="absolute left-0 right-0 top-full mt-1 z-30 bg-[#16181f] border border-zinc-700/80 rounded-lg shadow-2xl overflow-hidden flex flex-col max-h-60">
-                      <div className="p-2 border-b border-zinc-800 flex items-center gap-2 bg-[#121318] shrink-0">
-                        {loadingCatalog ? (
-                          <Loader2 className="w-3.5 h-3.5 text-zinc-400 animate-spin shrink-0" />
-                        ) : (
-                          <Search className="w-3.5 h-3.5 text-zinc-400 shrink-0" />
-                        )}
-                        <input
-                          type="text"
-                          value={searchQuery}
-                          onChange={(e) => handleSearchQueryChange(e.target.value)}
-                          onKeyDown={handlePickerKeyDown}
-                          placeholder={t('transactionModal.searchInstrumentPlaceholder')}
-                          className="w-full bg-transparent text-xs text-zinc-100 placeholder-zinc-500 focus:outline-none font-sans"
-                          autoFocus
-                        />
-                        {searchQuery && (
-                          <button
-                            type="button"
-                            onClick={() => handleSearchQueryChange('')}
-                            className="text-zinc-500 hover:text-zinc-300"
-                          >
-                            <X className="w-3 h-3" />
-                          </button>
-                        )}
-                      </div>
-
-                      <div className="overflow-y-auto flex-1 divide-y divide-zinc-800/40">
-                        {yourInstruments.length === 0 && allInstruments.length === 0 ? (
-                          <div className="p-4 text-center text-xs text-zinc-500">
-                            {loadingCatalog
-                              ? t('transactionModal.loadingCatalog')
-                              : t('transactionModal.noInstrumentsFound')}
-                          </div>
-                        ) : (
-                          <>
-                            {yourInstruments.length > 0 && (
-                              <div>
-                                <div className="px-3 py-1.5 text-[10px] uppercase font-semibold text-zinc-400 bg-zinc-800/40 tracking-wider">
-                                  {t('transactionModal.yourInstruments')}
-                                </div>
-                                {yourInstruments.map((inst, idx) => {
-                                  const isSelected = inst.id === effectiveInstrumentId;
-                                  const isHighlighted = highlightedIndex === idx;
-                                  return (
-                                    <button
-                                      key={inst.id}
-                                      type="button"
-                                      onClick={() => {
-                                        handleInstrumentSelect(inst);
-                                        setIsPickerOpen(false);
-                                      }}
-                                      onMouseEnter={() => setHighlightedIndex(idx)}
-                                      className={`w-full text-left px-3 py-2 text-xs flex items-center justify-between transition ${
-                                        isSelected ? 'text-emerald-400 font-medium' : 'text-zinc-200'
-                                      } ${isHighlighted ? 'bg-zinc-800' : 'hover:bg-zinc-800/60'}`}
-                                    >
-                                      <div className="truncate mr-2">
-                                        <span className="font-mono font-semibold">{inst.symbol}</span>
-                                        <span className="text-zinc-400 ml-2">{inst.name}</span>
-                                      </div>
-                                      <div className="flex items-center gap-2 shrink-0">
-                                        <span className="text-[10px] text-zinc-500 font-mono uppercase">
-                                          {inst.type} · {inst.currency}
-                                        </span>
-                                        {isSelected && <Check className="w-3.5 h-3.5 text-emerald-400" />}
-                                      </div>
-                                    </button>
-                                  );
-                                })}
-                              </div>
-                            )}
-
-                            {allInstruments.length > 0 && (
-                              <div>
-                                <div className="px-3 py-1.5 text-[10px] uppercase font-semibold text-zinc-400 bg-zinc-800/40 tracking-wider">
-                                  {t('transactionModal.allInstruments')}
-                                </div>
-                                {allInstruments.map((inst, idx) => {
-                                  const itemIndex = yourInstruments.length + idx;
-                                  const isSelected = inst.id === effectiveInstrumentId;
-                                  const isHighlighted = highlightedIndex === itemIndex;
-                                  return (
-                                    <button
-                                      key={inst.id}
-                                      type="button"
-                                      onClick={() => {
-                                        handleInstrumentSelect(inst);
-                                        setIsPickerOpen(false);
-                                      }}
-                                      onMouseEnter={() => setHighlightedIndex(itemIndex)}
-                                      className={`w-full text-left px-3 py-2 text-xs flex items-center justify-between transition ${
-                                        isSelected ? 'text-emerald-400 font-medium' : 'text-zinc-200'
-                                      } ${isHighlighted ? 'bg-zinc-800' : 'hover:bg-zinc-800/60'}`}
-                                    >
-                                      <div className="truncate mr-2">
-                                        <span className="font-mono font-semibold">{inst.symbol}</span>
-                                        <span className="text-zinc-400 ml-2">{inst.name}</span>
-                                      </div>
-                                      <div className="flex items-center gap-2 shrink-0">
-                                        <span className="text-[10px] text-zinc-500 font-mono uppercase">
-                                          {inst.type} · {inst.currency}
-                                        </span>
-                                        {isSelected && <Check className="w-3.5 h-3.5 text-emerald-400" />}
-                                      </div>
-                                    </button>
-                                  );
-                                })}
-                              </div>
-                            )}
-                          </>
-                        )}
-                      </div>
-                    </div>
-                  )}
-                </>
-              )}
-            </div>
+            <InstrumentPicker
+              isOpen={true}
+              effectiveInstrumentId={effectiveInstrumentId}
+              selectedInstrument={selectedInstrument}
+              cachedInstruments={cachedInstruments}
+              ownedInstrumentIds={ownedInstrumentIds}
+              ownedSymbols={ownedSymbols}
+              onSelectInstrument={handleInstrumentSelect}
+              onError={(msg) => setField('error', msg)}
+            />
           )}
 
           {isBond && (
-            <div>
-              <div className="flex justify-between items-center mb-1.5">
-                <label className="text-xs text-zinc-400">{t('transactionModal.seriesName')} {!isEdit && `(${t('transactionModal.optional')})`}</label>
-                <span className="text-[10px] text-amber-400/90 font-mono flex items-center gap-1">
-                  <Sparkles className="w-3 h-3" /> {t('transactionModal.autoFill')}
-                </span>
-              </div>
-              <input
-                type="text"
-                value={seriesName}
-                onChange={(e) => handleSeriesNameChange(e.target.value)}
-                className="w-full bg-zinc-900 border border-zinc-800 rounded px-3 py-2 text-xs text-zinc-100 font-mono uppercase focus:outline-none focus:border-zinc-600"
-                placeholder={t('transactionModal.seriesPlaceholder')}
-              />
-              {!isEdit && (
-                <span className="text-[10px] text-zinc-500 block mt-1">
-                  {t('transactionModal.seriesHint')}
-                </span>
-              )}
-            </div>
-          )}
-
-          {isBond && (
-            <div>
-              <label className="block text-xs text-zinc-400 mb-1.5">{t('transactionModal.interestType')}</label>
-              <div className="grid grid-cols-2 gap-2">
-                <button
-                  type="button"
-                  onClick={() => setInterestType('FIXED')}
-                  className={`py-2 px-3 rounded text-xs font-semibold border transition ${
-                    interestType === 'FIXED'
-                      ? 'bg-amber-950/60 border-amber-600 text-amber-300'
-                      : 'bg-zinc-900 border-zinc-800 text-zinc-400 hover:border-zinc-700'
-                  }`}
-                >
-                  {t('transactionModal.fixed')}
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setInterestType('INFLATION')}
-                  className={`py-2 px-3 rounded text-xs font-semibold border transition ${
-                    interestType === 'INFLATION'
-                      ? 'bg-amber-950/60 border-amber-600 text-amber-300'
-                      : 'bg-zinc-900 border-zinc-800 text-zinc-400 hover:border-zinc-700'
-                  }`}
-                >
-                  {t('transactionModal.inflation')}
-                </button>
-              </div>
-            </div>
+            <BondMetadataFields
+              isEdit={isEdit}
+              transactionType={state.transactionType}
+              seriesName={state.seriesName}
+              onSeriesNameChange={handleSeriesNameChange}
+              interestType={state.interestType}
+              onInterestTypeChange={(val) => setField('interestType', val)}
+            />
           )}
 
           <div>
@@ -708,8 +124,8 @@ export const TransactionModal: React.FC<TransactionModalProps> = ({
             <input
               type="date"
               max={getTodayLocalDateStr()}
-              value={transactionDate}
-              onChange={(e) => setTransactionDate(e.target.value)}
+              value={state.transactionDate}
+              onChange={(e) => setField('transactionDate', e.target.value)}
               className="w-full bg-zinc-900 border border-zinc-800 rounded px-3 py-2 text-xs text-zinc-100 font-mono focus:outline-none focus:border-zinc-600 cursor-pointer"
             />
           </div>
@@ -719,9 +135,9 @@ export const TransactionModal: React.FC<TransactionModalProps> = ({
             <div className={`grid ${isBond ? 'grid-cols-2' : 'grid-cols-3'} gap-2`}>
               <button
                 type="button"
-                onClick={() => setTransactionType('BUY')}
+                onClick={() => setField('transactionType', 'BUY')}
                 className={`flex items-center justify-center gap-1.5 py-2 px-3 rounded text-xs font-semibold border transition ${
-                  transactionType === 'BUY'
+                  state.transactionType === 'BUY'
                     ? 'bg-emerald-950/60 border-emerald-600 text-emerald-300'
                     : 'bg-zinc-900 border-zinc-800 text-zinc-400 hover:border-zinc-700'
                 }`}
@@ -731,9 +147,9 @@ export const TransactionModal: React.FC<TransactionModalProps> = ({
               </button>
               <button
                 type="button"
-                onClick={() => setTransactionType('SELL')}
+                onClick={() => setField('transactionType', 'SELL')}
                 className={`flex items-center justify-center gap-1.5 py-2 px-3 rounded text-xs font-semibold border transition ${
-                  transactionType === 'SELL'
+                  state.transactionType === 'SELL'
                     ? 'bg-rose-950/60 border-rose-600 text-rose-300'
                     : 'bg-zinc-900 border-zinc-800 text-zinc-400 hover:border-zinc-700'
                 }`}
@@ -744,9 +160,9 @@ export const TransactionModal: React.FC<TransactionModalProps> = ({
               {!isBond && (
                 <button
                   type="button"
-                  onClick={() => setTransactionType('DIVIDEND')}
+                  onClick={() => setField('transactionType', 'DIVIDEND')}
                   className={`flex items-center justify-center gap-1.5 py-2 px-3 rounded text-xs font-semibold border transition ${
-                    transactionType === 'DIVIDEND'
+                    state.transactionType === 'DIVIDEND'
                       ? 'bg-blue-950/60 border-blue-600 text-blue-300'
                       : 'bg-zinc-900 border-zinc-800 text-zinc-400 hover:border-zinc-700'
                   }`}
@@ -759,214 +175,36 @@ export const TransactionModal: React.FC<TransactionModalProps> = ({
           </div>
 
           {isBond ? (
-            transactionType === 'SELL' ? (
-              <>
-                <div className="grid grid-cols-2 gap-3">
-                  <div>
-                    <label className="block text-xs text-zinc-400 mb-1.5">{t('transactionModal.sellQuantity')}</label>
-                    <input
-                      type="number"
-                      step="1"
-                      min="1"
-                      required
-                      value={quantity}
-                      onChange={(e) => setQuantity(e.target.value)}
-                      className="w-full bg-zinc-900 border border-zinc-800 rounded px-3 py-2 text-xs text-zinc-100 font-mono focus:outline-none focus:border-zinc-600"
-                      placeholder="10"
-                    />
-                  </div>
-                  <div>
-                    <label className="block text-xs text-zinc-400 mb-1.5">{t('transactionModal.sellPrice')}</label>
-                    <input
-                      type="number"
-                      step="0.01"
-                      min="0"
-                      required
-                      value={price}
-                      onChange={(e) => setPrice(e.target.value)}
-                      className="w-full bg-zinc-900 border border-zinc-800 rounded px-3 py-2 text-xs text-zinc-100 font-mono focus:outline-none focus:border-zinc-600"
-                      placeholder="100.00"
-                    />
-                  </div>
-                </div>
-                <div className="grid grid-cols-2 gap-3">
-                  <div>
-                    <label className="block text-xs text-zinc-400 mb-1.5">{t('transactionModal.totalPayout')}</label>
-                    <div className="w-full bg-zinc-900/60 border border-zinc-800 rounded px-3 py-2 text-xs text-emerald-400 font-mono flex items-center h-[34px]">
-                      {((parseFloat(quantity) || 0) * (parseFloat(price) || 0)).toLocaleString(i18n.language, { minimumFractionDigits: 2 })} {currency || 'PLN'}
-                    </div>
-                  </div>
-                  <div>
-                    <label className="block text-xs text-zinc-400 mb-1.5">{t('transactionModal.commissionFee')}</label>
-                    <input
-                      type="number"
-                      step="0.01"
-                      min="0"
-                      value={commission}
-                      onChange={(e) => setCommission(e.target.value)}
-                      className="w-full bg-zinc-900 border border-zinc-800 rounded px-3 py-2 text-xs text-zinc-100 font-mono focus:outline-none focus:border-zinc-600"
-                      placeholder="0.00"
-                    />
-                  </div>
-                </div>
-              </>
-            ) : (
-              <>
-                <div className="grid grid-cols-2 gap-3">
-                <div>
-                  <label className="block text-xs text-zinc-400 mb-1.5">{t('transactionModal.nominalUnits')}</label>
-                  <input
-                    type="number"
-                    step="1"
-                    min="1"
-                    required
-                    value={quantity}
-                    onChange={(e) => setQuantity(e.target.value)}
-                    className="w-full bg-zinc-900 border border-zinc-800 rounded px-3 py-2 text-xs text-zinc-100 font-mono focus:outline-none focus:border-zinc-600"
-                    placeholder="10"
-                  />
-                  {!isEdit && (
-                    <span className="text-[10px] text-zinc-500 font-mono block mt-1">
-                      {t('transactionModal.nominalPriceNote')}
-                    </span>
-                  )}
-                </div>
-                <div>
-                  <label className="block text-xs text-zinc-400 mb-1.5">{t('transactionModal.nominalValue')}</label>
-                  <div className="w-full bg-zinc-900/60 border border-zinc-800 rounded px-3 py-2 text-xs text-emerald-400 font-mono flex items-center h-[34px]">
-                    {bondTotalNominal.toLocaleString(i18n.language, { minimumFractionDigits: 2 })} {currency || 'PLN'}
-                  </div>
-                  {!isEdit && (
-                    <span className="text-[10px] text-zinc-500 font-mono block mt-1">
-                      {t('transactionModal.amountToPay')}
-                    </span>
-                  )}
-                </div>
-              </div>
-
-              <div className="grid grid-cols-2 gap-3">
-                <div>
-                  <label className="block text-xs text-zinc-400 mb-1.5">
-                    {interestType === 'INFLATION' ? t('transactionModal.bondRateFirstYear') : t('transactionModal.bondRateAnnual')}
-                  </label>
-                  <input
-                    type="number"
-                    step="0.01"
-                    min="0"
-                    required
-                    value={bondRate}
-                    onChange={(e) => setBondRate(e.target.value)}
-                    className="w-full bg-zinc-900 border border-zinc-800 rounded px-3 py-2 text-xs text-zinc-100 font-mono focus:outline-none focus:border-zinc-600"
-                    placeholder="6.50"
-                  />
-                </div>
-                {interestType === 'INFLATION' ? (
-                  <div>
-                    <label className="block text-xs text-zinc-400 mb-1.5">
-                      {t('transactionModal.bondMargin')}
-                    </label>
-                    <input
-                      type="number"
-                      step="0.01"
-                      min="0"
-                      required
-                      value={bondMargin}
-                      onChange={(e) => setBondMargin(e.target.value)}
-                      className="w-full bg-zinc-900 border border-zinc-800 rounded px-3 py-2 text-xs text-zinc-100 font-mono focus:outline-none focus:border-zinc-600"
-                      placeholder="1.25"
-                    />
-                  </div>
-                ) : (
-                  <div>
-                    <label className="block text-xs text-zinc-400 mb-1.5">{t('transactionModal.couponType')}</label>
-                    <div className="w-full bg-zinc-900/60 border border-zinc-800 rounded px-3 py-2 text-xs text-zinc-400 font-sans flex items-center h-[34px]">
-                      {t('transactionModal.fixedRate')}
-                    </div>
-                  </div>
-                )}
-              </div>
-
-              <div>
-                <label className="block text-xs text-zinc-400 mb-1.5">{t('transactionModal.termMonths')}</label>
-                <select
-                  value={termMonths}
-                  onChange={(e) => setTermMonths(e.target.value)}
-                  className="w-full bg-zinc-900 border border-zinc-800 rounded px-3 py-2 text-xs text-zinc-100 font-sans focus:outline-none focus:border-zinc-600"
-                >
-                  <option value="3">{t('transactionModal.termMonthsOptionOTS')}</option>
-                  <option value="12">{t('transactionModal.termMonthsOptionROR')}</option>
-                  <option value="24">{t('transactionModal.termMonthsOptionDOR')}</option>
-                  <option value="36">{t('transactionModal.termMonthsOptionTOS')}</option>
-                  <option value="48">{t('transactionModal.termMonthsOptionCOI')}</option>
-                  <option value="120">{t('transactionModal.termMonthsOptionEDO')}</option>
-                </select>
-              </div>
-            </>
-            )
+            <BondAmountsFields
+              isEdit={isEdit}
+              transactionType={state.transactionType}
+              quantity={state.quantity}
+              onQuantityChange={(v) => setField('quantity', v)}
+              price={state.price}
+              onPriceChange={(v) => setField('price', v)}
+              commission={state.commission}
+              onCommissionChange={(v) => setField('commission', v)}
+              currency={state.currency}
+              interestType={state.interestType}
+              bondRate={state.bondRate}
+              onBondRateChange={(v) => setField('bondRate', v)}
+              bondMargin={state.bondMargin}
+              onBondMarginChange={(v) => setField('bondMargin', v)}
+              termMonths={state.termMonths}
+              onTermMonthsChange={(v) => setField('termMonths', v)}
+            />
           ) : (
-            <>
-
-              <div className="grid grid-cols-2 gap-3">
-                <div>
-                  <label className="block text-xs text-zinc-400 mb-1.5">{t('transactionModal.quantity')}</label>
-                  <input
-                    type="number"
-                    step="any"
-                    min="0.0001"
-                    required
-                    value={quantity}
-                    onChange={(e) => setQuantity(e.target.value)}
-                    className="w-full bg-zinc-900 border border-zinc-800 rounded px-3 py-2 text-xs text-zinc-100 font-mono focus:outline-none focus:border-zinc-600"
-                    placeholder="10"
-                  />
-                </div>
-                <div>
-                  <label className="block text-xs text-zinc-400 mb-1.5 flex justify-between">
-                    <span>{t('transactionModal.price')} ({currency})</span>
-                    {loadingPrice && (
-                      <Loader2 className="w-3 h-3 text-zinc-500 animate-spin" />
-                    )}
-                  </label>
-                  <input
-                    type="number"
-                    step="any"
-                    min="0.0001"
-                    required
-                    value={price}
-                    onChange={(e) => setPrice(e.target.value)}
-                    className="w-full bg-zinc-900 border border-zinc-800 rounded px-3 py-2 text-xs text-zinc-100 font-mono focus:outline-none focus:border-zinc-600"
-                    placeholder="120.50"
-                  />
-                </div>
-              </div>
-
-              <div className="grid grid-cols-2 gap-3">
-                <div>
-                  <label className="block text-xs text-zinc-400 mb-1.5">{t('transactionModal.commission')} ({currency})</label>
-                  <input
-                    type="number"
-                    step="any"
-                    min="0"
-                    value={commission}
-                    onChange={(e) => setCommission(e.target.value)}
-                    className="w-full bg-zinc-900 border border-zinc-800 rounded px-3 py-2 text-xs text-zinc-100 font-mono focus:outline-none focus:border-zinc-600"
-                    placeholder="0"
-                  />
-                </div>
-                <div>
-                  <label className="block text-xs text-zinc-400 mb-1.5">{t('transactionModal.currency')}</label>
-                  <select
-                    value={currency}
-                    onChange={(e) => setCurrency(e.target.value as Currency)}
-                    className="w-full bg-zinc-900 border border-zinc-800 rounded px-3 py-2 text-xs text-zinc-100 font-mono focus:outline-none focus:border-zinc-600"
-                  >
-                    <option value="PLN">PLN</option>
-                    <option value="USD">USD</option>
-                    <option value="EUR">EUR</option>
-                  </select>
-                </div>
-              </div>
-            </>
+            <EquityTransactionFields
+              quantity={state.quantity}
+              onQuantityChange={(v) => setField('quantity', v)}
+              price={state.price}
+              onPriceChange={(v) => setField('price', v)}
+              commission={state.commission}
+              onCommissionChange={(v) => setField('commission', v)}
+              currency={state.currency}
+              onCurrencyChange={(v) => setField('currency', v)}
+              loadingPrice={state.loadingPrice}
+            />
           )}
 
           <div className="pt-3 border-t border-zinc-800 flex justify-between items-center gap-2 shrink-0">
@@ -974,13 +212,15 @@ export const TransactionModal: React.FC<TransactionModalProps> = ({
               <button
                 type="button"
                 onClick={handleDelete}
-                disabled={deleting || submitting}
+                disabled={state.deleting || state.submitting}
                 className="flex items-center gap-1.5 px-3 py-1.5 rounded bg-rose-950/40 hover:bg-rose-900/60 border border-rose-800/60 text-xs font-medium text-rose-300 transition disabled:opacity-50"
               >
                 <Trash2 className="w-3.5 h-3.5" />
                 <span>{t('transactionHistory.delete')}</span>
               </button>
-            ) : <div />}
+            ) : (
+              <div />
+            )}
 
             <div className="flex gap-2">
               <button
@@ -992,16 +232,15 @@ export const TransactionModal: React.FC<TransactionModalProps> = ({
               </button>
               <button
                 type="submit"
-                disabled={submitting || deleting || !effectiveInstrumentId}
+                disabled={state.submitting || state.deleting || !effectiveInstrumentId}
                 className="flex items-center gap-1.5 px-4 py-1.5 rounded bg-white hover:bg-zinc-200 text-zinc-950 text-xs font-semibold transition disabled:opacity-50"
               >
-                {submitting && <Loader2 className="w-3.5 h-3.5 animate-spin" />}
+                {state.submitting && <Loader2 className="w-3.5 h-3.5 animate-spin" />}
                 {isEdit ? t('common.save') : isBond ? t('transactionModal.addBond') : t('transactionModal.save')}
               </button>
             </div>
           </div>
         </form>
-      </div>
-    </div>
+    </Modal>
   );
 };

@@ -2,13 +2,10 @@ import type { Currency } from './auth.ts';
 
 export type TransactionType = 'BUY' | 'SELL' | 'DIVIDEND';
 
-export type AccountType = 'STANDARD' | 'IKE' | 'IKZE';
-
 export interface CreatePortfolioRequest {
   name: string;
   description?: string;
   baseCurrency: Currency;
-  accountType?: AccountType;
 }
 
 export interface PortfolioResponse {
@@ -17,7 +14,6 @@ export interface PortfolioResponse {
   name: string;
   description?: string;
   baseCurrency: Currency;
-  accountType?: AccountType;
   createdAt: string;
 }
 
@@ -35,6 +31,8 @@ export interface CreateTransactionRequest {
   termMonths?: number;
   baseAmount?: number;
   exchangeRateToBase?: number;
+  instrumentToTxRate?: number;
+  withholdingTaxPct?: number;
 }
 
 export interface TransactionResponse {
@@ -47,24 +45,12 @@ export interface TransactionResponse {
   currency: Currency;
   exchangeRate: number;
   exchangeRateToBase?: number;
+  instrumentToTxRate?: number;
+  withholdingTaxPct?: number;
   executedAt: string;
   seriesName?: string;
   bondRate?: number;
   bondMargin?: number;
   termMonths?: number;
   baseAmount?: number;
-}
-
-export interface PositionResponse {
-  id: string;
-  instrumentId: string;
-  quantity: number;
-  averageBuyPrice: number;
-  currency: Currency;
-  seriesName?: string;
-  bondRate?: number;
-  bondMargin?: number;
-  termMonths?: number;
-  purchaseDate?: string;
-  totalCostBase?: number;
 }

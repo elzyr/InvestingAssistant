@@ -1,103 +1,92 @@
-import atexit
 import datetime
 import logging
-import re
-from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Optional, List, Dict, Any, Literal
 from pydantic import BaseModel, Field, field_validator
 from fastapi import APIRouter, HTTPException, Path, Query
 from app.services.cache_service import cache_service
-from app.services.yahoo_service import YahooService, infer_base_currency
+from app.services.market_utils import SYMBOL_PATTERN, normalize_symbol_list, warsaw_today
+from app.services.yahoo_service import YahooService, finite_float, normalize_quote_currency, run_batch
 from app.services.market_history_repo import market_history_repo
 
 router = APIRouter(prefix="/api/prices", tags=["Prices"])
 
-_SYMBOL_RE = re.compile(r"^[A-Za-z0-9.\-^=_]{1,20}$")
-TREASURY_BOND_RE = re.compile(r"^(EDO|COI|ROS|ROD|TOS|ROR|DOR|OTS)\d{4}$", re.IGNORECASE)
-
 ValidPeriod = Literal["1d", "5d", "1mo", "3mo", "6mo", "1y", "2y", "5y", "10y", "ytd", "max"]
 ValidInterval = Literal["1m", "2m", "5m", "15m", "30m", "60m", "90m", "1h", "1d", "5d", "1wk", "1mo", "3mo"]
-
-_batch_executor = ThreadPoolExecutor(max_workers=8, thread_name_prefix="price-batch")
-atexit.register(_batch_executor.shutdown, wait=False)
 
 
 class BatchPricesRequest(BaseModel):
     symbols: List[str] = Field(default_factory=list, max_length=100)
-    currency: Optional[str] = Field(None, pattern=r"^[A-Za-z]{3}$")
 
     @field_validator("symbols")
     @classmethod
     def validate_symbols(cls, values: List[str]) -> List[str]:
-        cleaned: List[str] = []
-        for raw in values:
-            sym = (raw or "").strip().upper()
-            if not sym:
-                continue
-            if not _SYMBOL_RE.match(sym):
-                raise ValueError(f"Invalid symbol format: {raw}")
-            cleaned.append(sym)
-        return list(dict.fromkeys(cleaned))
+        return normalize_symbol_list(values)
 
 
-def _is_treasury_bond(symbol: str) -> bool:
-    return bool(TREASURY_BOND_RE.match(symbol or ""))
+class BatchHistoryRequest(BaseModel):
+    symbols: List[str] = Field(default_factory=list, max_length=100)
+    period: ValidPeriod = "1y"
+    interval: ValidInterval = "1d"
+    start_date: Optional[str] = Field(None, pattern=r"^\d{4}-\d{2}-\d{2}$")
+
+    @field_validator("symbols")
+    @classmethod
+    def validate_symbols(cls, values: List[str]) -> List[str]:
+        return normalize_symbol_list(values)
+
+    @field_validator("start_date")
+    @classmethod
+    def validate_start_date(cls, value: Optional[str]) -> Optional[str]:
+        if value is not None:
+            datetime.date.fromisoformat(value)
+        return value
 
 
-def _treasury_bond_quote(symbol: str, target_currency: Optional[str]) -> dict:
-    out_price = 100.0
-    out_cur = "PLN"
-    if target_currency and target_currency != "PLN":
-        try:
-            rate = YahooService.get_exchange_rate("PLN", target_currency)
-            out_price = round(100.0 * rate, 4)
-            out_cur = target_currency
-        except Exception as e:
-            logging.warning(f"FX conversion failed for treasury bond {symbol} PLN->{target_currency}: {e}")
+def _unavailable_quote(symbol: str) -> dict:
+    return {
+        "symbol": symbol,
+        "price": None,
+        "previousClose": None,
+        "change": None,
+        "changePercent": None,
+        "currency": None,
+        "source": "unavailable",
+        "isUnavailable": True,
+    }
+
+
+def _build_flat_quote(
+    symbol: str,
+    base_price: float,
+    base_cur: str,
+    source: str,
+) -> dict:
+    out_price = round(base_price, 4)
     return {
         "symbol": symbol,
         "price": out_price,
         "previousClose": out_price,
         "change": 0.0,
         "changePercent": 0.0,
-        "currency": out_cur,
-        "source": "treasury_bond",
+        "currency": base_cur,
+        "source": source,
+        "isUnavailable": False,
     }
 
 
-def _build_db_price_fallback(symbol: str, target_currency: Optional[str]) -> Optional[dict]:
+def _build_db_price_fallback(symbol: str) -> Optional[dict]:
     try:
         max_d = market_history_repo.get_max_date(symbol)
         if not max_d:
             return None
         rows = market_history_repo.get_historical_prices(symbol, start_date=max_d, end_date=max_d)
-        if rows:
-            p = rows[-1]["closePrice"]
-            base_cur = (rows[-1].get("currency") or infer_base_currency(symbol)).upper()
-        else:
-            p = market_history_repo.get_price_on_date(symbol, max_d)
-            base_cur = infer_base_currency(symbol)
+        if not rows:
+            return None
+        p = finite_float(rows[-1].get("closePrice"), positive_only=True)
         if p is None:
             return None
-        out_price = p
-        out_cur = base_cur
-        if target_currency and target_currency != base_cur:
-            try:
-                fx = YahooService.get_exchange_rate(base_cur, target_currency)
-                if fx:
-                    out_price = round(p * fx, 4)
-                    out_cur = target_currency
-            except Exception as fx_err:
-                logging.warning(f"DB fallback FX conversion failed for {symbol} {base_cur}->{target_currency}: {fx_err}")
-        return {
-            "symbol": symbol,
-            "price": out_price,
-            "previousClose": out_price,
-            "change": 0.0,
-            "changePercent": 0.0,
-            "currency": out_cur,
-            "source": "db_fallback",
-        }
+        base_cur, price_scale = normalize_quote_currency(rows[-1].get("currency"), symbol)
+        return _build_flat_quote(symbol, p * price_scale, base_cur, "db_fallback")
     except Exception as db_err:
         logging.warning(f"DB price fallback failed for {symbol}: {db_err}")
         return None
@@ -105,85 +94,77 @@ def _build_db_price_fallback(symbol: str, target_currency: Optional[str]) -> Opt
 
 def _fetch_uncached_price(
     symbol: str,
-    target_currency: Optional[str],
     raise_404: bool = False,
+    write_cache: bool = False,
 ) -> tuple[Optional[dict], Optional[dict]]:
-    cache_key = f"price:{symbol}:{target_currency or 'base'}"
-    with cache_service.get_lock(cache_key):
-        cached_data = cache_service.get(cache_key)
-        if cached_data is not None:
-            return {"symbol": symbol, **cached_data, "source": "cache"}, None
+    cache_key = f"price:{symbol}"
+    cache_ttl = 0
+    build_result: Dict[str, Optional[dict]] = {"payload": None, "cache_value": None}
 
+    def _build() -> Optional[dict]:
+        nonlocal cache_ttl
         try:
-            result = YahooService.get_current_price(symbol, target_currency)
-            return {"symbol": symbol, **result, "source": "yahoo_finance"}, result
+            result = YahooService.get_current_price(symbol)
+            build_result["payload"] = {"symbol": symbol, **result, "source": "yahoo_finance", "isUnavailable": False}
+            if write_cache:
+                cache_ttl = 300
+                return result
+            build_result["cache_value"] = result
+            return None
         except Exception as e:
             if isinstance(e, HTTPException) and e.status_code == 404:
                 if raise_404:
                     raise e
-                return None, None
+                return None
             logging.error(f"Error fetching price for {symbol}: {e}")
-            return _build_db_price_fallback(symbol, target_currency), None
+            build_result["payload"] = _build_db_price_fallback(symbol)
+            return None
+
+    cached_data, hit = cache_service.get_or_set_with_hit(
+        cache_key,
+        _build,
+        ttl=lambda _: cache_ttl,
+        validator=lambda c: isinstance(c, dict),
+    )
+    if hit:
+        return {"symbol": symbol, **cached_data, "source": "cache", "isUnavailable": False}, None
+    return build_result["payload"], build_result["cache_value"]
 
 
-def _fetch_single_price(symbol: str, target_currency: Optional[str], raise_404: bool = False) -> Optional[dict]:
-    symbol = symbol.upper()
-    if _is_treasury_bond(symbol):
-        return _treasury_bond_quote(symbol, target_currency)
-
-    payload, cache_value = _fetch_uncached_price(symbol, target_currency, raise_404=raise_404)
-    if cache_value is not None:
-        cache_key = f"price:{symbol}:{target_currency or 'base'}"
-        cache_service.set(cache_key, cache_value, expire=300)
+def _fetch_single_price(symbol: str, raise_404: bool = False) -> Optional[dict]:
+    payload, _ = _fetch_uncached_price(symbol.upper(), raise_404=raise_404, write_cache=True)
     return payload
 
 
-def _convert_db_history_currency(
+def _format_db_history(
     db_hist: List[Dict[str, Any]],
     symbol: str,
-    target_currency: Optional[str],
 ) -> tuple[List[Dict[str, Any]], str]:
-    base_cur = (db_hist[0].get("currency") or infer_base_currency(symbol)).upper()
-    if not target_currency or target_currency == base_cur:
-        return db_hist, base_cur
-
-    start_d = db_hist[0]["date"][:10]
-    end_d = db_hist[-1]["date"][:10]
-    fx_rates = YahooService.get_historical_fx_rates(base_cur, target_currency, start_d, end_d)
-    sorted_fx_dates = sorted(fx_rates.keys())
-
-    spot_rate: Optional[float] = None
-    if not sorted_fx_dates:
-        try:
-            spot_rate = YahooService.get_exchange_rate(base_cur, target_currency)
-        except Exception as e:
-            logging.warning(f"History DB currency conversion failed for {symbol} {base_cur}->{target_currency}: {e}")
-            return db_hist, base_cur
-
+    base_cur, price_scale = normalize_quote_currency(db_hist[0].get("currency"), symbol)
     converted: List[Dict[str, Any]] = []
-    last_rate = fx_rates[sorted_fx_dates[0]] if sorted_fx_dates else spot_rate
-    fx_idx = 0
-
     for row in db_hist:
-        row_date = str(row.get("date", ""))[:10]
-        if sorted_fx_dates:
-            while fx_idx + 1 < len(sorted_fx_dates) and sorted_fx_dates[fx_idx + 1] <= row_date:
-                fx_idx += 1
-            rate = fx_rates.get(row_date)
-            if rate is None:
-                rate = fx_rates[sorted_fx_dates[fx_idx]] if sorted_fx_dates[fx_idx] <= row_date else last_rate
-            last_rate = rate
-        else:
-            rate = spot_rate
-
-        new_row = dict(row)
-        for field in ("closePrice", "close", "open", "high", "low"):
-            if field in new_row and new_row[field] is not None:
-                new_row[field] = round(float(new_row[field]) * rate, 4)
-        new_row["currency"] = target_currency
+        close_raw = row.get("close") if row.get("close") is not None else row.get("closePrice")
+        scaled_close = round(float(close_raw) * price_scale, 4) if close_raw is not None else None
+        new_row = {
+            "date": str(row.get("date", ""))[:10],
+            "close": scaled_close,
+            "closePrice": scaled_close,
+            "volume": int(row.get("volume") or 0),
+            "currency": base_cur,
+        }
+        for field in ("open", "high", "low"):
+            raw_val = row.get(field)
+            new_row[field] = round(float(raw_val) * price_scale, 4) if raw_val is not None else None
         converted.append(new_row)
 
-    return converted, target_currency
+    return converted, base_cur
+
+
+def _last_expected_trading_day(today: datetime.date) -> datetime.date:
+    candidate = today - datetime.timedelta(days=1)
+    while candidate.weekday() >= 5:
+        candidate -= datetime.timedelta(days=1)
+    return candidate
 
 
 def _is_db_history_complete(db_hist: List[Dict[str, Any]], start_date: str) -> bool:
@@ -191,158 +172,179 @@ def _is_db_history_complete(db_hist: List[Dict[str, Any]], start_date: str) -> b
         return False
     try:
         req_start = datetime.date.fromisoformat(start_date[:10])
-        db_first = datetime.date.fromisoformat(str(db_hist[0]["date"])[:10])
-        db_last = datetime.date.fromisoformat(str(db_hist[-1]["date"])[:10])
+        dates = [datetime.date.fromisoformat(str(row["date"])[:10]) for row in db_hist]
     except ValueError:
         return False
-    today = datetime.date.today()
-    start_covered = db_first <= (req_start + datetime.timedelta(days=7))
-    end_covered = db_last >= (today - datetime.timedelta(days=4))
-    return start_covered and end_covered
+    today = warsaw_today()
+    if dates[0] > (req_start + datetime.timedelta(days=7)):
+        return False
+    min_fresh_date = _last_expected_trading_day(today) - datetime.timedelta(days=2)
+    if dates[-1] < min_fresh_date:
+        return False
+    for prev_dt, cur_dt in zip(dates, dates[1:]):
+        if (cur_dt - prev_dt).days > 10:
+            return False
+    return True
+
+
+_PERIOD_DAYS = {
+    "1d": 4,
+    "5d": 7,
+    "1mo": 31,
+    "3mo": 93,
+    "6mo": 186,
+    "1y": 366,
+    "2y": 731,
+    "5y": 1827,
+    "10y": 3653,
+}
+
+
+def _period_start_date(period: ValidPeriod) -> Optional[str]:
+    if period == "max":
+        return None
+    today = warsaw_today()
+    if period == "ytd":
+        return datetime.date(today.year, 1, 1).isoformat()
+    days = _PERIOD_DAYS.get(period)
+    if days is None:
+        return None
+    return (today - datetime.timedelta(days=days)).isoformat()
 
 
 @router.get("/search")
-def search_instruments(query: str = Query(..., min_length=1)):
+def search_instruments(query: str = Query(..., min_length=1, max_length=100)):
     return YahooService.search_instruments(query)
 
 
 @router.post("/batch")
 def get_batch_prices(req: BatchPricesRequest):
-    target_currency = req.currency.upper() if req.currency else None
     symbols = req.symbols
     if not symbols:
         return {}
 
     results: Dict[str, Any] = {}
-    market_symbols: List[str] = []
-    for sym in symbols:
-        if _is_treasury_bond(sym):
-            results[sym] = _treasury_bond_quote(sym, target_currency)
-        else:
-            market_symbols.append(sym)
-
-    if not market_symbols:
-        return results
-
-    key_by_symbol = {sym: f"price:{sym}:{target_currency or 'base'}" for sym in market_symbols}
+    key_by_symbol = {sym: f"price:{sym}" for sym in symbols}
     cached_by_key = cache_service.mget(key_by_symbol.values())
 
     misses: List[str] = []
-    for sym in market_symbols:
+    for sym in symbols:
         cached = cached_by_key.get(key_by_symbol[sym])
-        if cached is not None:
-            results[sym] = {"symbol": sym, **cached, "source": "cache"}
+        if isinstance(cached, dict):
+            results[sym] = {"symbol": sym, **cached, "source": "cache", "isUnavailable": False}
         else:
             misses.append(sym)
 
-    if not misses:
-        return results
+    if misses:
+        to_cache: Dict[str, Any] = {}
+        fetched = run_batch(
+            misses,
+            lambda sym: _fetch_uncached_price(sym),
+            error_label="Batch price fetch",
+        )
+        for sym in misses:
+            item = fetched.get(sym)
+            if item and item[0] is not None:
+                results[sym] = item[0]
+            else:
+                results[sym] = _unavailable_quote(sym)
+            if item and item[1] is not None:
+                to_cache[key_by_symbol[sym]] = item[1]
 
-    to_cache: Dict[str, Any] = {}
-    if len(misses) == 1:
-        sym = misses[0]
-        payload, cache_value = _fetch_uncached_price(sym, target_currency)
-        if payload is not None:
-            results[sym] = payload
-        if cache_value is not None:
-            to_cache[key_by_symbol[sym]] = cache_value
-    else:
-        futures = {
-            _batch_executor.submit(_fetch_uncached_price, sym, target_currency): sym
-            for sym in misses
-        }
-        for future in as_completed(futures):
-            sym = futures[future]
-            try:
-                payload, cache_value = future.result()
-                if payload is not None:
-                    results[sym] = payload
-                if cache_value is not None:
-                    to_cache[key_by_symbol[sym]] = cache_value
-            except Exception as e:
-                logging.warning(f"Error fetching price in batch for {sym}: {e}")
-
-    if to_cache:
-        cache_service.mset_pipeline(to_cache, expire=300)
+        if to_cache:
+            cache_service.mset_pipeline(to_cache, expire=300)
 
     return results
 
 
 @router.get("/{symbol}")
 def get_price(
-    symbol: str = Path(..., pattern=r"^[A-Za-z0-9.\-^=_]+$", max_length=20),
-    currency: Optional[str] = Query(None, pattern=r"^[A-Za-z]{3}$"),
+    symbol: str = Path(..., pattern=SYMBOL_PATTERN, max_length=20),
 ):
     symbol = symbol.upper()
-    target_currency = currency.upper() if isinstance(currency, str) else None
-    price_data = _fetch_single_price(symbol, target_currency, raise_404=True)
+    price_data = _fetch_single_price(symbol, raise_404=True)
     if price_data is not None:
         return price_data
     raise HTTPException(status_code=503, detail="Service Unavailable: market data provider failure")
 
 
-@router.get("/{symbol}/history")
-def get_history(
-    symbol: str = Path(..., pattern=r"^[A-Za-z0-9.\-^=_]+$", max_length=20),
-    period: ValidPeriod = Query("1mo"),
-    interval: ValidInterval = Query("1d"),
-    currency: Optional[str] = Query(None, pattern=r"^[A-Za-z]{3}$"),
-    start_date: Optional[str] = Query(None, pattern=r"^\d{4}-\d{2}-\d{2}$"),
-):
+def _fetch_symbol_history(
+    symbol: str,
+    period: ValidPeriod,
+    interval: ValidInterval,
+    start_date: Optional[str],
+) -> dict:
     symbol = symbol.upper()
-    target_currency = currency.upper() if isinstance(currency, str) else None
+    range_key = f"start:{start_date}" if start_date else f"period:{period}"
+    cache_key = f"history:{symbol}:{range_key}:{interval}"
+    effective_start = start_date or _period_start_date(period)
+    source = "yahoo_finance"
+    should_cache = False
 
-    if _is_treasury_bond(symbol):
-        return {
-            "symbol": symbol,
-            "currency": target_currency or "PLN",
-            "history": [],
-            "source": "treasury_bond",
-        }
-
-    cache_key = f"history:{symbol}:{period}:{interval}:{target_currency or 'base'}:{start_date or ''}"
-    with cache_service.get_lock(cache_key):
-        cached_data = cache_service.get(cache_key)
-        if cached_data is not None:
-            return {"symbol": symbol, **cached_data, "source": "cache"}
-
+    def _build() -> dict:
+        nonlocal source, should_cache
+        db_hist: Optional[List[Dict[str, Any]]] = None
         try:
-            if start_date and interval == "1d":
-                db_hist = market_history_repo.get_historical_prices(symbol, start_date=start_date)
-                if _is_db_history_complete(db_hist, start_date):
-                    converted_hist, out_cur = _convert_db_history_currency(db_hist, symbol, target_currency)
-                    payload = {"currency": out_cur, "history": converted_hist}
-                    cache_service.set(cache_key, payload, expire=3600)
-                    return {"symbol": symbol, **payload, "source": "database"}
+            if effective_start and interval == "1d":
+                db_hist = market_history_repo.get_historical_prices(symbol, start_date=effective_start)
+                if _is_db_history_complete(db_hist, effective_start):
+                    formatted_hist, out_cur = _format_db_history(db_hist, symbol)
+                    source = "database"
+                    should_cache = True
+                    return {"currency": out_cur, "history": formatted_hist}
 
             result = YahooService.get_historical_data(
                 symbol,
                 period=period,
                 interval=interval,
-                target_currency=target_currency,
                 start_date=start_date,
             )
-            cache_service.set(cache_key, result, expire=3600)
+            should_cache = True
 
             if interval == "1d":
                 try:
-                    base_cur = result.get("currency")
-                    if result.get("history") and (not target_currency or target_currency == base_cur):
-                        market_history_repo.save_eod_prices_bulk(symbol, result["history"], base_cur or infer_base_currency(symbol))
+                    raw_cur = result.get("currency")
+                    base_cur, _ = normalize_quote_currency(raw_cur, symbol)
+                    if result.get("history"):
+                        market_history_repo.save_eod_prices_bulk(symbol, result["history"], base_cur)
                 except Exception as save_err:
                     logging.warning(f"Failed to cache candles in DB for {symbol}: {save_err}")
 
-            return {"symbol": symbol, **result, "source": "yahoo_finance"}
+            return result
         except Exception as e:
-            if isinstance(e, HTTPException) and e.status_code == 404:
+            if isinstance(e, HTTPException) and e.status_code in (400, 404, 503):
                 raise e
             logging.error(f"Error fetching history: {e}")
             if interval == "1d":
                 try:
-                    db_hist = market_history_repo.get_historical_prices(symbol, start_date=start_date)
+                    if db_hist is None:
+                        db_hist = market_history_repo.get_historical_prices(symbol, start_date=effective_start)
                     if db_hist:
-                        converted_hist, out_cur = _convert_db_history_currency(db_hist, symbol, target_currency)
-                        return {"symbol": symbol, "currency": out_cur, "history": converted_hist, "source": "db_fallback"}
+                        formatted_hist, out_cur = _format_db_history(db_hist, symbol)
+                        source = "db_fallback"
+                        return {"currency": out_cur, "history": formatted_hist}
+                except HTTPException:
+                    raise
                 except Exception as db_err:
                     logging.warning(f"DB history fallback failed for {symbol}: {db_err}")
             raise HTTPException(status_code=503, detail="Service Unavailable: market data provider failure")
+
+    cached_data, hit = cache_service.get_or_set_with_hit(
+        cache_key,
+        _build,
+        ttl=lambda _: 3600 if should_cache else 0,
+        validator=lambda c: isinstance(c, dict) and isinstance(c.get("history"), list),
+    )
+    return {"symbol": symbol, **cached_data, "source": "cache" if hit else source}
+
+
+@router.post("/history/batch")
+def get_batch_history(req: BatchHistoryRequest):
+    symbols = req.symbols
+    if not symbols:
+        return {}
+    return run_batch(
+        symbols,
+        lambda sym: _fetch_symbol_history(sym, req.period, req.interval, req.start_date),
+        error_label="Batch history fetch",
+    )

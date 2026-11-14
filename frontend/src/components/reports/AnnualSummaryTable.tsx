@@ -2,7 +2,7 @@ import React from 'react';
 import { useTranslation } from 'react-i18next';
 import type { AnnualSummaryData } from '../../types/reports.types.ts';
 import {
-  formatPLN,
+  formatCurrency,
   formatPercent,
   getValueColorClass,
 } from '../../utils/reportsFormatters.ts';
@@ -40,8 +40,18 @@ export const AnnualSummaryTable: React.FC<AnnualSummaryTableProps> = ({
             {t('reports.annualSummarySubtitle')}
           </p>
         </div>
-        <div className="text-xs font-mono text-zinc-400 bg-zinc-800/40 px-3 py-1.5 rounded-lg border border-zinc-700/40 self-start sm:self-auto">
-          {t('reports.avgCpi')} <span className="text-zinc-200 font-semibold">{summary.avgCpi != null ? `${summary.avgCpi.toFixed(1)}%` : '—'}</span>
+        <div className="flex flex-wrap items-center gap-2 self-start sm:self-auto">
+          {summary.ytdTwr != null && (
+            <div className="text-xs font-mono text-zinc-400 bg-zinc-800/40 px-3 py-1.5 rounded-lg border border-zinc-700/40">
+              TWR YTD:{' '}
+              <span className={`font-semibold ${getValueColorClass(summary.ytdTwr)}`}>
+                {formatPercent(summary.ytdTwr, true)}
+              </span>
+            </div>
+          )}
+          <div className="text-xs font-mono text-zinc-400 bg-zinc-800/40 px-3 py-1.5 rounded-lg border border-zinc-700/40">
+            {t('reports.avgCpi')} <span className="text-zinc-200 font-semibold">{summary.avgCpi != null ? `${summary.avgCpi.toFixed(1)}%` : '—'}</span>
+          </div>
         </div>
       </div>
 
@@ -62,10 +72,10 @@ export const AnnualSummaryTable: React.FC<AnnualSummaryTableProps> = ({
           </thead>
           <tbody className="divide-y divide-zinc-800/50 font-mono">
             {summary.records.map((r) => {
-              const isUpcoming = r.status === 'UPCOMING';
+              const isNonRecorded = r.status === 'FUTURE' || r.status === 'BEFORE_PORTFOLIO';
               const isSelected = selectedMonthIndex === r.monthIndex;
 
-              if (isUpcoming) {
+              if (isNonRecorded) {
                 return (
                   <tr
                     key={r.monthIndex}
@@ -84,9 +94,13 @@ export const AnnualSummaryTable: React.FC<AnnualSummaryTableProps> = ({
                     </td>
                     <td className="py-2.5 px-3 text-right tabular-nums whitespace-nowrap">—</td>
                     <td className="py-2.5 px-3 text-right whitespace-nowrap">
-                      <span className="inline-flex items-center gap-1 text-[10px] text-zinc-500 bg-zinc-800/30 px-2 py-0.5 rounded font-sans">
-                        <Clock className="w-3 h-3" /> {t('reports.upcoming')}
-                      </span>
+                      {r.status === 'FUTURE' ? (
+                        <span className="inline-flex items-center gap-1 text-[10px] text-zinc-500 bg-zinc-800/30 px-2 py-0.5 rounded font-sans">
+                          <Clock className="w-3 h-3" /> {t('reports.upcoming')}
+                        </span>
+                      ) : (
+                        <span className="text-[10px] text-zinc-600 font-sans">—</span>
+                      )}
                     </td>
                   </tr>
                 );
@@ -109,14 +123,14 @@ export const AnnualSummaryTable: React.FC<AnnualSummaryTableProps> = ({
                     </div>
                   </td>
                   <td className="py-2.5 px-3 text-right font-medium text-zinc-100 tabular-nums whitespace-nowrap">
-                    {formatPLN(r.portfolioValue, false, summary.baseCurrency)}
+                    {formatCurrency(r.portfolioValue, false, summary.baseCurrency)}
                   </td>
                   <td
                     className={`py-2.5 px-3 text-right tabular-nums whitespace-nowrap ${getValueColorClass(
                       r.profitGross
                     )}`}
                   >
-                    {formatPLN(r.profitGross, true, summary.baseCurrency)}
+                    {formatCurrency(r.profitGross, true, summary.baseCurrency)}
                   </td>
                   <td
                     className={`py-2.5 px-3 text-right tabular-nums whitespace-nowrap ${getValueColorClass(
@@ -130,7 +144,7 @@ export const AnnualSummaryTable: React.FC<AnnualSummaryTableProps> = ({
                       r.profitNet
                     )}`}
                   >
-                    {formatPLN(r.profitNet, true, summary.baseCurrency)}
+                    {formatCurrency(r.profitNet, true, summary.baseCurrency)}
                   </td>
                   <td
                     className={`py-2.5 px-3 text-right font-semibold tabular-nums whitespace-nowrap ${getValueColorClass(
@@ -171,14 +185,14 @@ export const AnnualSummaryTable: React.FC<AnnualSummaryTableProps> = ({
                 {ytdLabel}
               </td>
               <td className="py-3 px-3 text-right text-zinc-100 text-xs sm:text-sm tabular-nums whitespace-nowrap">
-                {formatPLN(summary.ytdPortfolioValue, false, summary.baseCurrency)}
+                {formatCurrency(summary.ytdPortfolioValue, false, summary.baseCurrency)}
               </td>
               <td
                 className={`py-3 px-3 text-right tabular-nums whitespace-nowrap ${getValueColorClass(
                   summary.ytdProfitGross
                 )}`}
               >
-                {formatPLN(summary.ytdProfitGross, true, summary.baseCurrency)}
+                {formatCurrency(summary.ytdProfitGross, true, summary.baseCurrency)}
               </td>
               <td
                 className={`py-3 px-3 text-right tabular-nums whitespace-nowrap ${getValueColorClass(
@@ -192,7 +206,7 @@ export const AnnualSummaryTable: React.FC<AnnualSummaryTableProps> = ({
                   summary.ytdProfitNet
                 )}`}
               >
-                {formatPLN(summary.ytdProfitNet, true, summary.baseCurrency)}
+                {formatCurrency(summary.ytdProfitNet, true, summary.baseCurrency)}
               </td>
               <td
                 className={`py-3 px-3 text-right text-xs sm:text-sm tabular-nums whitespace-nowrap ${getValueColorClass(

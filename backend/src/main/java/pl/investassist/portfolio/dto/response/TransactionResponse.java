@@ -22,7 +22,9 @@ public record TransactionResponse(
     BigDecimal bondMargin,
     Integer termMonths,
     BigDecimal baseAmount,
-    BigDecimal exchangeRateToBase) {
+    BigDecimal exchangeRateToBase,
+    BigDecimal instrumentToTxRate,
+    BigDecimal withholdingTaxPct) {
 
   public static TransactionResponse from(Transaction transaction) {
     if (transaction == null) {
@@ -43,6 +45,8 @@ public record TransactionResponse(
         transaction.getBondMargin(),
         transaction.getTermMonths(),
         transaction.getBaseAmount(),
-        transaction.getExchangeRateToBase());
+        transaction.getExchangeRateToBase(),
+        transaction.getExchangeRate(),
+        transaction.getWithholdingTaxPct());
   }
 }

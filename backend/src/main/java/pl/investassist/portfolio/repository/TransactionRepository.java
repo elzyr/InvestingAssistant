@@ -13,15 +13,12 @@ import pl.investassist.portfolio.entity.Transaction;
 public interface TransactionRepository extends JpaRepository<Transaction, UUID> {
   Page<Transaction> findAllByPortfolioIdOrderByExecutedAtDesc(UUID portfolioId, Pageable pageable);
 
+  @Query("SELECT t FROM Transaction t WHERE t.portfolio.id = :portfolioId ORDER BY t.executedAt ASC, t.id ASC")
+  List<Transaction> findAllByPortfolioIdOrderByExecutedAtAsc(@Param("portfolioId") UUID portfolioId);
+
   @Query("SELECT t FROM Transaction t WHERE t.portfolio.id = :portfolioId AND t.instrumentId = :instrumentId ORDER BY t.executedAt ASC, t.id ASC")
   List<Transaction> findAllByPortfolioIdAndInstrumentIdOrderByExecutedAtAsc(
       @Param("portfolioId") UUID portfolioId, @Param("instrumentId") UUID instrumentId);
-
-  @Query("SELECT t FROM Transaction t WHERE t.portfolio.id = :portfolioId AND t.instrumentId = :instrumentId AND (:seriesName IS NULL AND t.seriesName IS NULL OR t.seriesName = :seriesName) ORDER BY t.executedAt ASC, t.id ASC")
-  List<Transaction> findAllByPortfolioIdAndInstrumentIdAndSeriesNameOrderByExecutedAtAsc(
-      @Param("portfolioId") UUID portfolioId,
-      @Param("instrumentId") UUID instrumentId,
-      @Param("seriesName") String seriesName);
 
   Optional<Transaction> findByIdAndPortfolioId(UUID id, UUID portfolioId);
 }

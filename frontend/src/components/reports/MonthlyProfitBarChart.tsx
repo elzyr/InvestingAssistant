@@ -1,18 +1,21 @@
-import React, { useEffect, useMemo, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import {
-  createChart,
-  ColorType,
-  CrosshairMode,
   HistogramSeries,
-  type IChartApi,
+  type DeepPartial,
+  type ChartOptions,
   type ISeriesApi,
   type Time,
   type HistogramData,
 } from 'lightweight-charts';
 import type { MonthlyReportRecord } from '../../types/reports.types.ts';
-import { formatPLN, formatPercent } from '../../utils/reportsFormatters.ts';
-import { normalizeChartDateStr } from '../../utils/domain/dates.ts';
+import { formatCurrency, formatPercent, normalizeZero } from '../../utils/reportsFormatters.ts';
+import {
+  getShortMonthName,
+  normalizeChartDateStr,
+  parseUtcDate,
+} from '../../utils/domain/dates.ts';
+import { createDarkChartOptions, useLightweightChart } from '../../hooks/useLightweightChart.ts';
 
 interface MonthlyProfitBarChartProps {
   records: MonthlyReportRecord[];
@@ -29,7 +32,6 @@ export const MonthlyProfitBarChart: React.FC<MonthlyProfitBarChartProps> = ({
 }) => {
   const { t, i18n } = useTranslation();
   const containerRef = useRef<HTMLDivElement | null>(null);
-  const chartRef = useRef<IChartApi | null>(null);
   const seriesRef = useRef<ISeriesApi<'Histogram'> | null>(null);
   const [hoveredRecord, setHoveredRecord] = useState<MonthlyReportRecord | null>(null);
 
@@ -38,131 +40,117 @@ export const MonthlyProfitBarChart: React.FC<MonthlyProfitBarChartProps> = ({
     [records]
   );
   const currency = baseCurrency || recordedRecords[0]?.baseCurrency || 'PLN';
+
+  const recordedRecordsRef = useRef(recordedRecords);
   const onSelectMonthRef = useRef(onSelectMonth);
   useEffect(() => {
+    recordedRecordsRef.current = recordedRecords;
     onSelectMonthRef.current = onSelectMonth;
-  }, [onSelectMonth]);
+  }, [recordedRecords, onSelectMonth]);
+
+  const formatBarProfit = useCallback(
+    (val: number) => {
+      const rounded = normalizeZero(Math.round(val));
+      return `${rounded > 0 ? '+' : ''}${rounded.toLocaleString(i18n.language)} ${currency}`;
+    },
+    [currency, i18n.language]
+  );
+
+  const chartOptions = useMemo<DeepPartial<ChartOptions>>(
+    () =>
+      createDarkChartOptions({
+        height: 180,
+        backgroundColor: 'transparent',
+        gridColor: '#181b26',
+        timeScale: {
+          barSpacing: 36,
+          minBarSpacing: 16,
+          tickMarkFormatter: (time: Time) => {
+            const d = parseUtcDate(normalizeChartDateStr(time));
+            if (Number.isNaN(d.getTime())) return '';
+            return getShortMonthName(d.getUTCMonth(), i18n.language);
+          },
+        },
+        priceFormatter: formatBarProfit,
+      }),
+    [formatBarProfit, i18n.language]
+  );
+
+  const findRecordByTime = (rawTime: Time): MonthlyReportRecord | undefined => {
+    const timeStr = normalizeChartDateStr(rawTime);
+    return recordedRecordsRef.current.find(
+      (r) => `${r.year}-${String(r.monthIndex + 1).padStart(2, '0')}-01` === timeStr
+    );
+  };
+
+  const handleChartCreated = useCallback(
+    (chart: Parameters<NonNullable<Parameters<typeof useLightweightChart>[0]['onChartCreated']>>[0]) => {
+      const series = chart.addSeries(HistogramSeries, {
+        base: 0,
+        priceFormat: {
+          type: 'custom',
+          formatter: formatBarProfit,
+        },
+      });
+      seriesRef.current = series;
+
+      chart.subscribeCrosshairMove((param) => {
+        setHoveredRecord(param.time ? findRecordByTime(param.time) || null : null);
+      });
+
+      chart.subscribeClick((param) => {
+        if (!param.time || !onSelectMonthRef.current) return;
+        const match = findRecordByTime(param.time);
+        if (match) {
+          onSelectMonthRef.current(match.monthIndex);
+        }
+      });
+
+      return () => {
+        seriesRef.current = null;
+      };
+    },
+    [formatBarProfit]
+  );
+
+  const chartRef = useLightweightChart({
+    containerRef,
+    options: chartOptions,
+    enabled: recordedRecords.length > 0,
+    onChartCreated: handleChartCreated,
+  });
 
   useEffect(() => {
-    if (!containerRef.current || recordedRecords.length === 0) return;
+    const series = seriesRef.current;
+    if (!series || recordedRecords.length === 0) return;
 
-    if (chartRef.current) {
-      chartRef.current.remove();
-      chartRef.current = null;
-    }
-
-    const container = containerRef.current;
-    const chart = createChart(container, {
-      width: container.clientWidth || 800,
-      height: 180,
-      layout: {
-        background: { type: ColorType.Solid, color: 'transparent' },
-        textColor: '#71717a',
-        fontFamily: 'monospace',
-        fontSize: 11,
-      },
-      grid: {
-        vertLines: { color: '#181b26' },
-        horzLines: { color: '#181b26' },
-      },
-      crosshair: {
-        mode: CrosshairMode.Normal,
-      },
-      timeScale: {
-        borderColor: '#27272a',
-        timeVisible: false,
-        secondsVisible: false,
-        barSpacing: 36,
-        minBarSpacing: 16,
-        tickMarkFormatter: (time: Time) => {
-          const dateStr = normalizeChartDateStr(time);
-          const d = new Date(dateStr);
-          return d.toLocaleDateString(i18n.language, { month: 'short' });
-        },
-      },
-      rightPriceScale: {
-        borderColor: '#27272a',
-        autoScale: true,
-      },
-      localization: {
-        priceFormatter: (val: number) => `${val >= 0 ? '+' : ''}${Math.round(val).toLocaleString(i18n.language)} ${currency}`,
-      },
-    });
-
-    chartRef.current = chart;
-
-    const series = chart.addSeries(HistogramSeries, {
-      base: 0,
+    series.applyOptions({
       priceFormat: {
         type: 'custom',
-        formatter: (val: number) => `${val >= 0 ? '+' : ''}${Math.round(val).toLocaleString(i18n.language)} ${currency}`,
+        formatter: formatBarProfit,
       },
     });
-    seriesRef.current = series;
 
-    chart.timeScale().fitContent();
-
-    chart.subscribeCrosshairMove((param) => {
-      if (!param.time) {
-        setHoveredRecord(null);
-        return;
-      }
-      const timeStr = normalizeChartDateStr(param.time);
-      const match = recordedRecords.find((r: MonthlyReportRecord) => {
-        const expected = `${r.year}-${String(r.monthIndex + 1).padStart(2, '0')}-01`;
-        return expected === timeStr;
-      });
-      setHoveredRecord(match || null);
-    });
-
-    chart.subscribeClick((param) => {
-      if (!param.time || !onSelectMonthRef.current) return;
-      const timeStr = normalizeChartDateStr(param.time);
-      const match = recordedRecords.find((r: MonthlyReportRecord) => {
-        const expected = `${r.year}-${String(r.monthIndex + 1).padStart(2, '0')}-01`;
-        return expected === timeStr;
-      });
-      if (match) {
-        onSelectMonthRef.current(match.monthIndex);
-      }
-    });
-
-    const handleResize = () => {
-      if (containerRef.current && chartRef.current) {
-        chartRef.current.applyOptions({
-          width: containerRef.current.clientWidth,
-        });
-      }
-    };
-
-    window.addEventListener('resize', handleResize);
-
-    return () => {
-      window.removeEventListener('resize', handleResize);
-      chart.remove();
-      chartRef.current = null;
-      seriesRef.current = null;
-    };
-  }, [recordedRecords, currency, i18n.language]);
-
-  useEffect(() => {
-    if (!seriesRef.current || recordedRecords.length === 0) return;
     const chartData = recordedRecords.map((r: MonthlyReportRecord) => {
-      const year = r.year;
       const monthStr = String(r.monthIndex + 1).padStart(2, '0');
-      const timeStr = `${year}-${monthStr}-01`;
+      const timeStr = `${r.year}-${monthStr}-01`;
       const isPositive = r.profitNetMom >= 0;
       const isSelected = selectedMonthIndex !== undefined && r.monthIndex === selectedMonthIndex;
       return {
         time: timeStr,
         value: r.profitNetMom,
         color: isSelected
-          ? (isPositive ? '#38bdf8' : '#fb7185')
-          : (isPositive ? '#10b981' : '#f43f5e'),
+          ? isPositive
+            ? '#38bdf8'
+            : '#fb7185'
+          : isPositive
+          ? '#10b981'
+          : '#f43f5e',
       };
     });
-    seriesRef.current.setData(chartData as HistogramData[]);
-  }, [recordedRecords, selectedMonthIndex, i18n.language]);
+    series.setData(chartData as HistogramData[]);
+    chartRef.current?.timeScale().fitContent();
+  }, [recordedRecords, selectedMonthIndex, formatBarProfit, chartRef]);
 
   if (recordedRecords.length === 0) return null;
 
@@ -202,7 +190,7 @@ export const MonthlyProfitBarChart: React.FC<MonthlyProfitBarChartProps> = ({
                 hoveredRecord.profitNetMom >= 0 ? 'text-emerald-400' : 'text-rose-400'
               }`}
             >
-              {formatPLN(hoveredRecord.profitNetMom, true, hoveredRecord.baseCurrency)}
+              {formatCurrency(hoveredRecord.profitNetMom, true, hoveredRecord.baseCurrency)}
             </span>
             <span className="text-zinc-400">
               ({formatPercent(hoveredRecord.returnNetMomPct, true)})

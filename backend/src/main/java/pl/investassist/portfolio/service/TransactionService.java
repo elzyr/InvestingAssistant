@@ -2,13 +2,14 @@ package pl.investassist.portfolio.service;
 
 import java.math.BigDecimal;
 import java.math.RoundingMode;
+import java.time.Clock;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Objects;
 import java.util.UUID;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
+import java.util.function.Supplier;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.stereotype.Service;
@@ -16,12 +17,14 @@ import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.transaction.support.TransactionTemplate;
 import pl.investassist.common.enums.Currency;
+import pl.investassist.common.enums.InstrumentType;
 import pl.investassist.common.exception.ResourceNotFoundException;
 import pl.investassist.common.util.PaginationUtils;
-import pl.investassist.common.util.SeriesUtils;
 import pl.investassist.instrument.dto.InstrumentResponse;
 import pl.investassist.instrument.service.InstrumentService;
-import pl.investassist.portfolio.client.MarketDataClient;
+import pl.investassist.portfolio.port.MarketDataPort;
+import pl.investassist.portfolio.valuation.BondValuationEngine;
+import pl.investassist.portfolio.valuation.PortfolioLedger;
 import pl.investassist.portfolio.dto.request.CreateTransactionRequest;
 import pl.investassist.portfolio.dto.response.TransactionResponse;
 import pl.investassist.portfolio.entity.Portfolio;
@@ -33,31 +36,52 @@ import pl.investassist.portfolio.repository.TransactionRepository;
 @Service
 public class TransactionService {
 
-  private static final Logger log = LoggerFactory.getLogger(TransactionService.class);
-
   private final TransactionRepository transactionRepository;
   private final PortfolioRepository portfolioRepository;
   private final PortfolioService portfolioService;
-  private final PositionService positionService;
-  private final MarketDataClient marketDataClient;
+  private final MarketDataPort marketDataClient;
   private final InstrumentService instrumentService;
+  private final PortfolioCacheService portfolioCacheService;
   private final TransactionTemplate transactionTemplate;
+  private final Clock clock;
 
+  @Autowired
   public TransactionService(
       TransactionRepository transactionRepository,
       PortfolioRepository portfolioRepository,
       PortfolioService portfolioService,
-      PositionService positionService,
-      MarketDataClient marketDataClient,
+      MarketDataPort marketDataClient,
       InstrumentService instrumentService,
+      PortfolioCacheService portfolioCacheService,
       PlatformTransactionManager transactionManager) {
+    this(
+        transactionRepository,
+        portfolioRepository,
+        portfolioService,
+        marketDataClient,
+        instrumentService,
+        portfolioCacheService,
+        transactionManager,
+        Clock.systemDefaultZone());
+  }
+
+  TransactionService(
+      TransactionRepository transactionRepository,
+      PortfolioRepository portfolioRepository,
+      PortfolioService portfolioService,
+      MarketDataPort marketDataClient,
+      InstrumentService instrumentService,
+      PortfolioCacheService portfolioCacheService,
+      PlatformTransactionManager transactionManager,
+      Clock clock) {
     this.transactionRepository = transactionRepository;
     this.portfolioRepository = portfolioRepository;
     this.portfolioService = portfolioService;
-    this.positionService = positionService;
     this.marketDataClient = marketDataClient;
     this.instrumentService = instrumentService;
+    this.portfolioCacheService = portfolioCacheService;
     this.transactionTemplate = new TransactionTemplate(transactionManager);
+    this.clock = Objects.requireNonNull(clock, "clock must not be null");
   }
 
   public TransactionResponse createTransaction(
@@ -70,21 +94,22 @@ public class TransactionService {
     LocalDate txDate = request.executedAt() != null ? request.executedAt().toLocalDate() : null;
     ResolvedFinancials financials = resolveFinancials(
         foundInstrument, portfolio, request.transactionType(), request.currency(), request.price(),
-        request.quantity(), request.commission(), request.baseAmount(), request.exchangeRateToBase(), txDate);
-    String normalizedSeries = SeriesUtils.normalize(request.seriesName());
+        request.quantity(), request.commission(), request.baseAmount(), request.exchangeRateToBase(),
+        request.instrumentToTxRate(), () -> txDate);
+    String normalizedSeries = BondValuationEngine.normalizeSeries(request.seriesName());
+    validateBondRequest(foundInstrument, normalizedSeries, request);
 
-    return transactionTemplate.execute(status -> {
-      Portfolio lockedPortfolio = lockPortfolio(portfolioId);
+    return executePortfolioWrite(portfolioId, lockedPortfolio -> {
+      LocalDateTime executedAt = request.executedAt() != null ? request.executedAt() : LocalDateTime.now(clock);
+      Transaction transaction = applyTransactionChanges(
+          new Transaction(), lockedPortfolio, request, financials, normalizedSeries, executedAt);
 
-      Transaction transaction = request.toEntity(lockedPortfolio);
-      transaction.setExchangeRate(financials.exchangeRate());
-      transaction.setBaseAmount(financials.baseAmount());
-      transaction.setExchangeRateToBase(financials.exchangeRateToBase());
+      if (request.transactionType() == TransactionType.SELL) {
+        validateSeriesHoldings(
+            portfolioId, foundInstrument.id(), foundInstrument, normalizedSeries, null, transaction);
+      }
 
       Transaction savedTransaction = transactionRepository.save(transaction);
-
-      positionService.recalculatePosition(
-          lockedPortfolio, foundInstrument.id(), foundInstrument.currency(), normalizedSeries);
       return TransactionResponse.from(savedTransaction);
     });
   }
@@ -96,55 +121,70 @@ public class TransactionService {
     InstrumentResponse foundInstrument = instrumentService.getInstrument(request.instrumentId());
     validateCommissionNotExceedingGross(request);
 
-    LocalDateTime preLockExecutedAt = request.executedAt();
-    if (preLockExecutedAt == null) {
-      preLockExecutedAt = transactionRepository.findByIdAndPortfolioId(transactionId, portfolioId)
-          .map(Transaction::getExecutedAt)
-          .orElseThrow(() -> new ResourceNotFoundException("Transaction not found with id: " + transactionId));
-    }
+    Supplier<LocalDate> txDateSupplier = request.executedAt() != null
+        ? () -> request.executedAt().toLocalDate()
+        : new Supplier<>() {
+            private LocalDate cached;
 
-    LocalDate txDate = preLockExecutedAt != null ? preLockExecutedAt.toLocalDate() : null;
+            @Override
+            public LocalDate get() {
+              if (cached == null) {
+                cached = transactionRepository.findByIdAndPortfolioId(transactionId, portfolioId)
+                    .map(Transaction::getExecutedAt)
+                    .orElseThrow(() -> new ResourceNotFoundException("Transaction not found with id: " + transactionId))
+                    .toLocalDate();
+              }
+              return cached;
+            }
+          };
     ResolvedFinancials financials = resolveFinancials(
         foundInstrument, portfolio, request.transactionType(), request.currency(), request.price(),
-        request.quantity(), request.commission(), request.baseAmount(), request.exchangeRateToBase(), txDate);
-    String newSeries = SeriesUtils.normalize(request.seriesName());
+        request.quantity(), request.commission(), request.baseAmount(), request.exchangeRateToBase(),
+        request.instrumentToTxRate(), txDateSupplier);
+    String newSeries = BondValuationEngine.normalizeSeries(request.seriesName());
+    validateBondRequest(foundInstrument, newSeries, request);
 
-    return transactionTemplate.execute(status -> {
-      Portfolio lockedPortfolio = lockPortfolio(portfolioId);
+    return executePortfolioWrite(portfolioId, lockedPortfolio -> {
       Transaction transaction = transactionRepository.findByIdAndPortfolioId(transactionId, portfolioId)
           .orElseThrow(() -> new ResourceNotFoundException("Transaction not found with id: " + transactionId));
 
       UUID oldInstrumentId = transaction.getInstrumentId();
-      String oldSeries = SeriesUtils.normalize(transaction.getSeriesName());
-      boolean sameInstrumentAndSeries = oldInstrumentId.equals(request.instrumentId())
-          && Objects.equals(oldSeries, newSeries);
-      Currency oldInstrumentCurrency = !sameInstrumentAndSeries ? resolveInstrumentCurrency(oldInstrumentId) : null;
+      String oldSeries = BondValuationEngine.normalizeSeries(transaction.getSeriesName());
+      TransactionType oldType = transaction.getTransactionType();
+      boolean oldHasBondMetadata = BondValuationEngine.hasBondMetadata(transaction);
 
-      transaction.setPortfolio(lockedPortfolio);
-      transaction.setInstrumentId(request.instrumentId());
-      transaction.setTransactionType(request.transactionType());
-      transaction.setQuantity(request.quantity());
-      transaction.setPrice(request.price());
-      transaction.setCommission(request.commission());
-      transaction.setCurrency(request.currency());
-      transaction.setExchangeRate(financials.exchangeRate());
-      transaction.setBaseAmount(financials.baseAmount());
-      transaction.setExchangeRateToBase(financials.exchangeRateToBase());
-      if (request.executedAt() != null) {
-        transaction.setExecutedAt(request.executedAt());
+      applyTransactionChanges(
+          transaction, lockedPortfolio, request, financials, newSeries, transaction.getExecutedAt());
+
+      boolean sameInstrument = oldInstrumentId.equals(request.instrumentId());
+      boolean sameInstrumentAndSeries;
+      if (!sameInstrument) {
+        sameInstrumentAndSeries = false;
+      } else {
+        InstrumentType sharedType = foundInstrument != null ? foundInstrument.type() : null;
+        String effectiveOldSeries = BondValuationEngine.isBond(sharedType, oldSeries, oldHasBondMetadata)
+            ? oldSeries
+            : null;
+        String effectiveNewSeries = BondValuationEngine.isBond(
+            sharedType, newSeries, BondValuationEngine.hasBondMetadata(transaction))
+            ? newSeries
+            : null;
+        sameInstrumentAndSeries = Objects.equals(effectiveOldSeries, effectiveNewSeries);
       }
-      transaction.setSeriesName(newSeries);
-      transaction.setBondRate(request.bondRate());
-      transaction.setBondMargin(request.bondMargin());
-      transaction.setTermMonths(request.termMonths());
+
+      if (!sameInstrumentAndSeries && oldType == TransactionType.BUY) {
+        InstrumentResponse oldInstrument = oldInstrumentId.equals(request.instrumentId())
+            ? foundInstrument
+            : instrumentService.getInstrument(oldInstrumentId);
+        validateSeriesHoldings(portfolioId, oldInstrumentId, oldInstrument, oldSeries, transactionId, null);
+      }
+      if (request.transactionType() == TransactionType.SELL
+          || (sameInstrumentAndSeries && oldType == TransactionType.BUY)) {
+        validateSeriesHoldings(
+            portfolioId, request.instrumentId(), foundInstrument, newSeries, transactionId, transaction);
+      }
 
       Transaction savedTransaction = transactionRepository.save(transaction);
-
-      if (!sameInstrumentAndSeries) {
-        positionService.recalculatePosition(lockedPortfolio, oldInstrumentId, oldInstrumentCurrency, oldSeries);
-      }
-      positionService.recalculatePosition(lockedPortfolio, foundInstrument.id(), foundInstrument.currency(), newSeries);
-
       return TransactionResponse.from(savedTransaction);
     });
   }
@@ -152,17 +192,19 @@ public class TransactionService {
   public void deleteTransaction(UUID userId, UUID portfolioId, UUID transactionId) {
     portfolioService.validateAndGetPortfolioEntity(userId, portfolioId);
 
-    transactionTemplate.executeWithoutResult(status -> {
-      Portfolio lockedPortfolio = lockPortfolio(portfolioId);
+    executePortfolioWrite(portfolioId, lockedPortfolio -> {
       Transaction transaction = transactionRepository.findByIdAndPortfolioId(transactionId, portfolioId)
           .orElseThrow(() -> new ResourceNotFoundException("Transaction not found with id: " + transactionId));
 
-      UUID instrumentId = transaction.getInstrumentId();
-      String seriesName = SeriesUtils.normalize(transaction.getSeriesName());
-      Currency instrumentCurrency = resolveInstrumentCurrency(instrumentId);
+      if (transaction.getTransactionType() == TransactionType.BUY) {
+        String seriesName = BondValuationEngine.normalizeSeries(transaction.getSeriesName());
+        InstrumentResponse inst = instrumentService.getInstrument(transaction.getInstrumentId());
+        validateSeriesHoldings(
+            portfolioId, transaction.getInstrumentId(), inst, seriesName, transactionId, null);
+      }
 
       transactionRepository.delete(transaction);
-      positionService.recalculatePosition(lockedPortfolio, instrumentId, instrumentCurrency, seriesName);
+      return null;
     });
   }
 
@@ -172,6 +214,96 @@ public class TransactionService {
     Pageable pageable = PaginationUtils.toPageable(page, size);
     Page<Transaction> paged = transactionRepository.findAllByPortfolioIdOrderByExecutedAtDesc(portfolioId, pageable);
     return paged != null ? paged.getContent().stream().map(TransactionResponse::from).toList() : List.of();
+  }
+
+  private <T> T executePortfolioWrite(
+      UUID portfolioId, java.util.function.Function<Portfolio, T> work) {
+    return transactionTemplate.execute(status -> {
+      Portfolio lockedPortfolio = lockPortfolio(portfolioId);
+      T result = work.apply(lockedPortfolio);
+      portfolioCacheService.evictPortfolioAfterCommit(portfolioId);
+      return result;
+    });
+  }
+
+  private void validateSeriesHoldings(
+      UUID portfolioId,
+      UUID instrumentId,
+      InstrumentResponse instrument,
+      String normalizedSeries,
+      UUID excludedTxId,
+      Transaction candidateTx) {
+    boolean isBond = isBondForValidation(instrument, normalizedSeries);
+    List<Transaction> existingGroup = transactionRepository
+        .findAllByPortfolioIdAndInstrumentIdOrderByExecutedAtAsc(portfolioId, instrumentId);
+    List<Transaction> simulated = new java.util.ArrayList<>(existingGroup != null ? existingGroup.size() + 1 : 1);
+    if (existingGroup != null) {
+      for (Transaction existing : existingGroup) {
+        if (excludedTxId != null && excludedTxId.equals(existing.getId())) {
+          continue;
+        }
+        if (!isBond || Objects.equals(BondValuationEngine.normalizeSeries(existing.getSeriesName()), normalizedSeries)) {
+          simulated.add(existing);
+        }
+      }
+    }
+    if (candidateTx != null) {
+      simulated.add(candidateTx);
+    }
+    PortfolioLedger.replayPosition(simulated, true);
+  }
+
+  private static boolean isBondForValidation(InstrumentResponse inst, String normalizedSeries) {
+    return BondValuationEngine.isBond(
+        inst != null ? inst.type() : null, normalizedSeries, false);
+  }
+
+  private static void validateBondRequest(
+      InstrumentResponse instrument, String normalizedSeries, CreateTransactionRequest request) {
+    boolean hasMetadata =
+        request.bondRate() != null || request.bondMargin() != null || request.termMonths() != null;
+    if (!BondValuationEngine.isBond(
+        instrument != null ? instrument.type() : null, normalizedSeries, hasMetadata)) {
+      return;
+    }
+    BondValuationEngine.BondFamily family = BondValuationEngine.findBondFamily(normalizedSeries)
+        .orElseThrow(() -> new IllegalArgumentException(
+            "Unsupported or unknown treasury bond series: " + request.seriesName()));
+    if (request.termMonths() != null && request.termMonths() != family.termMonths()) {
+      throw new IllegalArgumentException(
+          "Bond series " + family.name() + " requires termMonths=" + family.termMonths()
+              + ", got " + request.termMonths());
+    }
+  }
+
+  private Transaction applyTransactionChanges(
+      Transaction target,
+      Portfolio lockedPortfolio,
+      CreateTransactionRequest request,
+      ResolvedFinancials financials,
+      String normalizedSeries,
+      LocalDateTime fallbackExecutedAt) {
+    target.setPortfolio(lockedPortfolio);
+    target.setInstrumentId(request.instrumentId());
+    target.setTransactionType(request.transactionType());
+    target.setQuantity(request.quantity());
+    target.setPrice(request.price());
+    target.setCommission(request.commission());
+    target.setCurrency(request.currency());
+    target.setExchangeRate(financials.exchangeRate());
+    target.setBaseAmount(financials.baseAmount());
+    target.setExchangeRateToBase(financials.exchangeRateToBase());
+    if (request.executedAt() != null) {
+      target.setExecutedAt(request.executedAt());
+    } else if (target.getExecutedAt() == null) {
+      target.setExecutedAt(fallbackExecutedAt);
+    }
+    target.setSeriesName(normalizedSeries);
+    target.setBondRate(request.bondRate());
+    target.setBondMargin(request.bondMargin());
+    target.setTermMonths(request.termMonths());
+    target.setWithholdingTaxPct(request.withholdingTaxPct());
+    return target;
   }
 
   private void validateCommissionNotExceedingGross(CreateTransactionRequest request) {
@@ -185,14 +317,12 @@ public class TransactionService {
     }
   }
 
-  private Currency resolveInstrumentCurrency(UUID instrumentId) {
-    try {
-      InstrumentResponse instrument = instrumentService.getInstrument(instrumentId);
-      return instrument != null ? instrument.currency() : null;
-    } catch (Exception e) {
-      log.warn("Failed to resolve instrument currency for {}: {}", instrumentId, e.getMessage());
-      return null;
-    }
+  private static boolean hasCustomRateInBaseCurrency(
+      Portfolio portfolio, Currency txCurrency, BigDecimal customExchangeRateToBase) {
+    return customExchangeRateToBase != null
+        && txCurrency != null
+        && portfolio != null
+        && txCurrency.equals(portfolio.getBaseCurrency());
   }
 
   private Portfolio lockPortfolio(UUID portfolioId) {
@@ -213,28 +343,46 @@ public class TransactionService {
       BigDecimal commission,
       BigDecimal customBaseAmount,
       BigDecimal customExchangeRateToBase,
-      LocalDate txDate) {
+      BigDecimal customInstrumentToTxRate,
+      Supplier<LocalDate> txDateSupplier) {
+
+    Currency baseCurrency = portfolio.getBaseCurrency();
+    boolean crossCurrencyBuy = txType == TransactionType.BUY
+        && instrument.currency() != null
+        && !instrument.currency().equals(txCurrency);
+    boolean customInstrumentToBase = crossCurrencyBuy
+        && hasCustomRateInBaseCurrency(portfolio, txCurrency, customExchangeRateToBase);
 
     BigDecimal exchangeRate = BigDecimal.ONE;
-    if (!instrument.currency().equals(txCurrency)) {
-      exchangeRate = marketDataClient.getExchangeRate(instrument.currency(), txCurrency, txDate);
+    if (crossCurrencyBuy) {
+      if (customInstrumentToTxRate != null) {
+        exchangeRate = customInstrumentToTxRate;
+      } else if (customInstrumentToBase) {
+        exchangeRate = customExchangeRateToBase;
+      } else {
+        exchangeRate = marketDataClient.getExchangeRate(instrument.currency(), txCurrency, txDateSupplier.get());
+      }
+    }
+    if (exchangeRate.scale() > 8) {
+      exchangeRate = exchangeRate.setScale(8, RoundingMode.HALF_UP);
     }
 
-    BigDecimal exchangeRateToBase = customExchangeRateToBase;
+    boolean sameAsBaseCurrency = txCurrency != null && baseCurrency != null && txCurrency.equals(baseCurrency);
+    BigDecimal exchangeRateToBase = (customInstrumentToBase || sameAsBaseCurrency) ? BigDecimal.ONE : customExchangeRateToBase;
     if (exchangeRateToBase == null) {
-      if (txCurrency.equals(portfolio.getBaseCurrency())) {
-        exchangeRateToBase = BigDecimal.ONE;
-      } else {
-        exchangeRateToBase = marketDataClient.getExchangeRate(txCurrency, portfolio.getBaseCurrency(), txDate);
-      }
+      LocalDate txDate = txDateSupplier.get();
+      exchangeRateToBase = txDate != null
+          ? marketDataClient.getNbpTaxRate(txCurrency, baseCurrency, txDate)
+          : marketDataClient.getExchangeRate(txCurrency, baseCurrency, null);
+    }
+    if (exchangeRateToBase.scale() > 8) {
+      exchangeRateToBase = exchangeRateToBase.setScale(8, RoundingMode.HALF_UP);
     }
 
     BigDecimal baseAmount = customBaseAmount;
     if (baseAmount == null) {
-      BigDecimal total = price.multiply(quantity);
-      BigDecimal comm = commission != null ? commission : BigDecimal.ZERO;
-      BigDecimal netTotal = (txType == TransactionType.SELL || txType == TransactionType.DIVIDEND) ? total.subtract(comm) : total.add(comm);
-      if (txCurrency.equals(portfolio.getBaseCurrency())) {
+      BigDecimal netTotal = PortfolioLedger.computeNetTotal(txType, price, quantity, commission);
+      if (txCurrency.equals(baseCurrency) && exchangeRateToBase.compareTo(BigDecimal.ONE) == 0) {
         baseAmount = netTotal;
       } else {
         baseAmount = netTotal.multiply(exchangeRateToBase).setScale(4, RoundingMode.HALF_UP);

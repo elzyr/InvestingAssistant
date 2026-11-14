@@ -3,9 +3,12 @@ import json
 import logging
 import threading
 import time
-from typing import Any, Dict, Iterable, List
+from typing import Any, Callable, Dict, Iterable, List, Optional, TypeVar
+from weakref import WeakValueDictionary
 import redis
 from app.config import settings
+
+T = TypeVar("T")
 
 _redis_pool = redis.ConnectionPool(
     host=settings.REDIS_HOST,
@@ -21,27 +24,38 @@ _redis_client = redis.Redis(connection_pool=_redis_pool)
 MAX_CACHE_ENTRIES = 1024
 
 
+class _KeyLock:
+    def __init__(self) -> None:
+        self._lock = threading.Lock()
+
+    def acquire(self, *args: Any, **kwargs: Any) -> bool:
+        return self._lock.acquire(*args, **kwargs)
+
+    def release(self) -> None:
+        self._lock.release()
+
+    def __enter__(self) -> "_KeyLock":
+        self._lock.acquire()
+        return self
+
+    def __exit__(self, exc_type: Any, exc_val: Any, exc_tb: Any) -> None:
+        self._lock.release()
+
+
 class CacheService:
     def __init__(self):
         self.redis_client = _redis_client
-        self._locks: "OrderedDict[str, threading.Lock]" = OrderedDict()
+        self._locks: "WeakValueDictionary[str, _KeyLock]" = WeakValueDictionary()
         self._meta_lock = threading.Lock()
         self._memory_cache: "OrderedDict[str, tuple[Any, float]]" = OrderedDict()
         self._mem_lock = threading.Lock()
 
-    def get_lock(self, key: str) -> threading.Lock:
+    def get_lock(self, key: str) -> _KeyLock:
         with self._meta_lock:
             lock = self._locks.get(key)
-            if lock is not None:
-                self._locks.move_to_end(key)
-                return lock
-            if len(self._locks) >= MAX_CACHE_ENTRIES:
-                for candidate_key in list(self._locks.keys()):
-                    if not self._locks[candidate_key].locked():
-                        del self._locks[candidate_key]
-                        break
-            lock = threading.Lock()
-            self._locks[key] = lock
+            if lock is None:
+                lock = _KeyLock()
+                self._locks[key] = lock
             return lock
 
     def _mem_get(self, key: str) -> Any:
@@ -52,21 +66,21 @@ class CacheService:
         item = self._memory_cache.get(key)
         if item is None:
             return None
-        value, expires_at = item
+        raw_json, expires_at = item
         if now < expires_at:
             self._memory_cache.move_to_end(key)
-            return value
+            return json.loads(raw_json)
         del self._memory_cache[key]
         return None
 
-    def _mem_set_unlocked(self, key: str, value: object, expire: int, now: float) -> None:
+    def _mem_set_unlocked(self, key: str, raw_json: str, expire: int, now: float) -> None:
         if len(self._memory_cache) >= MAX_CACHE_ENTRIES:
             expired = [k for k, (_, exp) in self._memory_cache.items() if exp <= now]
             for k in expired:
                 del self._memory_cache[k]
             while len(self._memory_cache) >= MAX_CACHE_ENTRIES:
                 self._memory_cache.popitem(last=False)
-        self._memory_cache[key] = (value, now + expire)
+        self._memory_cache[key] = (raw_json, now + expire)
         self._memory_cache.move_to_end(key)
 
     def _mem_delete(self, *keys: str) -> None:
@@ -113,9 +127,14 @@ class CacheService:
 
     def set(self, key: str, value: object, expire: int = 300):
         try:
+            raw_json = json.dumps(value, allow_nan=False)
+        except (TypeError, ValueError) as e:
+            logging.error(f"Cache serialize error for {key}: {e}")
+            return
+        try:
             self.redis_client.set(
                 key,
-                json.dumps(value),
+                raw_json,
                 ex=expire,
             )
             self._mem_delete(key)
@@ -123,23 +142,31 @@ class CacheService:
             logging.warning(f"Redis set error: {e}, storing in in-memory fallback")
             now = time.time()
             with self._mem_lock:
-                self._mem_set_unlocked(key, value, expire, now)
+                self._mem_set_unlocked(key, raw_json, expire, now)
 
     def mset_pipeline(self, items: Dict[str, Any], expire: int = 300) -> None:
         if not items:
             return
+        serialized: Dict[str, str] = {}
+        for key, value in items.items():
+            try:
+                serialized[key] = json.dumps(value, allow_nan=False)
+            except (TypeError, ValueError) as e:
+                logging.error(f"Cache serialize error for {key}: {e}")
+        if not serialized:
+            return
         try:
             pipe = self.redis_client.pipeline(transaction=False)
-            for key, value in items.items():
-                pipe.setex(key, expire, json.dumps(value))
+            for key, raw_json in serialized.items():
+                pipe.set(key, raw_json, ex=expire)
             pipe.execute()
-            self._mem_delete(*items.keys())
+            self._mem_delete(*serialized.keys())
         except Exception as e:
             logging.warning(f"Redis mset_pipeline error: {e}, storing in in-memory fallback")
             now = time.time()
             with self._mem_lock:
-                for key, value in items.items():
-                    self._mem_set_unlocked(key, value, expire, now)
+                for key, raw_json in serialized.items():
+                    self._mem_set_unlocked(key, raw_json, expire, now)
 
     def delete(self, key: str):
         try:
@@ -147,6 +174,36 @@ class CacheService:
         except Exception as e:
             logging.warning(f"Redis delete error for {key}: {e}")
         self._mem_delete(key)
+
+    def get_or_set_with_hit(
+        self,
+        key: str,
+        builder: Callable[[], T],
+        ttl: int | Callable[[T], Optional[int]] = 300,
+        validator: Optional[Callable[[Any], bool]] = None,
+    ) -> tuple[T, bool]:
+        cached = self.get(key)
+        if cached is not None and (validator is None or validator(cached)):
+            return cached, True
+        with self.get_lock(key):
+            cached = self.get(key)
+            if cached is not None and (validator is None or validator(cached)):
+                return cached, True
+            value = builder()
+            expire: Optional[int] = ttl(value) if callable(ttl) else ttl
+            if value is not None and expire is not None and expire > 0:
+                self.set(key, value, expire=expire)
+            return value, False
+
+    def get_or_set(
+        self,
+        key: str,
+        builder: Callable[[], T],
+        ttl: int | Callable[[T], Optional[int]] = 300,
+        validator: Optional[Callable[[Any], bool]] = None,
+    ) -> T:
+        value, _ = self.get_or_set_with_hit(key, builder, ttl=ttl, validator=validator)
+        return value
 
 
 cache_service = CacheService()
