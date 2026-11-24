@@ -11,6 +11,7 @@ const LoginPage = lazy(() => import('./pages/LoginPage.tsx').then((m) => ({ defa
 const RegisterPage = lazy(() => import('./pages/RegisterPage.tsx').then((m) => ({ default: m.RegisterPage })));
 const DashboardPage = lazy(() => import('./pages/DashboardPage.tsx').then((m) => ({ default: m.DashboardPage })));
 const MonthlyReportsPage = lazy(() => import('./pages/MonthlyReportsPage.tsx').then((m) => ({ default: m.MonthlyReportsPage })));
+const ExpensesPage = lazy(() => import('./pages/ExpensesPage.tsx').then((m) => ({ default: m.ExpensesPage })));
 
 function App() {
   const dispatch = useAppDispatch();
@@ -30,6 +31,7 @@ function App() {
             <Route element={<AppLayout />}>
               <Route path="/" element={<DashboardPage />} />
               <Route path="/reports" element={<MonthlyReportsPage />} />
+              <Route path="/expenses" element={<ExpensesPage />} />
             </Route>
           </Route>
 

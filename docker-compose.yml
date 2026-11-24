@@ -18,6 +18,10 @@ services:
       - REDIS_PORT=6379
       - JWT_SECRET=${JWT_SECRET}
       - MARKET_DATA_SERVICE_URL=http://market-data-service:8083
+      - EXPENSE_LLM_PROVIDER=${EXPENSE_LLM_PROVIDER:-ollama}
+      - EXPENSE_LLM_MODEL=${EXPENSE_LLM_MODEL:-tev1:4b}
+      - EXPENSE_LLM_BASE_URL=${EXPENSE_LLM_BASE_URL:-http://host.docker.internal:11434}
+      - EXPENSE_LLM_NUM_CTX=${EXPENSE_LLM_NUM_CTX:-16384}
     depends_on:
       postgres:
         condition: service_healthy

@@ -6,6 +6,7 @@ import { logoutThunk } from '../../store/thunks/auth.thunk.ts';
 import {
   LayoutDashboard,
   CalendarDays,
+  Receipt,
   LogOut,
   Menu,
   X,
@@ -32,6 +33,7 @@ export const AppLayout: React.FC = () => {
   const navItems = [
     { to: '/', label: t('nav.overview'), icon: LayoutDashboard },
     { to: '/reports', label: t('nav.reports'), icon: CalendarDays },
+    { to: '/expenses', label: t('nav.expenses'), icon: Receipt },
   ];
 
   const renderLanguageButton = () => (
