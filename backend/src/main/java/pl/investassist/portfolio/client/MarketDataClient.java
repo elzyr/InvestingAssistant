@@ -131,22 +131,36 @@ public class MarketDataClient implements MarketDataPort {
       }
       List<InstrumentResponse> list = new ArrayList<>();
       for (ExternalInstrumentDto dto : results) {
-        if (dto == null || dto.symbol() == null || dto.symbol().isBlank() || dto.currency() == null) {
+        if (dto == null || dto.symbol() == null || dto.symbol().isBlank()) {
           continue;
         }
-        try {
-          String rawCur = dto.currency().trim().toUpperCase(Locale.ROOT);
-          Currency currency = Currency.valueOf("GBX".equals(rawCur) ? "GBP" : rawCur);
-          InstrumentType type = parseInstrumentType(dto.type(), dto.symbol());
-          list.add(new InstrumentResponse(null, dto.symbol(), dto.name(), type, currency));
-        } catch (IllegalArgumentException e) {
-          log.warn("Skipping external instrument {} due to unsupported currency {}", dto.symbol(), dto.currency());
+        Currency currency = parseInstrumentCurrency(dto.currency(), dto.symbol());
+        if (currency == null) {
+          continue;
         }
+        InstrumentType type = parseInstrumentType(dto.type(), dto.symbol());
+        list.add(new InstrumentResponse(null, dto.symbol(), dto.name(), type, currency));
       }
       return list;
     } catch (Exception e) {
       log.warn("External instrument search failed for query='{}': {}", query, e.getMessage());
       return List.of();
+    }
+  }
+
+  private static Currency parseInstrumentCurrency(String rawCurrency, String symbol) {
+    String normalized = Currency.normalizeCode(rawCurrency, null);
+    if (normalized == null) {
+      return null;
+    }
+    if (isSubunitGbp(rawCurrency, normalized)) {
+      return Currency.GBP;
+    }
+    try {
+      return Currency.valueOf(normalized);
+    } catch (IllegalArgumentException e) {
+      log.warn("Skipping external instrument {} due to unsupported currency {}", symbol, rawCurrency);
+      return null;
     }
   }
 

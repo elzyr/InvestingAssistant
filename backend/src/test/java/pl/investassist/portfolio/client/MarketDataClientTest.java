@@ -2,6 +2,7 @@ package pl.investassist.portfolio.client;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.assertj.core.api.Assertions.tuple;
 import static org.springframework.test.web.client.match.MockRestRequestMatchers.method;
 import static org.springframework.test.web.client.match.MockRestRequestMatchers.requestTo;
 import static org.springframework.test.web.client.response.MockRestResponseCreators.withSuccess;
@@ -71,6 +72,37 @@ class MarketDataClientTest {
     assertThat(results.getFirst().symbol()).isEqualTo("VWRL.L");
     assertThat(results.getFirst().type()).isEqualTo(InstrumentType.ETF);
     assertThat(results.getFirst().currency()).isEqualTo(Currency.GBP);
+    server.verify();
+  }
+
+  @Test
+  void searchInstruments_normalizesPaddedLowercaseAndYahooPenceAndSkipsBlankNullOrUnsupported() {
+    server.expect(requestTo("http://localhost/api/prices/search?query=mixed"))
+        .andExpect(method(HttpMethod.GET))
+        .andRespond(withSuccess(
+            """
+            [
+              null,
+              {"symbol":"   ","name":"Blank Symbol","type":"STOCK","currency":"PLN"},
+              {"symbol":"A.L","name":"Padded Lowercase GBX","type":"ETF","currency":" gbx "},
+              {"symbol":"B.L","name":"Yahoo Pence","type":"STOCK","currency":"GBp"},
+              {"symbol":"CDR.WA","name":"Padded Lowercase PLN","type":"STOCK","currency":" pln "},
+              {"symbol":"C.L","name":"Unsupported","type":"STOCK","currency":"JPY"},
+              {"symbol":"EMPTY","name":"Empty Currency","type":"STOCK","currency":""},
+              {"symbol":"BLANK","name":"Blank Currency","type":"STOCK","currency":"   "},
+              {"symbol":"MISSING","name":"Null Currency","type":"STOCK","currency":null}
+            ]
+            """,
+            MediaType.APPLICATION_JSON));
+
+    List<InstrumentResponse> results = client.searchInstruments("mixed");
+
+    assertThat(results)
+        .extracting(InstrumentResponse::symbol, InstrumentResponse::currency)
+        .containsExactly(
+            tuple("A.L", Currency.GBP),
+            tuple("B.L", Currency.GBP),
+            tuple("CDR.WA", Currency.PLN));
     server.verify();
   }
 
