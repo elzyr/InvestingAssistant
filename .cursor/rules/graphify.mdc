@@ -1,0 +1,13 @@
+---
+description: Consult the graphify knowledge graph at graphify-out/ for codebase and architecture questions before raw grep or file reads.
+globs:
+alwaysApply: true
+---
+
+# graphify
+
+When `graphify-out/graph.json` exists:
+- Run `graphify query "<question>"` (or `python -m graphify query "<question>"` via `graphify-out/.graphify_python` if `graphify` is not on `PATH`) before broad grep or multi-file reads.
+- Use `graphify path "<A>" "<B>"` for cross-file call/dependency paths and `graphify explain "<concept>"` for node details.
+- Read `graphify-out/GRAPH_REPORT.md` only when broad community context is needed.
+- After code edits, run `graphify update .` (AST-only, no LLM cost).
