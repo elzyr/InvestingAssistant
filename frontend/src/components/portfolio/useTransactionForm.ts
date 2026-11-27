@@ -15,6 +15,7 @@ import type { InstrumentResponse } from '../../types/instrument.ts';
 import type { TransactionResponse } from '../../types/portfolio.ts';
 import {
   createInitialTransactionFormState,
+  getTodayLocalDateStr,
   transactionFormReducer,
   type TransactionFormField,
   type TransactionFormState,
@@ -150,6 +151,8 @@ export function useTransactionForm({
     const q = parseFloat(state.quantity);
     const p = isBond && state.transactionType === 'BUY' ? 100.0 : parseFloat(state.price);
     const c = parseFloat(state.commission) || 0;
+    const rawFee = state.fxFeePct.trim();
+    const parsedFee = rawFee === '' ? undefined : parseFloat(rawFee);
 
     if (isNaN(q) || q <= 0) {
       setField('error', t('transactionModal.errorQuantityPositive'));
@@ -157,6 +160,10 @@ export function useTransactionForm({
     }
     if (isNaN(p) || p <= 0) {
       setField('error', t('transactionModal.errorPricePositive'));
+      return;
+    }
+    if (!isBond && parsedFee !== undefined && (isNaN(parsedFee) || parsedFee < 0 || parsedFee > 100)) {
+      setField('error', t('transactionModal.errorCreateFailed'));
       return;
     }
     if (isBond && state.transactionType === 'BUY') {
@@ -177,8 +184,23 @@ export function useTransactionForm({
     setField('submitting', true);
     setField('error', null);
 
-    const executedAt = state.transactionDate
-      ? `${standardizeDate(state.transactionDate)}T12:00:00`
+    const todayStr = getTodayLocalDateStr();
+    const selectedDate = state.transactionDate ? standardizeDate(state.transactionDate) : '';
+    const executedAt = selectedDate
+      ? isEdit &&
+        transaction?.executedAt &&
+        transaction.executedAt.includes('T') &&
+        standardizeDate(transaction.executedAt) === selectedDate
+        ? transaction.executedAt
+        : selectedDate === todayStr
+        ? (() => {
+            const now = new Date();
+            const hh = String(now.getHours()).padStart(2, '0');
+            const mm = String(now.getMinutes()).padStart(2, '0');
+            const ss = String(now.getSeconds()).padStart(2, '0');
+            return `${selectedDate}T${hh}:${mm}:${ss}`;
+          })()
+        : `${selectedDate}T12:00:00`
       : undefined;
     const isBondBuy = isBond && state.transactionType === 'BUY';
     const requestPayload = {
@@ -189,6 +211,7 @@ export function useTransactionForm({
       commission: c,
       currency: isBond ? 'PLN' : state.currency,
       executedAt,
+      fxFeePct: !isBond ? parsedFee : undefined,
       seriesName: isBond && state.seriesName.trim() ? state.seriesName.trim() : undefined,
       bondRate: isBondBuy && state.bondRate ? parseFloat(state.bondRate) : undefined,
       bondMargin:

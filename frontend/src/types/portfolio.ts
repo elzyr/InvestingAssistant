@@ -33,6 +33,7 @@ export interface CreateTransactionRequest {
   exchangeRateToBase?: number;
   instrumentToTxRate?: number;
   withholdingTaxPct?: number;
+  fxFeePct?: number;
 }
 
 export interface TransactionResponse {
@@ -47,6 +48,7 @@ export interface TransactionResponse {
   exchangeRateToBase?: number;
   instrumentToTxRate?: number;
   withholdingTaxPct?: number;
+  fxFeePct?: number;
   executedAt: string;
   seriesName?: string;
   bondRate?: number;

@@ -15,4 +15,7 @@ public interface ExpenseStatementRepository extends JpaRepository<ExpenseStateme
   Optional<ExpenseStatement> findByIdAndUserId(UUID id, UUID userId);
 
   boolean existsByUserIdAndFileHashSha256(UUID userId, String fileHashSha256);
+
+  Optional<ExpenseStatement> findFirstByUserIdAndFileHashSha256OrderByCreatedAtDesc(
+      UUID userId, String fileHashSha256);
 }

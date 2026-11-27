@@ -56,8 +56,9 @@ export const authSlice = createSlice({
             .addCase(checkAuthThunk.rejected, (state) => {
                 state.loading = false;
                 state.isInitialized = true;
-                state.isAuthenticated = false;
-                state.user = null;
+                if (!state.isAuthenticated) {
+                    state.user = null;
+                }
             })
             .addCase(logoutThunk.fulfilled, (state) => {
                 clearAuthSession(state);

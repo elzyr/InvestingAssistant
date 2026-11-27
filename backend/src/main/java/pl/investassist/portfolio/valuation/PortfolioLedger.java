@@ -2,6 +2,7 @@ package pl.investassist.portfolio.valuation;
 
 import java.math.BigDecimal;
 import java.math.RoundingMode;
+import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.Comparator;
@@ -35,6 +36,8 @@ public final class PortfolioLedger {
   public record DividendKey(UUID instrumentId, String bondFamily) {}
 
   public static final class FifoLot {
+    public record LotDeduction(LocalDateTime executedAt, BigDecimal quantity) {}
+
     private final UUID txId;
     private final BigDecimal initialQuantity;
     private BigDecimal remainingQuantity;
@@ -48,6 +51,7 @@ public final class PortfolioLedger {
     private final BigDecimal bondMargin;
     private final Integer termMonths;
     private final String seriesName;
+    private final List<LotDeduction> deductions = new ArrayList<>();
 
     FifoLot(
         UUID txId,
@@ -100,6 +104,25 @@ public final class PortfolioLedger {
           .divide(initialQuantity, 10, RoundingMode.HALF_UP);
     }
 
+    void recordDeduction(LocalDateTime soldAt, BigDecimal soldQty) {
+      if (soldQty != null && soldQty.compareTo(BigDecimal.ZERO) > 0) {
+        deductions.add(new LotDeduction(soldAt, soldQty));
+      }
+    }
+
+    public BigDecimal quantityAt(LocalDate date) {
+      if (date == null) {
+        return remainingQuantity;
+      }
+      BigDecimal qty = initialQuantity;
+      for (LotDeduction d : deductions) {
+        if (d.executedAt() != null && d.executedAt().toLocalDate().isBefore(date)) {
+          qty = qty.subtract(d.quantity());
+        }
+      }
+      return qty.max(BigDecimal.ZERO);
+    }
+
     public BigDecimal remainingCostBase() {
       if (initialQuantity.compareTo(BigDecimal.ZERO) <= 0) {
         return BigDecimal.ZERO;
@@ -120,7 +143,25 @@ public final class PortfolioLedger {
       List<MetricsCalculator.CashFlow> cashFlows,
       BigDecimal latestBondMargin,
       Integer latestTermMonths,
-      boolean hasBondMetadata) {}
+      boolean hasBondMetadata,
+      List<FifoLot> allLots) {
+
+    public PositionReplayResult(
+        List<FifoLot> activeLots,
+        BigDecimal totalQuantity,
+        BigDecimal totalCostNative,
+        BigDecimal totalCostBase,
+        BigDecimal averageBuyPriceNative,
+        BigDecimal realizedProfitBase,
+        List<MetricsCalculator.CashFlow> cashFlows,
+        BigDecimal latestBondMargin,
+        Integer latestTermMonths,
+        boolean hasBondMetadata) {
+      this(
+          activeLots, totalQuantity, totalCostNative, totalCostBase, averageBuyPriceNative,
+          realizedProfitBase, cashFlows, latestBondMargin, latestTermMonths, hasBondMetadata, activeLots);
+    }
+  }
 
   public static final class PositionAccumulator {
     private final List<FifoLot> lots = new ArrayList<>();
@@ -133,6 +174,10 @@ public final class PortfolioLedger {
     private Integer lastTermMonths;
 
     public BigDecimal apply(Transaction tx, boolean strictSell) {
+      return apply(tx, strictSell, false);
+    }
+
+    public BigDecimal apply(Transaction tx, boolean strictSell, boolean isBond) {
       if (BondValuationEngine.hasBondMetadata(tx)) {
         this.hasBondMetadata = true;
       }
@@ -211,6 +256,7 @@ public final class PortfolioLedger {
                       .divide(lot.initialQuantity, 10, RoundingMode.HALF_UP)
                   : BigDecimal.ZERO;
           matchedCostBase = matchedCostBase.add(lotCostPortion);
+          lot.recordDeduction(tx.getExecutedAt(), deduct);
           lot.remainingQuantity = lot.remainingQuantity.subtract(deduct);
           toDeduct = toDeduct.subtract(deduct);
           if (toDeduct.compareTo(BigDecimal.ZERO) <= 0) {
@@ -219,7 +265,7 @@ public final class PortfolioLedger {
         }
         BigDecimal sellProfitBase = proceedBase.subtract(matchedCostBase);
         realizedProfitBase = realizedProfitBase.add(sellProfitBase);
-        disposalEvents.add(new TaxPolicy.CapitalDisposalEvent(tx.getExecutedAt(), sellProfitBase));
+        disposalEvents.add(new TaxPolicy.CapitalDisposalEvent(tx.getExecutedAt(), sellProfitBase, isBond));
         currentQty = currentQty.subtract(sellQty);
         if (tx.getExecutedAt() != null) {
           cashFlows.add(new MetricsCalculator.CashFlow(proceedBase.doubleValue(), tx.getExecutedAt()));
@@ -237,6 +283,10 @@ public final class PortfolioLedger {
 
     public List<FifoLot> activeLots() {
       return lots.stream().filter(l -> l.remainingQuantity.compareTo(BigDecimal.ZERO) > 0).toList();
+    }
+
+    public List<FifoLot> allLots() {
+      return List.copyOf(lots);
     }
 
     public BigDecimal currentQuantity() {
@@ -312,7 +362,8 @@ public final class PortfolioLedger {
           List.copyOf(cashFlows),
           activeBondMargin,
           activeTermMonths,
-          this.hasBondMetadata);
+          this.hasBondMetadata,
+          List.copyOf(lots));
     }
   }
 
@@ -320,6 +371,7 @@ public final class PortfolioLedger {
     private final Map<UUID, Instrument> instruments;
     private final Map<PositionKey, PositionAccumulator> accumulators = new LinkedHashMap<>();
     private final Map<DividendKey, BigDecimal> dividendsByKey = new LinkedHashMap<>();
+    private final Map<DividendKey, BigDecimal> dividendTaxByKey = new LinkedHashMap<>();
     private final List<MetricsCalculator.CashFlow> allFlows = new ArrayList<>();
     private final List<TaxPolicy.Art30aPayoutEvent> art30aEvents = new ArrayList<>();
     private BigDecimal totalDividends = BigDecimal.ZERO;
@@ -334,7 +386,10 @@ public final class PortfolioLedger {
       boolean isBond = BondValuationEngine.isBondTransaction(tx, inst);
       if (tx.getTransactionType() == TransactionType.DIVIDEND) {
         BigDecimal divBase = resolveProceedsOrDividendBase(tx);
-        dividendsByKey.merge(resolveDividendKey(tx, isBond), divBase, BigDecimal::add);
+        DividendKey divKey = resolveDividendKey(tx, isBond);
+        dividendsByKey.merge(divKey, divBase, BigDecimal::add);
+        dividendTaxByKey.merge(
+            divKey, TaxPolicy.computeArt30aTotalTax(divBase, tx.getWithholdingTaxPct(), false), BigDecimal::add);
         totalDividends = totalDividends.add(divBase);
         art30aEvents.add(new TaxPolicy.Art30aPayoutEvent(tx.getExecutedAt(), divBase, tx.getWithholdingTaxPct()));
         cumulativeExternalCashFlow = cumulativeExternalCashFlow.subtract(divBase);
@@ -347,7 +402,7 @@ public final class PortfolioLedger {
       PositionKey key = new PositionKey(tx.getInstrumentId(), series);
       BigDecimal externalFlow = accumulators
           .computeIfAbsent(key, ignored -> new PositionAccumulator())
-          .apply(tx, false);
+          .apply(tx, false, isBond);
       cumulativeExternalCashFlow = cumulativeExternalCashFlow.add(externalFlow);
     }
 
@@ -357,6 +412,10 @@ public final class PortfolioLedger {
 
     public Map<DividendKey, BigDecimal> dividendsByKey() {
       return dividendsByKey;
+    }
+
+    public Map<DividendKey, BigDecimal> dividendTaxByKey() {
+      return dividendTaxByKey;
     }
 
     public BigDecimal totalDividends() {
@@ -383,7 +442,8 @@ public final class PortfolioLedger {
           totalDividends,
           flows,
           List.copyOf(disposals),
-          List.copyOf(art30aEvents));
+          List.copyOf(art30aEvents),
+          new LinkedHashMap<>(dividendTaxByKey));
     }
 
     public List<TaxPolicy.CapitalDisposalEvent> disposalEvents() {
@@ -426,7 +486,19 @@ public final class PortfolioLedger {
       BigDecimal totalDividendsBase,
       List<MetricsCalculator.CashFlow> portfolioCashFlows,
       List<TaxPolicy.CapitalDisposalEvent> disposalEvents,
-      List<TaxPolicy.Art30aPayoutEvent> art30aEvents) {}
+      List<TaxPolicy.Art30aPayoutEvent> art30aEvents,
+      Map<DividendKey, BigDecimal> dividendTaxByKey) {
+
+    public PortfolioReplay(
+        Map<PositionKey, PositionReplayResult> positions,
+        Map<DividendKey, BigDecimal> dividendsByKey,
+        BigDecimal totalDividendsBase,
+        List<MetricsCalculator.CashFlow> portfolioCashFlows,
+        List<TaxPolicy.CapitalDisposalEvent> disposalEvents,
+        List<TaxPolicy.Art30aPayoutEvent> art30aEvents) {
+      this(positions, dividendsByKey, totalDividendsBase, portfolioCashFlows, disposalEvents, art30aEvents, Map.of());
+    }
+  }
 
   public static BigDecimal computeNetTotal(
       TransactionType type, BigDecimal price, BigDecimal quantity, BigDecimal commission) {

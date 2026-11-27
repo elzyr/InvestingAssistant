@@ -64,11 +64,11 @@ public class BankStatementParser {
     String text = decodeCsvBytes(csvBytes);
     String[] rawLines = text.split("\\r?\\n", -1);
 
-    Metadata meta = extractMetadataFromLines(rawLines);
     HeaderInfo headerInfo = findCsvHeader(rawLines);
     if (headerInfo == null) {
       return parseText(text, profileHint);
     }
+    Metadata meta = extractCsvMetadata(rawLines, headerInfo.lineIndex);
 
     String preambleText = joinLines(rawLines, headerInfo.lineIndex + 1);
     BankProfile profile = detectProfile(profileHint, preambleText, headerInfo.normalizedColumns);
@@ -573,19 +573,71 @@ public class BankStatementParser {
   }
 
   private static boolean hasUnclosedQuotes(CharSequence text) {
+    return countUnclosedQuotes(text, '\0');
+  }
+
+  private static boolean countUnclosedQuotes(CharSequence text, char delimiter) {
     boolean inQuotes = false;
+    boolean atFieldStart = true;
     for (int i = 0; i < text.length(); i++) {
-      if (text.charAt(i) == '"') {
-        inQuotes = !inQuotes;
+      char ch = text.charAt(i);
+      if (inQuotes) {
+        if (ch == '"') {
+          if (i + 1 < text.length() && text.charAt(i + 1) == '"') {
+            i++;
+          } else if (delimiter == '\0'
+              ? isPotentialClosingQuoteWithoutDelimiter(text, i)
+              : isClosingQuote(text, i, delimiter)) {
+            inQuotes = false;
+          }
+        }
+      } else {
+        if (ch == '"' && atFieldStart) {
+          inQuotes = true;
+          atFieldStart = false;
+        } else if (delimiter != '\0' && ch == delimiter) {
+          atFieldStart = true;
+        } else if (delimiter == '\0' && (ch == ';' || ch == ',' || ch == '\t')) {
+          atFieldStart = true;
+        } else if (!Character.isWhitespace(ch)) {
+          atFieldStart = false;
+        }
       }
     }
     return inQuotes;
+  }
+
+  private static boolean isClosingQuote(CharSequence text, int quoteIdx, char delimiter) {
+    for (int j = quoteIdx + 1; j < text.length(); j++) {
+      char next = text.charAt(j);
+      if (next == delimiter) {
+        return true;
+      }
+      if (next != ' ' && next != '\t') {
+        return false;
+      }
+    }
+    return true;
+  }
+
+  private static boolean isPotentialClosingQuoteWithoutDelimiter(CharSequence text, int quoteIdx) {
+    for (int j = quoteIdx + 1; j < text.length(); j++) {
+      char next = text.charAt(j);
+      if (next == ';' || next == ',' || next == '\t') {
+        return true;
+      }
+      if (next != ' ' && next != '\t') {
+        return false;
+      }
+    }
+    return true;
   }
 
   private static List<String> splitCsvLine(String line, char delimiter) {
     List<String> fields = new ArrayList<>();
     StringBuilder field = new StringBuilder();
     boolean inQuotes = false;
+    boolean atFieldStart = true;
 
     for (int i = 0; i < line.length(); i++) {
       char ch = line.charAt(i);
@@ -594,18 +646,25 @@ public class BankStatementParser {
           if (i + 1 < line.length() && line.charAt(i + 1) == '"') {
             field.append('"');
             i++;
-          } else {
+          } else if (isClosingQuote(line, i, delimiter)) {
             inQuotes = false;
+          } else {
+            field.append('"');
           }
         } else {
           field.append(ch);
         }
-      } else if (ch == '"') {
+      } else if (ch == '"' && atFieldStart) {
         inQuotes = true;
+        atFieldStart = false;
       } else if (ch == delimiter) {
         fields.add(field.toString().trim());
         field.setLength(0);
+        atFieldStart = true;
       } else {
+        if (!Character.isWhitespace(ch)) {
+          atFieldStart = false;
+        }
         field.append(ch);
       }
     }
@@ -683,6 +742,26 @@ public class BankStatementParser {
     return sb.toString();
   }
 
+  private static Metadata extractCsvMetadata(String[] lines, int headerLineIndex) {
+    List<String> metaLines = new ArrayList<>();
+    int limit = Math.min(headerLineIndex, lines.length);
+    for (int i = 0; i < limit; i++) {
+      metaLines.add(lines[i]);
+    }
+    for (int i = headerLineIndex + 1; i < lines.length; i++) {
+      String raw = lines[i];
+      if (raw == null || raw.isBlank()) {
+        continue;
+      }
+      String norm = ExpenseSupport.toAsciiLower(raw);
+      if ((OPENING_LABEL_PATTERN.matcher(norm).find() || CLOSING_LABEL_PATTERN.matcher(norm).find())
+          && !LEADING_DATE_PATTERN.matcher(raw.trim()).find()) {
+        metaLines.add(raw);
+      }
+    }
+    return extractMetadataFromLines(metaLines.toArray(String[]::new));
+  }
+
   private static Metadata extractMetadataFromLines(String[] lines) {
     String currency = null;
     LocalDate periodStart = null;
@@ -692,6 +771,9 @@ public class BankStatementParser {
 
     for (String rawLine : lines) {
       if (rawLine == null || rawLine.isBlank()) {
+        continue;
+      }
+      if (LEADING_DATE_PATTERN.matcher(rawLine.trim()).find()) {
         continue;
       }
       String norm = ExpenseSupport.toAsciiLower(rawLine);
@@ -902,9 +984,9 @@ public class BankStatementParser {
     } else if (lastComma >= 0) {
       int digitsAfter = s.length() - lastComma - 1;
       int commaCount = (int) s.chars().filter(c -> c == ',').count();
-      if (commaCount == 1 && digitsAfter <= 2) {
+      if (commaCount == 1 && (digitsAfter != 3 || s.startsWith("0,"))) {
         normalized = s.replace(",", ".");
-      } else if (s.matches("\\d{1,3}(?:,\\d{3})+")) {
+      } else if (s.matches("[1-9]\\d{0,2}(?:,\\d{3})+")) {
         normalized = s.replace(",", "");
       } else {
         return null;
@@ -912,9 +994,9 @@ public class BankStatementParser {
     } else if (lastDot >= 0) {
       int digitsAfter = s.length() - lastDot - 1;
       int dotCount = (int) s.chars().filter(c -> c == '.').count();
-      if (dotCount == 1 && digitsAfter <= 2) {
+      if (dotCount == 1 && (digitsAfter != 3 || s.startsWith("0."))) {
         normalized = s;
-      } else if (s.matches("\\d{1,3}(?:\\.\\d{3})+")) {
+      } else if (s.matches("[1-9]\\d{0,2}(?:\\.\\d{3})+")) {
         normalized = s.replace(".", "");
       } else {
         return null;
@@ -1237,11 +1319,20 @@ public class BankStatementParser {
     }
 
     void applyMoneyMatches(String sourceText, List<MoneyMatch> moneyMatches) {
-      MoneyMatch txMatch = moneyMatches.size() >= 2
-          ? moneyMatches.get(moneyMatches.size() - 2)
-          : moneyMatches.get(moneyMatches.size() - 1);
+      MoneyMatch txMatch;
       if (moneyMatches.size() >= 2) {
-        this.balance = moneyMatches.get(moneyMatches.size() - 1).amount;
+        MoneyMatch secondLast = moneyMatches.get(moneyMatches.size() - 2);
+        MoneyMatch last = moneyMatches.get(moneyMatches.size() - 1);
+        String lastCurr = last.currency != null ? last.currency : defaultCurrency;
+        if (secondLast.currency != null && !secondLast.currency.equalsIgnoreCase(lastCurr)) {
+          txMatch = last;
+          this.balance = null;
+        } else {
+          txMatch = secondLast;
+          this.balance = last.amount;
+        }
+      } else {
+        txMatch = moneyMatches.get(moneyMatches.size() - 1);
       }
       this.amount = txMatch.amount;
       this.currency = txMatch.currency != null ? txMatch.currency : defaultCurrency;

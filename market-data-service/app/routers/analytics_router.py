@@ -98,7 +98,7 @@ class MonteCarloRequest(BaseModel):
     cpiPct: Optional[float] = Field(None, ge=-20.0, le=100.0, allow_inf_nan=False)
     targetGoal: Optional[float] = Field(None, gt=0.0, allow_inf_nan=False)
     etfReturnOverridePct: Optional[float] = Field(None, ge=-50.0, le=100.0, allow_inf_nan=False)
-    seed: Optional[int] = 42
+    seed: Optional[int] = Field(42, ge=0)
 
 
 @router.post("/analytics/monte-carlo")

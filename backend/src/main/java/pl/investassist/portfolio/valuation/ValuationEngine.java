@@ -40,6 +40,10 @@ public final class ValuationEngine {
         final Map<String, List<UUID>> bondInstrumentIdsByFamily = new LinkedHashMap<>();
         final List<TaxPolicy.Art30aPayoutEvent> completedBondArt30aEvents = new ArrayList<>();
         final List<MetricsCalculator.CashFlow> completedBondCouponFlows = new ArrayList<>();
+        final Map<String, BigDecimal> completedBondCouponsByFamily = new LinkedHashMap<>();
+        final Map<String, List<MetricsCalculator.CashFlow>> completedBondCouponFlowsByFamily = new LinkedHashMap<>();
+        final Map<String, BigDecimal> completedBondCouponTaxByFamily = new LinkedHashMap<>();
+        final Map<String, List<MetricsCalculator.CashFlow>> completedBondCouponTaxFlowsByFamily = new LinkedHashMap<>();
         BigDecimal completedBondCouponsBase = BigDecimal.ZERO;
         BigDecimal grossTotalValue = BigDecimal.ZERO;
         BigDecimal totalInvested = BigDecimal.ZERO;
@@ -137,6 +141,7 @@ public final class ValuationEngine {
                 baseCurrency, shouldApplyTax, effectiveNow.toLocalDate(), effectiveNow);
 
         Map<PortfolioLedger.DividendKey, List<MetricsCalculator.CashFlow>> dividendFlowsByKey = new HashMap<>();
+        Map<PortfolioLedger.DividendKey, List<MetricsCalculator.CashFlow>> dividendTaxFlowsByKey = new HashMap<>();
         Map<UUID, Transaction> sampleTxByInstrument = new HashMap<>();
         for (Transaction tx : orderedTxs) {
             if (tx.getInstrumentId() == null) {
@@ -151,11 +156,21 @@ public final class ValuationEngine {
                 dividendFlowsByKey
                         .computeIfAbsent(divKey, ignored -> new ArrayList<>())
                         .add(new MetricsCalculator.CashFlow(divBase.doubleValue(), tx.getExecutedAt()));
+                BigDecimal divTax = TaxPolicy.computeArt30aTotalTax(divBase, tx.getWithholdingTaxPct(), false);
+                if (divTax.compareTo(BigDecimal.ZERO) > 0) {
+                    dividendTaxFlowsByKey
+                            .computeIfAbsent(divKey, ignored -> new ArrayList<>())
+                            .add(new MetricsCalculator.CashFlow(-divTax.doubleValue(), tx.getExecutedAt()));
+                }
             }
         }
 
         Map<PortfolioLedger.DividendKey, BigDecimal> remainingDividends =
                 new LinkedHashMap<>(replay.dividendsByKey());
+        Map<PortfolioLedger.DividendKey, BigDecimal> remainingDividendTax =
+                replay.dividendTaxByKey() != null
+                        ? new LinkedHashMap<>(replay.dividendTaxByKey())
+                        : new LinkedHashMap<>();
         Accumulator acc = new Accumulator();
 
         for (Map.Entry<PortfolioLedger.PositionKey, PortfolioLedger.PositionReplayResult> entry :
@@ -172,7 +187,7 @@ public final class ValuationEngine {
 
             if (posResult.totalQuantity().compareTo(BigDecimal.ZERO) <= 0) {
                 if (isBond) {
-                    BondPositionBuilder.collectClosedBondPosition(acc, key, posResult, inst);
+                    BondPositionBuilder.collectClosedBondPosition(acc, key, posResult, inst, ctx);
                 } else {
                     BigDecimal eqRealized = posResult.realizedProfitBase();
                     acc.totalRealizedProfit = acc.totalRealizedProfit.add(eqRealized);
@@ -190,11 +205,12 @@ public final class ValuationEngine {
             } else {
                 EquityPositionBuilder.buildEquityPosition(
                         acc, instrumentId, posResult, inst, sampleTx,
-                        dividendFlowsByKey, remainingDividends, ctx);
+                        dividendFlowsByKey, remainingDividends, remainingDividendTax, ctx);
             }
         }
 
-        BondPositionBuilder.buildBondPositions(acc, dividendFlowsByKey, remainingDividends, ctx);
+        BondPositionBuilder.buildBondPositions(
+                acc, dividendFlowsByKey, dividendTaxFlowsByKey, remainingDividends, remainingDividendTax, ctx);
 
         List<ValuationPositionDto> finalPositions = acc.rawPositions.stream()
                 .map(p -> p.withAllocation(acc.grossTotalValue))

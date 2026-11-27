@@ -30,6 +30,7 @@ final class EquityPositionBuilder {
             Transaction sampleTx,
             Map<PortfolioLedger.DividendKey, List<MetricsCalculator.CashFlow>> dividendFlowsByKey,
             Map<PortfolioLedger.DividendKey, BigDecimal> remainingDividends,
+            Map<PortfolioLedger.DividendKey, BigDecimal> remainingDividendTax,
             ValuationContext ctx) {
         String symbol = inst != null ? inst.getSymbol() : instrumentId.toString();
         String quoteKey = ValuationSupport.normalizeSymbolKey(inst, instrumentId);
@@ -67,10 +68,11 @@ final class EquityPositionBuilder {
         if (posDividends == null) {
             posDividends = BigDecimal.ZERO;
         }
+        BigDecimal posDividendTax = remainingDividendTax != null ? remainingDividendTax.remove(divKey) : null;
 
         BigDecimal realizedProfit = posResult.realizedProfitBase();
         TaxPolicy.PositionTaxBreakdown taxBreakdown = TaxPolicy.computePositionTax(
-                valueBase, investedBase, realizedProfit, posDividends, !ctx.shouldApplyTax());
+                valueBase, investedBase, realizedProfit, posDividends, posDividendTax, !ctx.shouldApplyTax());
         BigDecimal grossProfitBase = taxBreakdown.grossProfit();
         BigDecimal settledPosTax = taxBreakdown.settledTax();
         BigDecimal profitBase = taxBreakdown.netProfit();

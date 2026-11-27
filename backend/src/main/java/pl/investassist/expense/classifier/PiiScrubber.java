@@ -13,12 +13,14 @@ public class PiiScrubber {
       Pattern.compile("\\bPL\\s?\\d{2}(?:[\\s-]?\\d{4}){6}\\b", Pattern.CASE_INSENSITIVE);
   private static final Pattern GENERIC_IBAN_PATTERN =
       Pattern.compile(
-          "\\b[A-Z]{2}\\d{2}(?:[\\s-]?[A-Z0-9]{4}){2,7}(?:[\\s-]?[A-Z0-9]{1,4})?\\b",
+          "\\b[A-Z]{2}\\d{2}(?:[\\s-]?[A-Z0-9]{4}){1,7}(?:[\\s-]?[A-Z0-9]{1,4})?\\b",
           Pattern.CASE_INSENSITIVE);
   private static final Pattern POLISH_NRB_SPACED_PATTERN =
       Pattern.compile("\\b\\d{2}(?:[\\s-]?\\d{4}){6}\\b");
   private static final Pattern POLISH_NRB_COMPACT_PATTERN =
       Pattern.compile("\\b\\d{26}\\b");
+  private static final Pattern POLISH_NIP_PATTERN =
+      Pattern.compile("\\b\\d{3}-\\d{3}-\\d{2}-\\d{2}\\b|\\b\\d{3}-\\d{2}-\\d{2}-\\d{3}\\b");
   private static final Pattern MASKED_CARD_PATTERN = Pattern.compile(
       "(?<!\\w)(?:"
           + "\\d{4}[\\s-]?\\d{2}[*xX]{2}[\\s-]?[*xX]{4}[\\s-]?\\d{4}|"
@@ -49,6 +51,7 @@ public class PiiScrubber {
     text = POLISH_NRB_COMPACT_PATTERN.matcher(text).replaceAll("[ACCOUNT]");
     text = MASKED_CARD_PATTERN.matcher(text).replaceAll("[CARD]");
     text = CARD_NUMBER_PATTERN.matcher(text).replaceAll("[CARD]");
+    text = POLISH_NIP_PATTERN.matcher(text).replaceAll("[TAX_ID]");
     text = INTL_PHONE_PATTERN.matcher(text).replaceAll("[PHONE]");
     text = GROUPED_PHONE_PATTERN.matcher(text).replaceAll("[PHONE]");
     text = LONG_NUMERIC_ID_PATTERN.matcher(text).replaceAll("[ID]");
@@ -65,7 +68,7 @@ public class PiiScrubber {
       String token = m.group();
       long digitCount = token.chars().filter(Character::isDigit).count();
       long compactLen = token.replaceAll("[\\s-]", "").length();
-      if (compactLen >= 15 && compactLen <= 34 && digitCount >= 8) {
+      if (compactLen >= 10 && compactLen <= 34 && digitCount >= 8) {
         m.appendReplacement(sb, "[IBAN]");
       } else {
         m.appendReplacement(sb, Matcher.quoteReplacement(token));

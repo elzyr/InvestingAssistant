@@ -212,7 +212,7 @@ public final class BondValuationEngine {
           periodRatePct = Math.max(0.0, bondRate.doubleValue());
         }
       } else if (family.rateType() == RateType.CPI) {
-        LocalDate lagDate = periodStart.minusMonths(1);
+        LocalDate lagDate = periodStart.minusMonths(2);
         BigDecimal cpi = lookupMonthlyCpi(monthlyCpiByYear, lagDate.getYear(), lagDate.getMonthValue());
         if (cpi == null) {
           rateUnavailable = true;

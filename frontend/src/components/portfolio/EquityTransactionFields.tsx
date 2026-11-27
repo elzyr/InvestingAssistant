@@ -11,8 +11,11 @@ interface EquityTransactionFieldsProps {
   onPriceChange: (val: string) => void;
   commission: string;
   onCommissionChange: (val: string) => void;
+  fxFeePct: string;
+  onFxFeePctChange: (val: string) => void;
   currency: Currency;
   onCurrencyChange: (val: Currency) => void;
+  showFxFeeHint: boolean;
   loadingPrice: boolean;
 }
 
@@ -23,8 +26,11 @@ export const EquityTransactionFields: React.FC<EquityTransactionFieldsProps> = (
   onPriceChange,
   commission,
   onCommissionChange,
+  fxFeePct,
+  onFxFeePctChange,
   currency,
   onCurrencyChange,
+  showFxFeeHint,
   loadingPrice,
 }) => {
   const { t } = useTranslation();
@@ -80,6 +86,18 @@ export const EquityTransactionFields: React.FC<EquityTransactionFieldsProps> = (
           </select>
         </div>
       </div>
+
+      <NumberField
+        label={t('transactionModal.fxFeePct')}
+        value={fxFeePct}
+        onChange={onFxFeePctChange}
+        step="0.01"
+        min="0"
+        max="100"
+        placeholder="0.50"
+        required={false}
+        hint={showFxFeeHint ? t('transactionModal.fxFeeHint') : undefined}
+      />
     </>
   );
 };

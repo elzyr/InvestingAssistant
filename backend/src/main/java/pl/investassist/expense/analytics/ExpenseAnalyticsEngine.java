@@ -257,8 +257,8 @@ public class ExpenseAnalyticsEngine {
         continue;
       }
       if (refund.txDate() != null && candidate.tx.txDate() != null) {
-        long days = Math.abs(ChronoUnit.DAYS.between(candidate.tx.txDate(), refund.txDate()));
-        if (days > REFUND_WINDOW_DAYS) {
+        long days = ChronoUnit.DAYS.between(candidate.tx.txDate(), refund.txDate());
+        if (days < 0 || days > REFUND_WINDOW_DAYS) {
           continue;
         }
         boolean matched = matchByMerchant

@@ -3,6 +3,7 @@ package pl.investassist.instrument.service;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.HashSet;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
@@ -11,12 +12,14 @@ import java.util.UUID;
 import java.util.stream.Collectors;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import org.springframework.dao.DataIntegrityViolationException;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.TransactionTemplate;
 import org.springframework.web.server.ResponseStatusException;
 import pl.investassist.common.enums.Currency;
 import pl.investassist.common.enums.InstrumentType;
@@ -35,12 +38,22 @@ public class InstrumentService {
 
   private final InstrumentRepository instrumentRepository;
   private final MarketDataPort marketDataClient;
+  private final TransactionTemplate transactionTemplate;
 
   public InstrumentService(
       InstrumentRepository instrumentRepository,
       MarketDataPort marketDataClient) {
+    this(instrumentRepository, marketDataClient, null);
+  }
+
+  @Autowired
+  public InstrumentService(
+      InstrumentRepository instrumentRepository,
+      MarketDataPort marketDataClient,
+      PlatformTransactionManager transactionManager) {
     this.instrumentRepository = instrumentRepository;
     this.marketDataClient = marketDataClient;
+    this.transactionTemplate = transactionManager != null ? new TransactionTemplate(transactionManager) : null;
   }
 
   @Transactional
@@ -73,7 +86,6 @@ public class InstrumentService {
     return paged != null ? paged.getContent().stream().map(InstrumentResponse::from).toList() : List.of();
   }
 
-  @Transactional
   public List<InstrumentResponse> discoverInstruments(String search, InstrumentType type, Integer page, Integer size) {
     Pageable pageable = PaginationUtils.toBoundedPageable(page, size);
     String searchQuery = search != null ? search.trim() : "";
@@ -142,8 +154,8 @@ public class InstrumentService {
       }
     }
 
-    List<Instrument> newInstruments = new ArrayList<>();
-    Set<String> pendingSymbols = new HashSet<>();
+    List<InstrumentResponse> toUpsert = new ArrayList<>();
+    Set<String> pendingSymbols = new LinkedHashSet<>();
     for (InstrumentResponse ext : externalList) {
       if (ext.symbol() == null || ext.symbol().isBlank()) {
         continue;
@@ -154,53 +166,42 @@ public class InstrumentService {
       if (existing != null) {
         addIfMatching(existing, type, searchQuery, existingSymbols, added);
       } else if (ext.currency() != null && pendingSymbols.add(symUpper)) {
-        Instrument instrument = new Instrument();
-        instrument.setSymbol(symUpper);
-        instrument.setName(ext.name() != null && !ext.name().isBlank() ? ext.name() : ext.symbol());
-        instrument.setType(ext.type() != null ? ext.type() : InstrumentType.STOCK);
-        instrument.setCurrency(ext.currency());
-        instrument.setAssetCategory(ext.assetCategory());
-        newInstruments.add(instrument);
+        toUpsert.add(ext);
       }
     }
 
-    if (newInstruments.isEmpty()) {
+    if (toUpsert.isEmpty()) {
       return added;
     }
 
-    try {
-      List<Instrument> savedAll = instrumentRepository.saveAll(newInstruments);
-      if (savedAll != null) {
-        for (Instrument saved : savedAll) {
-          addIfMatching(saved, type, searchQuery, existingSymbols, added);
-        }
-      }
-    } catch (DataIntegrityViolationException e) {
-      log.debug("Batch instrument insert hit concurrent duplicate, falling back to per-symbol upsert: {}", e.getMessage());
-      for (Instrument inst : newInstruments) {
-        saveOrFetchSingle(inst, type, searchQuery, existingSymbols, added);
+    List<Instrument> fetched = transactionTemplate != null
+        ? transactionTemplate.execute(status -> persistAndFetchDiscovered(toUpsert, pendingSymbols))
+        : persistAndFetchDiscovered(toUpsert, pendingSymbols);
+    if (fetched != null) {
+      for (Instrument inst : fetched) {
+        addIfMatching(inst, type, searchQuery, existingSymbols, added);
       }
     }
 
     return added;
   }
 
-  private void saveOrFetchSingle(
-      Instrument inst,
-      InstrumentType type,
-      String searchQuery,
-      Set<String> existingSymbols,
-      List<Instrument> added) {
-    try {
-      Instrument saved = instrumentRepository.save(inst);
-      if (saved != null) {
-        addIfMatching(saved, type, searchQuery, existingSymbols, added);
-      }
-    } catch (DataIntegrityViolationException ex) {
-      instrumentRepository
-          .findBySymbolIgnoreCase(inst.getSymbol())
-          .ifPresent(existing -> addIfMatching(existing, type, searchQuery, existingSymbols, added));
+  private List<Instrument> persistAndFetchDiscovered(
+      List<InstrumentResponse> toUpsert, Set<String> pendingSymbols) {
+    for (InstrumentResponse ext : toUpsert) {
+      String symUpper = ext.symbol().trim().toUpperCase(Locale.ROOT);
+      String name = ext.name() != null && !ext.name().isBlank() ? ext.name() : ext.symbol();
+      String instType = (ext.type() != null ? ext.type() : InstrumentType.STOCK).name();
+      String assetCategory = ext.assetCategory() != null ? ext.assetCategory().name() : null;
+      instrumentRepository.upsertIgnore(
+          UUID.randomUUID(),
+          symUpper,
+          name,
+          instType,
+          ext.currency().name(),
+          assetCategory);
     }
+    return instrumentRepository.findBySymbolInIgnoreCase(pendingSymbols);
   }
 
   private void addIfMatching(

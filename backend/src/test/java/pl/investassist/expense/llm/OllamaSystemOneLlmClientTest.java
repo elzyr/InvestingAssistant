@@ -232,7 +232,8 @@ class OllamaSystemOneLlmClientTest {
         .contains("PLN")
         .contains("outflow")
         .contains("Statement occurrences: 3")
-        .contains("Account owner: Jan Kowalski")
+        .doesNotContain("Account owner:")
+        .doesNotContain("Jan Kowalski")
         .contains("Other merchants in statement: Biedronka, Netflix")
         .contains("User learned rules:")
         .contains("kantyna biurowa waw")
@@ -510,16 +511,82 @@ class OllamaSystemOneLlmClientTest {
 
     statusCode.set(500);
     defaultResponseBody.set("{\"error\":\"model unavailable\"}");
-    assertThatThrownBy(() -> client.classifyUnknowns(List.of(
+    Map<String, LlmCategorySuggestion> httpErrorResult = client.classifyUnknowns(List.of(
         new LlmClassifyInput("1", "SKLEP A", new BigDecimal("-10.00"), "PLN"),
-        new LlmClassifyInput("2", "SKLEP B", new BigDecimal("-20.00"), "PLN"))))
-        .isInstanceOf(IllegalStateException.class);
-    assertThat(requestCount.get()).isEqualTo(1);
+        new LlmClassifyInput("2", "SKLEP B", new BigDecimal("-20.00"), "PLN")));
+    assertThat(httpErrorResult).isEmpty();
+    assertThat(requestCount.get()).isEqualTo(2);
 
     server.stop(0);
     server = null;
-    assertThatThrownBy(() -> client.classifyUnknowns(List.of(
-        new LlmClassifyInput("1", "SKLEP A", new BigDecimal("-10.00"), "PLN"))))
-        .isInstanceOf(IllegalStateException.class);
+    Map<String, LlmCategorySuggestion> connectionRefusedResult = client.classifyUnknowns(List.of(
+        new LlmClassifyInput("1", "SKLEP A", new BigDecimal("-10.00"), "PLN")));
+    assertThat(connectionRefusedResult).isEmpty();
+  }
+
+  @Test
+  void classifyUnknowns_neverSendsRawAccountOwnerNameAndScrubsLearnedExamples() {
+    statusCode.set(200);
+    defaultResponseBody.set("""
+        {"answers":{"category":{"choice":"SHOPPING","confidence":0.90}}}
+        """);
+
+    OllamaSystemOneLlmClient client = new OllamaSystemOneLlmClient("ollama", "tev1:4b", baseUrl, 16384);
+    LlmClassificationContext context = new LlmClassificationContext(
+        "Jan Kowalski",
+        List.of("Biedronka"),
+        List.of(new MerchantRuleSnapshot(
+            RuleMatchType.MERCHANT,
+            "biuro_jan@wp.pl_123-456-32-18",
+            ExpenseCategory.SERVICES_FEES,
+            FlowKind.EXPENSE)));
+
+    client.classifyUnknowns(
+        List.of(new LlmClassifyInput("1", "SKLEP XYZ", new BigDecimal("-25.00"), "PLN")),
+        context);
+
+    String sentBody = lastRequestBody.get();
+    assertThat(sentBody)
+        .doesNotContain("Account owner:")
+        .doesNotContain("Jan Kowalski")
+        .doesNotContain("jan@wp.pl")
+        .doesNotContain("123-456-32-18");
+  }
+
+  @Test
+  void classifyUnknowns_survivesSingleItemFailureAndCapsBatchSize() throws Exception {
+    OllamaSystemOneLlmClient client = new OllamaSystemOneLlmClient("ollama", "tev1:4b", baseUrl, 8192);
+    server.stop(0);
+    server = com.sun.net.httpserver.HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
+    requestCount.set(0);
+    server.createContext("/", exchange -> {
+      int idx = requestCount.incrementAndGet();
+      byte[] resp = idx == 1
+          ? "{\"error\":\"boom\"}".getBytes(StandardCharsets.UTF_8)
+          : "{\"answers\":{\"category\":{\"choice\":\"DINING\",\"confidence\":0.91}}}"
+              .getBytes(StandardCharsets.UTF_8);
+      exchange.getResponseHeaders().add("Content-Type", "application/json");
+      exchange.sendResponseHeaders(idx == 1 ? 500 : 200, resp.length);
+      exchange.getResponseBody().write(resp);
+      exchange.close();
+    });
+    server.start();
+    baseUrl = "http://127.0.0.1:" + server.getAddress().getPort();
+    OllamaSystemOneLlmClient resilientClient = new OllamaSystemOneLlmClient("ollama", "tev1:4b", baseUrl, 8192);
+
+    Map<String, LlmCategorySuggestion> partial = resilientClient.classifyUnknowns(List.of(
+        new LlmClassifyInput("1", "SKLEP A", new BigDecimal("-10.00"), "PLN"),
+        new LlmClassifyInput("2", "BISTRO B", new BigDecimal("-25.00"), "PLN")));
+
+    assertThat(partial).containsKey("2");
+    assertThat(partial.get("2").category()).isEqualTo(ExpenseCategory.DINING);
+
+    requestCount.set(0);
+    List<LlmClassifyInput> oversizedBatch = new ArrayList<>();
+    for (int i = 0; i < 100; i++) {
+      oversizedBatch.add(new LlmClassifyInput("id-" + i, "SKLEP " + i, new BigDecimal("-10.00"), "PLN"));
+    }
+    resilientClient.classifyUnknowns(oversizedBatch);
+    assertThat(requestCount.get()).isLessThan(100);
   }
 }

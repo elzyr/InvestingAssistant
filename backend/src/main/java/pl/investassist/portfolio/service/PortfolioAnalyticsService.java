@@ -119,7 +119,8 @@ public class PortfolioAnalyticsService {
             Map<String, MarketDataPort.FxSeries> fxSeries,
             MarketDataPort.InflationSnapshot inflation,
             java.util.NavigableMap<LocalDate, BigDecimal> nbpReferenceRates,
-            LocalDateTime now
+            LocalDateTime now,
+            boolean historyUnavailable
     ) {
     }
 
@@ -265,7 +266,7 @@ public class PortfolioAnalyticsService {
     @Cacheable(
             value = CacheConfig.CACHE_PORTFOLIO_TIMELINE,
             condition = "@portfolioCacheService.isCacheEnabled(#portfolio.id)",
-            unless = "#result == null",
+            unless = "#result == null || #result.isDegraded()",
             key = "#portfolio.id + ':v' + @portfolioCacheService.versionOf(#portfolio.id) + ':' + (#timeframe ?: 'YTD') + ':' + (#taxMode ?: 'NETTO')")
     public PortfolioTimelineResponse getTimeline(Portfolio portfolio, Timeframe timeframe, TaxMode taxMode) {
         Timeframe resolvedTf = Timeframe.orDefault(timeframe);
@@ -290,7 +291,7 @@ public class PortfolioAnalyticsService {
                 ctx.inflation() != null && ctx.inflation().monthlyByYear() != null
                         ? ctx.inflation().monthlyByYear()
                         : Map.of();
-        return TimelineEngine.build(
+        PortfolioTimelineResponse resp = TimelineEngine.build(
                 portfolio,
                 ctx.transactions(),
                 ctx.instruments(),
@@ -303,12 +304,19 @@ public class PortfolioAnalyticsService {
                 resolvedTf,
                 resolvedTax,
                 ctx.now());
+        if (ctx.historyUnavailable() && !resp.isDegraded()) {
+            return new PortfolioTimelineResponse(
+                    resp.portfolioId(), resp.baseCurrency(), resp.timeframe(), resp.taxMode(),
+                    resp.periodProfit(), resp.periodProfitPct(), resp.periodTwrPct(),
+                    resp.points(), resp.contributors(), true);
+        }
+        return resp;
     }
 
     @Cacheable(
             value = CacheConfig.CACHE_PORTFOLIO_REPORT,
             condition = "@portfolioCacheService.isCacheEnabled(#portfolio.id)",
-            unless = "#result == null",
+            unless = "#result == null || #result.isDegraded()",
             key = "#portfolio.id + ':v' + @portfolioCacheService.versionOf(#portfolio.id) + ':' + #year + ':' + (#taxMode ?: 'NETTO')")
     public AnnualReportResponse getAnnualReport(Portfolio portfolio, int year, TaxMode taxMode) {
         TaxMode resolvedTax = TaxMode.orDefault(taxMode);
@@ -326,7 +334,7 @@ public class PortfolioAnalyticsService {
         boolean fetchQuotes = year == today.getYear();
         LoadedContext ctx = fetchMarketContext(
                 portfolio, snapshot, MarketContextScope.annualReport(historyStart, historyEnd, fetchQuotes), now);
-        return AnnualReportEngine.build(
+        AnnualReportResponse resp = AnnualReportEngine.build(
                 portfolio,
                 ctx.transactions(),
                 ctx.instruments(),
@@ -338,6 +346,15 @@ public class PortfolioAnalyticsService {
                 year,
                 resolvedTax,
                 ctx.now());
+        if (ctx.historyUnavailable() && !resp.isDegraded()) {
+            return new AnnualReportResponse(
+                    resp.portfolioId(), resp.baseCurrency(), resp.year(), resp.taxMode(),
+                    resp.isCurrentYear(), resp.availableYears(), resp.ytdPortfolioValue(),
+                    resp.ytdInvested(), resp.ytdProfitGross(), resp.ytdReturnGrossPct(),
+                    resp.ytdProfitNet(), resp.ytdReturnNetPct(), resp.ytdTwrPct(),
+                    resp.ytdRealReturnPct(), resp.avgCpi(), resp.months(), true);
+        }
+        return resp;
     }
 
     private DbPortfolioSnapshot executeReadOnly(Supplier<DbPortfolioSnapshot> loader) {
@@ -379,6 +396,8 @@ public class PortfolioAnalyticsService {
         }
 
         Set<UUID> targetInstrumentIds = new LinkedHashSet<>();
+        Set<UUID> closedBondInstrumentIds = new LinkedHashSet<>();
+        boolean hasBonds = false;
         LocalDate earliestOpenLotDate = today;
         PortfolioLedger.IncrementalLedger precomputedLedger = null;
 
@@ -387,30 +406,43 @@ public class PortfolioAnalyticsService {
             precomputedLedger = new PortfolioLedger.IncrementalLedger(instruments);
             for (Transaction tx : txs) {
                 precomputedLedger.apply(tx);
+                Instrument inst = tx.getInstrumentId() != null ? instruments.get(tx.getInstrumentId()) : null;
+                if (BondValuationEngine.isBondTransaction(tx, inst)) {
+                    hasBonds = true;
+                }
             }
             PortfolioLedger.PortfolioReplay replay = precomputedLedger.snapshot();
             for (Map.Entry<PortfolioLedger.PositionKey, PortfolioLedger.PositionReplayResult> entry :
                     replay.positions().entrySet()) {
                 PortfolioLedger.PositionReplayResult posResult = entry.getValue();
-                if (posResult.totalQuantity().compareTo(BigDecimal.ZERO) <= 0) {
+                UUID instId = entry.getKey().instrumentId();
+                Instrument inst = instruments.get(instId);
+                Transaction sample = sampleTxByInst.get(instId);
+                boolean isClosed = posResult.totalQuantity().compareTo(BigDecimal.ZERO) <= 0;
+                boolean isBond = BondValuationEngine.isBondPosition(
+                        inst,
+                        entry.getKey().seriesName(),
+                        posResult.hasBondMetadata() || BondValuationEngine.hasBondMetadata(sample));
+                if (isBond) {
+                    hasBonds = true;
+                }
+                if (isClosed) {
+                    if (isBond) {
+                        closedBondInstrumentIds.add(instId);
+                        earliestOpenLotDate = earliestLotDate(
+                                earliestOpenLotDate,
+                                posResult.allLots() != null ? posResult.allLots() : List.of());
+                    }
                     continue;
                 }
-                targetInstrumentIds.add(entry.getKey().instrumentId());
-                for (PortfolioLedger.FifoLot lot : posResult.activeLots()) {
-                    if (lot.executedAt() != null) {
-                        LocalDate lotDate = lot.executedAt().toLocalDate();
-                        if (lotDate.isBefore(earliestOpenLotDate)) {
-                            earliestOpenLotDate = lotDate;
-                        }
-                    }
-                }
+                targetInstrumentIds.add(instId);
+                earliestOpenLotDate = earliestLotDate(earliestOpenLotDate, posResult.activeLots());
             }
         } else {
             targetInstrumentIds.addAll(instruments.keySet());
         }
 
         Set<String> equitySymbols = new LinkedHashSet<>();
-        boolean hasBonds = false;
         for (UUID instId : targetInstrumentIds) {
             Instrument inst = instruments.get(instId);
             if (inst == null) {
@@ -447,6 +479,7 @@ public class PortfolioAnalyticsService {
         Map<String, MarketDataPort.PriceHistory> histories;
         MarketDataPort.InflationSnapshot inflation;
         java.util.NavigableMap<LocalDate, BigDecimal> nbpReferenceRates;
+        java.util.concurrent.atomic.AtomicBoolean historyUnavailable = new java.util.concurrent.atomic.AtomicBoolean(false);
 
         if (!needQuotes && !needHistory) {
             quotes = Map.of();
@@ -467,9 +500,15 @@ public class PortfolioAnalyticsService {
                         }, executor)
                         : CompletableFuture.completedFuture(Map.of());
                 CompletableFuture<Map<String, MarketDataPort.PriceHistory>> historyFuture = needHistory
-                        ? CompletableFuture.supplyAsync(
-                                () -> marketDataPort.getBatchHistory(equitySymbols, queryHistoryStart),
-                                executor)
+                        ? CompletableFuture.supplyAsync(() -> {
+                            try {
+                                return marketDataPort.getBatchHistory(equitySymbols, queryHistoryStart);
+                            } catch (pl.investassist.common.exception.MarketDataUnavailableException e) {
+                                log.warn("Price history batch unavailable, degrading historical valuation: {}", e.getMessage());
+                                historyUnavailable.set(true);
+                                return Map.of();
+                            }
+                        }, executor)
                         : CompletableFuture.completedFuture(Map.of());
                 CompletableFuture<MarketDataPort.InflationSnapshot> inflationFuture = CompletableFuture.supplyAsync(
                         () -> fetchInflationSafe(needMonthlyInflation),
@@ -487,6 +526,12 @@ public class PortfolioAnalyticsService {
 
         Set<MarketDataPort.CurrencyPair> fxPairs = new LinkedHashSet<>();
         for (UUID instId : targetInstrumentIds) {
+            Instrument inst = instruments.get(instId);
+            if (inst != null && inst.getCurrency() != null) {
+                addPairIfDifferent(fxPairs, inst.getCurrency().name(), baseCurrency);
+            }
+        }
+        for (UUID instId : closedBondInstrumentIds) {
             Instrument inst = instruments.get(instId);
             if (inst != null && inst.getCurrency() != null) {
                 addPairIfDifferent(fxPairs, inst.getCurrency().name(), baseCurrency);
@@ -514,7 +559,8 @@ public class PortfolioAnalyticsService {
                 : marketDataPort.getBatchFxHistory(fxPairs, fxStart, effectiveHistoryEnd);
 
         return new LoadedContext(
-                txs, precomputedLedger, instruments, quotes, histories, fxSeries, inflation, nbpReferenceRates, now);
+                txs, precomputedLedger, instruments, quotes, histories, fxSeries,
+                inflation, nbpReferenceRates, now, historyUnavailable.get());
     }
 
     private MarketDataPort.InflationSnapshot fetchInflationSafe(boolean includeMonthlyInflation) {
@@ -536,6 +582,21 @@ public class PortfolioAnalyticsService {
             log.warn("NBP reference rates unavailable, degrading ROR/DOR valuation: {}", e.getMessage());
             return new java.util.TreeMap<>();
         }
+    }
+
+    private static LocalDate earliestLotDate(LocalDate current, List<PortfolioLedger.FifoLot> lots) {
+        LocalDate earliest = current;
+        if (lots != null) {
+            for (PortfolioLedger.FifoLot lot : lots) {
+                if (lot.executedAt() != null) {
+                    LocalDate lotDate = lot.executedAt().toLocalDate();
+                    if (lotDate.isBefore(earliest)) {
+                        earliest = lotDate;
+                    }
+                }
+            }
+        }
+        return earliest;
     }
 
     private static void addPairIfDifferent(

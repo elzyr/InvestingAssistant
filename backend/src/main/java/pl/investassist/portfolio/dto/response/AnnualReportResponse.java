@@ -22,8 +22,36 @@ public record AnnualReportResponse(
         BigDecimal ytdTwrPct,
         BigDecimal ytdRealReturnPct,
         BigDecimal avgCpi,
-        List<MonthlyReportDto> months
+        List<MonthlyReportDto> months,
+        boolean degraded
 ) {
+
+    public AnnualReportResponse(
+            UUID portfolioId,
+            String baseCurrency,
+            int year,
+            TaxMode taxMode,
+            boolean isCurrentYear,
+            List<Integer> availableYears,
+            BigDecimal ytdPortfolioValue,
+            BigDecimal ytdInvested,
+            BigDecimal ytdProfitGross,
+            BigDecimal ytdReturnGrossPct,
+            BigDecimal ytdProfitNet,
+            BigDecimal ytdReturnNetPct,
+            BigDecimal ytdTwrPct,
+            BigDecimal ytdRealReturnPct,
+            BigDecimal avgCpi,
+            List<MonthlyReportDto> months) {
+        this(
+                portfolioId, baseCurrency, year, taxMode, isCurrentYear, availableYears,
+                ytdPortfolioValue, ytdInvested, ytdProfitGross, ytdReturnGrossPct,
+                ytdProfitNet, ytdReturnNetPct, ytdTwrPct, ytdRealReturnPct, avgCpi, months, false);
+    }
+
+    public boolean isDegraded() {
+        return degraded;
+    }
 
     public enum MonthStatus {
         RECORDED,

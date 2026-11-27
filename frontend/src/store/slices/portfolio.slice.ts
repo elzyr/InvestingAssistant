@@ -22,7 +22,7 @@ import {
   createPortfolio,
   valuationKey,
 } from '../thunks/portfolio.thunk.ts';
-import { logoutThunk, checkAuthThunk } from '../thunks/auth.thunk.ts';
+import { logoutThunk, checkAuthThunk, loginThunk, registerThunk } from '../thunks/auth.thunk.ts';
 
 export type PortfoliosLoadStatus = 'idle' | 'loading' | 'succeeded' | 'failed';
 
@@ -50,6 +50,7 @@ export interface PortfolioState {
   timelinesLastFetchedAt: Record<string, number>;
   reportsLastFetchedAt: Record<string, number>;
   transactionsLastFetchedAt: Record<string, number>;
+  authSessionEstablished?: boolean;
 }
 
 const initialState: PortfolioState = {
@@ -153,9 +154,17 @@ export const portfolioSlice = createSlice({
   },
   extraReducers: (builder) => {
     builder
+      .addCase(loginThunk.fulfilled, (state) => {
+        state.authSessionEstablished = true;
+      })
+      .addCase(registerThunk.fulfilled, (state) => {
+        state.authSessionEstablished = true;
+      })
       .addCase(logoutThunk.fulfilled, (state) => resetStatePreservingRevision(state))
       .addCase(logoutThunk.rejected, (state) => resetStatePreservingRevision(state))
-      .addCase(checkAuthThunk.rejected, (state) => resetStatePreservingRevision(state))
+      .addCase(checkAuthThunk.rejected, (state) =>
+        state.authSessionEstablished ? state : resetStatePreservingRevision(state)
+      )
       .addCase(fetchPortfolios.pending, (state) => {
         state.loading = true;
         state.portfoliosStatus = 'loading';

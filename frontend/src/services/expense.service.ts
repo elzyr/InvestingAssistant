@@ -51,7 +51,7 @@ export const expenseService = {
       formData,
       {
         headers: { 'Content-Type': undefined },
-        timeout: 60000,
+        timeout: 180000,
         signal: options.signal,
       }
     );
@@ -124,7 +124,7 @@ export const expenseService = {
     const { data } = await apiClient.post<ReclassifyExpensesResponse>(
       '/api/expenses/reclassify',
       payload,
-      { timeout: 60000, signal }
+      { timeout: 180000, signal }
     );
     return data;
   },

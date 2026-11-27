@@ -201,6 +201,7 @@ export function useActivePortfolioData(options?: ActivePortfolioDataOptions) {
     isTimelineLoading,
     isReportLoading,
     isTransactionsLoading,
+    cacheRevision,
     error,
     refreshData,
   };

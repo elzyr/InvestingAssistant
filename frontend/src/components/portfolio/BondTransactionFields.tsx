@@ -107,6 +107,7 @@ export interface NumberFieldProps {
   onChange: (val: string) => void;
   step: string;
   min: string;
+  max?: string;
   placeholder: string;
   required?: boolean;
   hint?: string;
@@ -121,6 +122,7 @@ export const NumberField: React.FC<NumberFieldProps> = ({
   onChange,
   step,
   min,
+  max,
   placeholder,
   required = true,
   hint,
@@ -131,6 +133,7 @@ export const NumberField: React.FC<NumberFieldProps> = ({
       type="number"
       step={step}
       min={min}
+      max={max}
       required={required}
       value={value}
       onChange={(e) => onChange(e.target.value)}

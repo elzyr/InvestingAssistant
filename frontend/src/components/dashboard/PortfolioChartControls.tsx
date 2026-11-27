@@ -141,7 +141,8 @@ export const PortfolioChartControls: React.FC<PortfolioChartControlsProps> = ({
               placeholder={t('chart.targetOptional')}
               onChange={(e) => {
                 const digits = e.target.value.replace(/\D/g, '');
-                onTargetGoalChange?.(digits ? Number(digits) : null);
+                const parsed = digits ? Number(digits) : 0;
+                onTargetGoalChange?.(parsed > 0 ? parsed : null);
               }}
               className="w-24 bg-transparent px-1.5 py-1 text-xs font-mono font-medium text-white text-right focus:outline-none"
             />

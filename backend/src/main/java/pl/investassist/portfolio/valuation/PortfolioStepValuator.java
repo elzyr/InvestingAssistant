@@ -48,7 +48,30 @@ final class PortfolioStepValuator {
       BigDecimal displayValuation,
       BigDecimal settledTax,
       Map<String, StepGroupContributor> contributorsByKey,
-      Map<String, StepCategoryTotals> categoriesByCode) {}
+      Map<String, StepCategoryTotals> categoriesByCode,
+      boolean degraded,
+      BigDecimal completedBondCouponsBase) {
+
+    StepValuationResult(
+        BigDecimal grossTotalValue,
+        BigDecimal totalInvested,
+        BigDecimal equityValue,
+        BigDecimal bondValue,
+        BigDecimal totalDividends,
+        BigDecimal totalRealizedProfit,
+        BigDecimal grossProfit,
+        BigDecimal totalBelkaTax,
+        BigDecimal netProfit,
+        BigDecimal displayValuation,
+        BigDecimal settledTax,
+        Map<String, StepGroupContributor> contributorsByKey,
+        Map<String, StepCategoryTotals> categoriesByCode) {
+      this(
+          grossTotalValue, totalInvested, equityValue, bondValue, totalDividends,
+          totalRealizedProfit, grossProfit, totalBelkaTax, netProfit, displayValuation,
+          settledTax, contributorsByKey, categoriesByCode, false, BigDecimal.ZERO);
+    }
+  }
 
   private static final class GroupAccumulator {
     final String groupKey;
@@ -61,6 +84,7 @@ final class PortfolioStepValuator {
     BigDecimal costBase = BigDecimal.ZERO;
     BigDecimal realizedBase = BigDecimal.ZERO;
     BigDecimal dividendsBase = BigDecimal.ZERO;
+    BigDecimal dividendTaxBase = BigDecimal.ZERO;
 
     GroupAccumulator(
         String groupKey,
@@ -95,6 +119,9 @@ final class PortfolioStepValuator {
     Map<String, GroupAccumulator> groups = new LinkedHashMap<>();
     BigDecimal equityGross = BigDecimal.ZERO;
     BigDecimal bondGross = BigDecimal.ZERO;
+    BigDecimal completedBondCouponsBase = BigDecimal.ZERO;
+    List<TaxPolicy.Art30aPayoutEvent> completedBondArt30aEvents = new ArrayList<>();
+    boolean degraded = false;
 
     for (Map.Entry<PortfolioLedger.PositionKey, PortfolioLedger.PositionAccumulator> entry :
         ledger.accumulators().entrySet()) {
@@ -136,26 +163,42 @@ final class PortfolioStepValuator {
       BigDecimal realizedBase = acc.realizedProfitBase();
       BigDecimal grossValBase = BigDecimal.ZERO;
 
-      if (qty.compareTo(BigDecimal.ZERO) > 0) {
-        if (isBond) {
+      if (isBond) {
+        ValuationSupport.BondLotsStepResult bondStep = ValuationSupport.evaluateBondLotsNative(
+            acc.allLots(), stepDateTime, ctx.monthlyCpiByYear(), ctx.nbpReferenceRates(),
+            key.seriesName() != null ? key.seriesName() : instSymbol);
+        boolean needFx = qty.compareTo(BigDecimal.ZERO) > 0
+            || bondStep.completedCouponsNative().compareTo(BigDecimal.ZERO) > 0;
+        if (needFx) {
           String qCur = ValuationSupport.resolveQuoteCurrency(inst, null, null);
-          BigDecimal fx = ValuationSupport.requireFxRate(qCur, ctx.baseCurrency(), ctx.fxSeriesByPair(), stepDate, isToday);
-          ValuationSupport.BondLotsStepResult bondStep = ValuationSupport.evaluateBondLotsNative(
-              acc.activeLots(), stepDateTime, ctx.monthlyCpiByYear(), ctx.nbpReferenceRates(),
-              key.seriesName() != null ? key.seriesName() : instSymbol);
-          grossValBase = bondStep.carryingValueNative().multiply(fx);
-          bondGross = bondGross.add(grossValBase);
-          group.dividendsBase = group.dividendsBase.add(bondStep.completedCouponsNative().multiply(fx));
-        } else {
-          MarketDataPort.MarketQuote quote = isToday && ctx.quotes() != null ? ctx.quotes().get(quoteKey) : null;
-          MarketDataPort.PriceHistory history = ctx.histories() != null ? ctx.histories().get(quoteKey) : null;
-          String qCur = ValuationSupport.resolveQuoteCurrency(inst, quote, history);
-          BigDecimal fx = ValuationSupport.requireFxRate(qCur, ctx.baseCurrency(), ctx.fxSeriesByPair(), stepDate, isToday);
-          BigDecimal unitPrice = ValuationSupport.resolveEquityUnitPrice(
-              quote, history, stepDate, isToday, acc.currentAvgBuyPriceNative());
-          grossValBase = qty.multiply(unitPrice).multiply(fx);
-          equityGross = equityGross.add(grossValBase);
+          BigDecimal fx = ValuationSupport.requireFxRate(
+              qCur, ctx.baseCurrency(), ctx.fxSeriesByPair(), stepDate, isToday);
+          if (qty.compareTo(BigDecimal.ZERO) > 0) {
+            grossValBase = bondStep.carryingValueNative().multiply(fx);
+            bondGross = bondGross.add(grossValBase);
+            degraded |= bondStep.rateUnavailable();
+          }
+          BigDecimal couponsBase = bondStep.completedCouponsNative().multiply(fx);
+          if (couponsBase.compareTo(BigDecimal.ZERO) > 0) {
+            group.dividendsBase = group.dividendsBase.add(couponsBase);
+            group.dividendTaxBase = group.dividendTaxBase.add(TaxPolicy.computeBelka(couponsBase, false));
+            completedBondCouponsBase = completedBondCouponsBase.add(couponsBase);
+            completedBondArt30aEvents.add(
+                new TaxPolicy.Art30aPayoutEvent(stepDateTime, couponsBase, BigDecimal.ZERO));
+          }
         }
+      } else if (qty.compareTo(BigDecimal.ZERO) > 0) {
+        MarketDataPort.MarketQuote quote = isToday && ctx.quotes() != null ? ctx.quotes().get(quoteKey) : null;
+        MarketDataPort.PriceHistory history = ctx.histories() != null ? ctx.histories().get(quoteKey) : null;
+        if (isToday && (quote == null || quote.unavailable() || quote.price() == null)) {
+          degraded = true;
+        }
+        String qCur = ValuationSupport.resolveQuoteCurrency(inst, quote, history);
+        BigDecimal fx = ValuationSupport.requireFxRate(qCur, ctx.baseCurrency(), ctx.fxSeriesByPair(), stepDate, isToday);
+        BigDecimal unitPrice = ValuationSupport.resolveEquityUnitPrice(
+            quote, history, stepDate, isToday, acc.currentAvgBuyPriceNative());
+        grossValBase = qty.multiply(unitPrice).multiply(fx);
+        equityGross = equityGross.add(grossValBase);
       }
 
       group.grossValueBase = group.grossValueBase.add(grossValBase);
@@ -165,6 +208,8 @@ final class PortfolioStepValuator {
 
     Map<PortfolioLedger.DividendKey, BigDecimal> remainingDivs =
         new LinkedHashMap<>(ledger.dividendsByKey());
+    Map<PortfolioLedger.DividendKey, BigDecimal> remainingDivTax =
+        new LinkedHashMap<>(ledger.dividendTaxByKey());
     for (GroupAccumulator group : groups.values()) {
       for (UUID instId : group.instrumentIds) {
         PortfolioLedger.DividendKey scopedKey =
@@ -172,6 +217,10 @@ final class PortfolioStepValuator {
         BigDecimal div = remainingDivs.remove(scopedKey);
         if (div != null) {
           group.dividendsBase = group.dividendsBase.add(div);
+        }
+        BigDecimal divTax = remainingDivTax.remove(scopedKey);
+        if (divTax != null) {
+          group.dividendTaxBase = group.dividendTaxBase.add(divTax);
         }
       }
     }
@@ -183,7 +232,9 @@ final class PortfolioStepValuator {
       }
     }
     for (UUID instId : bondGroupInstIds) {
-      BigDecimal unscoped = remainingDivs.remove(new PortfolioLedger.DividendKey(instId, null));
+      PortfolioLedger.DividendKey unscopedKey = new PortfolioLedger.DividendKey(instId, null);
+      BigDecimal unscoped = remainingDivs.remove(unscopedKey);
+      BigDecimal unscopedTax = remainingDivTax.remove(unscopedKey);
       if (unscoped == null || unscoped.compareTo(BigDecimal.ZERO) == 0) {
         continue;
       }
@@ -199,8 +250,10 @@ final class PortfolioStepValuator {
             g -> g.grossValueBase.doubleValue(),
             g -> g.costBase.doubleValue());
         List<BigDecimal> pieces = ValuationSupport.splitAmount(unscoped, shares);
+        List<BigDecimal> taxPieces = ValuationSupport.splitAmount(unscopedTax, shares);
         for (int i = 0; i < sharing.size(); i++) {
           sharing.get(i).dividendsBase = sharing.get(i).dividendsBase.add(pieces.get(i));
+          sharing.get(i).dividendTaxBase = sharing.get(i).dividendTaxBase.add(taxPieces.get(i));
         }
       }
     }
@@ -228,6 +281,10 @@ final class PortfolioStepValuator {
       GroupAccumulator orphanGroup = groups.computeIfAbsent(
           groupKey, ignored -> new GroupAccumulator(groupKey, name, sym, cat, orphanIsBond));
       orphanGroup.dividendsBase = orphanGroup.dividendsBase.add(div);
+      BigDecimal orphanTax = remainingDivTax.remove(divKey);
+      if (orphanTax != null) {
+        orphanGroup.dividendTaxBase = orphanGroup.dividendTaxBase.add(orphanTax);
+      }
     }
 
     BigDecimal grossTotalValue = BigDecimal.ZERO;
@@ -239,7 +296,8 @@ final class PortfolioStepValuator {
 
     for (GroupAccumulator group : groups.values()) {
       TaxPolicy.PositionTaxBreakdown groupTax = TaxPolicy.computePositionTax(
-          group.grossValueBase, group.costBase, group.realizedBase, group.dividendsBase, !ctx.shouldApplyTax());
+          group.grossValueBase, group.costBase, group.realizedBase,
+          group.dividendsBase, group.dividendTaxBase, !ctx.shouldApplyTax());
       BigDecimal groupDisplayValue = ctx.shouldApplyTax()
           ? groupTax.netValue()
           : group.grossValueBase;
@@ -272,14 +330,16 @@ final class PortfolioStepValuator {
       }
     }
 
-    BigDecimal totalDividends = ledger.totalDividends();
+    BigDecimal totalDividends = ledger.totalDividends().add(completedBondCouponsBase);
     BigDecimal grossProfit = grossTotalValue
         .subtract(totalInvested)
         .add(totalDividends)
         .add(totalRealized);
+    List<TaxPolicy.Art30aPayoutEvent> allArt30aEvents = new ArrayList<>(ledger.art30aEvents());
+    allArt30aEvents.addAll(completedBondArt30aEvents);
     TaxPolicy.PortfolioTaxResult portfolioTax = TaxPolicy.computePortfolioTax(
         ledger.disposalEvents(),
-        ledger.art30aEvents(),
+        allArt30aEvents,
         grossTotalValue,
         totalInvested,
         !ctx.shouldApplyTax());
@@ -316,6 +376,8 @@ final class PortfolioStepValuator {
         displayValuation,
         settledTax,
         contributors,
-        finalizedCategories);
+        finalizedCategories,
+        degraded,
+        completedBondCouponsBase);
   }
 }

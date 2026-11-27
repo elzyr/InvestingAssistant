@@ -78,6 +78,7 @@ export const DashboardPage = () => {
     projection: projectionData,
     baseCurrency,
     loading,
+    cacheRevision,
     error,
     refreshData,
   } = useActivePortfolioData({ taxMode, timeframe });
@@ -207,6 +208,7 @@ export const DashboardPage = () => {
     bondRollover,
     targetGoal,
     userEtfReturnVal,
+    cacheRevision,
   ]);
 
   const dashboardPositions = useMemo(

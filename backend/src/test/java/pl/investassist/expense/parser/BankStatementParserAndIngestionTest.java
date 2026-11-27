@@ -77,6 +77,75 @@ class BankStatementParserAndIngestionTest {
   }
 
   @Test
+  void parseAmountCsvAndText_handleLeadingZeroDecimalsUnescapedQuotesAndForeignDescriptionAmount() {
+    assertThat(BankStatementParser.parseAmount("0.500")).isEqualByComparingTo("0.50");
+    assertThat(BankStatementParser.parseAmount("0,500")).isEqualByComparingTo("0.50");
+
+    String unescapedQuoteCsv = String.join("\n",
+        "Date,Description,Amount,Currency",
+        "2026-10-05,Monitor 27\",-1200.00,PLN",
+        "2026-10-06,Biedronka,-50.00,PLN"
+    );
+    ParsedStatement csvParsed = parser.parseCsv(
+        unescapedQuoteCsv.getBytes(StandardCharsets.UTF_8), BankProfile.AUTO);
+    assertThat(csvParsed.rows()).hasSize(2);
+    assertThat(csvParsed.rows().get(0).rawDescription()).contains("Monitor 27\"");
+    assertThat(csvParsed.rows().get(0).amount()).isEqualByComparingTo("-1200.00");
+    assertThat(csvParsed.rows().get(1).amount()).isEqualByComparingTo("-50.00");
+
+    String foreignDescLine = "05.10.2026 AMAZON 10.99 USD -45,20 PLN";
+    ParsedStatement textParsed = parser.parseText(foreignDescLine, BankProfile.AUTO);
+    assertThat(textParsed.rows()).hasSize(1);
+    assertThat(textParsed.rows().get(0).amount()).isEqualByComparingTo("-45.20");
+    assertThat(textParsed.rows().get(0).currency()).isEqualTo("PLN");
+  }
+
+  @Test
+  void pdfTextExtractor_rejectsPdfExceeding200Pages() {
+    PdfTextExtractor extractor = new PdfTextExtractor();
+    byte[] largePdf = buildMultiPageMinimalPdf14(201);
+    assertThatThrownBy(() -> extractor.extractText(largePdf))
+        .isInstanceOf(IllegalArgumentException.class);
+  }
+
+  private static byte[] buildMultiPageMinimalPdf14(int pageCount) {
+    StringBuilder kids = new StringBuilder();
+    List<String> objects = new ArrayList<>();
+    objects.add("1 0 obj\n<< /Type /Catalog /Pages 2 0 R >>\nendobj\n");
+    for (int i = 0; i < pageCount; i++) {
+      int pageObj = 3 + i;
+      if (i > 0) {
+        kids.append(' ');
+      }
+      kids.append(pageObj).append(" 0 R");
+    }
+    objects.add("2 0 obj\n<< /Type /Pages /Kids [" + kids + "] /Count " + pageCount + " >>\nendobj\n");
+    for (int i = 0; i < pageCount; i++) {
+      int pageObj = 3 + i;
+      objects.add(pageObj + " 0 obj\n<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] >>\nendobj\n");
+    }
+
+    ByteArrayOutputStream out = new ByteArrayOutputStream();
+    out.writeBytes("%PDF-1.4\n".getBytes(StandardCharsets.US_ASCII));
+    List<Integer> offsets = new ArrayList<>();
+    for (String obj : objects) {
+      offsets.add(out.size());
+      out.writeBytes(obj.getBytes(StandardCharsets.US_ASCII));
+    }
+    int xrefOffset = out.size();
+    StringBuilder xref = new StringBuilder();
+    xref.append("xref\n0 ").append(offsets.size() + 1).append("\n");
+    xref.append("0000000000 65535 f \n");
+    for (int offset : offsets) {
+      xref.append(String.format(Locale.ROOT, "%010d 00000 n \n", offset));
+    }
+    xref.append("trailer\n<< /Size ").append(offsets.size() + 1).append(" /Root 1 0 R >>\n");
+    xref.append("startxref\n").append(xrefOffset).append("\n%%EOF\n");
+    out.writeBytes(xref.toString().getBytes(StandardCharsets.US_ASCII));
+    return out.toByteArray();
+  }
+
+  @Test
   void parseCsv_detectsWiseAndGenericWithEnglishNumberFormats() {
     String wiseCsv = String.join("\n",
         "TransferWise ID,Date,Amount,Currency,Description,Payment Reference,Running Balance,Total fees",

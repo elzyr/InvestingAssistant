@@ -71,12 +71,34 @@ public class Transaction {
   @Column(name = "withholding_tax_pct", precision = 5, scale = 2)
   private BigDecimal withholdingTaxPct;
 
+  @Column(name = "instrument_to_tx_rate", precision = 18, scale = 8)
+  private BigDecimal instrumentToTxRate;
+
+  @Column(name = "fx_fee_pct", precision = 5, scale = 2)
+  private BigDecimal fxFeePct;
+
   public BigDecimal getWithholdingTaxPct() {
     return withholdingTaxPct;
   }
 
   public void setWithholdingTaxPct(BigDecimal withholdingTaxPct) {
     this.withholdingTaxPct = withholdingTaxPct;
+  }
+
+  public BigDecimal getInstrumentToTxRate() {
+    return instrumentToTxRate;
+  }
+
+  public void setInstrumentToTxRate(BigDecimal instrumentToTxRate) {
+    this.instrumentToTxRate = instrumentToTxRate;
+  }
+
+  public BigDecimal getFxFeePct() {
+    return fxFeePct;
+  }
+
+  public void setFxFeePct(BigDecimal fxFeePct) {
+    this.fxFeePct = fxFeePct;
   }
 
   public Transaction() {}

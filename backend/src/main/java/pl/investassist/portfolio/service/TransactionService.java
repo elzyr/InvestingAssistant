@@ -5,6 +5,7 @@ import java.math.RoundingMode;
 import java.time.Clock;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
+import java.time.ZoneId;
 import java.util.List;
 import java.util.Objects;
 import java.util.UUID;
@@ -62,7 +63,7 @@ public class TransactionService {
         instrumentService,
         portfolioCacheService,
         transactionManager,
-        Clock.systemDefaultZone());
+        Clock.system(ZoneId.of("Europe/Warsaw")));
   }
 
   TransactionService(
@@ -95,7 +96,7 @@ public class TransactionService {
     ResolvedFinancials financials = resolveFinancials(
         foundInstrument, portfolio, request.transactionType(), request.currency(), request.price(),
         request.quantity(), request.commission(), request.baseAmount(), request.exchangeRateToBase(),
-        request.instrumentToTxRate(), () -> txDate);
+        request.instrumentToTxRate(), request.fxFeePct(), () -> txDate);
     String normalizedSeries = BondValuationEngine.normalizeSeries(request.seriesName());
     validateBondRequest(foundInstrument, normalizedSeries, request);
 
@@ -140,7 +141,7 @@ public class TransactionService {
     ResolvedFinancials financials = resolveFinancials(
         foundInstrument, portfolio, request.transactionType(), request.currency(), request.price(),
         request.quantity(), request.commission(), request.baseAmount(), request.exchangeRateToBase(),
-        request.instrumentToTxRate(), txDateSupplier);
+        request.instrumentToTxRate(), request.fxFeePct(), txDateSupplier);
     String newSeries = BondValuationEngine.normalizeSeries(request.seriesName());
     validateBondRequest(foundInstrument, newSeries, request);
 
@@ -291,6 +292,7 @@ public class TransactionService {
     target.setCommission(request.commission());
     target.setCurrency(request.currency());
     target.setExchangeRate(financials.exchangeRate());
+    target.setInstrumentToTxRate(financials.exchangeRate());
     target.setBaseAmount(financials.baseAmount());
     target.setExchangeRateToBase(financials.exchangeRateToBase());
     if (request.executedAt() != null) {
@@ -303,6 +305,7 @@ public class TransactionService {
     target.setBondMargin(request.bondMargin());
     target.setTermMonths(request.termMonths());
     target.setWithholdingTaxPct(request.withholdingTaxPct());
+    target.setFxFeePct(request.fxFeePct());
     return target;
   }
 
@@ -344,6 +347,7 @@ public class TransactionService {
       BigDecimal customBaseAmount,
       BigDecimal customExchangeRateToBase,
       BigDecimal customInstrumentToTxRate,
+      BigDecimal fxFeePct,
       Supplier<LocalDate> txDateSupplier) {
 
     Currency baseCurrency = portfolio.getBaseCurrency();
@@ -382,13 +386,24 @@ public class TransactionService {
     BigDecimal baseAmount = customBaseAmount;
     if (baseAmount == null) {
       BigDecimal netTotal = PortfolioLedger.computeNetTotal(txType, price, quantity, commission);
-      if (txCurrency.equals(baseCurrency) && exchangeRateToBase.compareTo(BigDecimal.ONE) == 0) {
-        baseAmount = netTotal;
-      } else {
-        baseAmount = netTotal.multiply(exchangeRateToBase).setScale(4, RoundingMode.HALF_UP);
-      }
+      boolean sameUnitRate = txCurrency.equals(baseCurrency) && exchangeRateToBase.compareTo(BigDecimal.ONE) == 0;
+      BigDecimal baseBeforeFee = sameUnitRate ? netTotal : netTotal.multiply(exchangeRateToBase);
+      baseAmount = applyFxFee(txType, baseBeforeFee, fxFeePct, sameUnitRate);
     }
 
     return new ResolvedFinancials(exchangeRate, baseAmount, exchangeRateToBase);
+  }
+
+  private static BigDecimal applyFxFee(
+      TransactionType txType, BigDecimal baseBeforeFee, BigDecimal fxFeePct, boolean sameUnitRate) {
+    if (fxFeePct != null && fxFeePct.compareTo(BigDecimal.ZERO) > 0) {
+      BigDecimal feeFraction = fxFeePct.divide(new BigDecimal("100"), 8, RoundingMode.HALF_UP);
+      BigDecimal multiplier =
+          txType == TransactionType.BUY
+              ? BigDecimal.ONE.add(feeFraction)
+              : BigDecimal.ONE.subtract(feeFraction).max(BigDecimal.ZERO);
+      return baseBeforeFee.multiply(multiplier).setScale(4, RoundingMode.HALF_UP);
+    }
+    return sameUnitRate ? baseBeforeFee : baseBeforeFee.setScale(4, RoundingMode.HALF_UP);
   }
 }
