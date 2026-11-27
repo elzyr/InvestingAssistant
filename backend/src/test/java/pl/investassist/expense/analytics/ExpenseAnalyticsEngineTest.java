@@ -600,6 +600,21 @@ class ExpenseAnalyticsEngineTest {
     assertThat(jan.momExpensesChangePct()).isNull();
   }
 
+  @Test
+  void analyze_doesNotNetRefundAgainstFutureExpenseAfterRefundDate() {
+    LocalDate start = LocalDate.of(2026, 10, 1);
+    LocalDate end = LocalDate.of(2026, 10, 31);
+
+    List<AnalyticsTransaction> txs = List.of(
+        tx(LocalDate.of(2026, 10, 2), "allegro", "Allegro Zwrot", "100.00", FlowKind.REFUND, ExpenseCategory.REFUND),
+        tx(LocalDate.of(2026, 10, 10), "allegro", "Allegro Zakup", "-100.00", FlowKind.EXPENSE, ExpenseCategory.SHOPPING)
+    );
+
+    ExpenseAnalyticsResult result = engine.analyze(txs, txs, "PLN", start, end);
+    assertThat(result.kpis().totalRefundsNetted()).isEqualByComparingTo("0.00");
+    assertThat(result.kpis().totalExpenses()).isEqualByComparingTo("100.00");
+  }
+
   private static AnalyticsTransaction tx(
       LocalDate date,
       String merchantKey,

@@ -1,4 +1,4 @@
-import React, { useState, useMemo } from 'react';
+import React, { useEffect, useState, useMemo } from 'react';
 import { useTranslation } from 'react-i18next';
 import type { ReportViewMode } from '../types/reports.types.ts';
 import { formatAnnualReportSummary } from '../utils/valuationFormatters.ts';
@@ -21,9 +21,15 @@ import {
 
 export const MonthlyReportsPage: React.FC = () => {
   const { t, i18n } = useTranslation();
-  const [selectedYear, setSelectedYear] = useState<number>(() => new Date().getFullYear());
+  const [fallbackCurrentYear] = useState(() => new Date().getFullYear());
+  const [yearSelection, setYearSelection] = useState<{
+    portfolioId: string | null;
+    year: number;
+  } | null>(null);
   const [viewMode, setViewMode] = useState<ReportViewMode>('ANNUAL');
   const [userSelectedMonthIndex, setUserSelectedMonthIndex] = useState<number | null>(null);
+
+  const selectedYear = yearSelection ? yearSelection.year : fallbackCurrentYear;
 
   const {
     dispatch,
@@ -42,14 +48,34 @@ export const MonthlyReportsPage: React.FC = () => {
     skipTransactions: true,
   });
 
+  const activeSelectedYear =
+    yearSelection && yearSelection.portfolioId === activePortfolioId
+      ? yearSelection.year
+      : fallbackCurrentYear;
+
   const availableYears = useMemo(
-    () => (report?.availableYears?.length ? report.availableYears : [selectedYear]),
-    [report, selectedYear]
+    () => (report?.availableYears?.length ? report.availableYears : [activeSelectedYear]),
+    [report, activeSelectedYear]
   );
 
-  const activeYear = availableYears.includes(selectedYear)
-    ? selectedYear
+  const activeYear = availableYears.includes(activeSelectedYear)
+    ? activeSelectedYear
     : Math.max(...availableYears);
+
+  useEffect(() => {
+    if (!activePortfolioId || activeYear === selectedYear) {
+      return;
+    }
+    let cancelled = false;
+    Promise.resolve().then(() => {
+      if (!cancelled) {
+        setYearSelection({ portfolioId: activePortfolioId, year: activeYear });
+      }
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [activePortfolioId, activeYear, selectedYear]);
 
   const summary = useMemo(
     () => formatAnnualReportSummary(report, t, i18n.language),
@@ -108,7 +134,10 @@ export const MonthlyReportsPage: React.FC = () => {
             <select
               value={activeYear}
               onChange={(e) => {
-                setSelectedYear(Number(e.target.value));
+                setYearSelection({
+                  portfolioId: activePortfolioId,
+                  year: Number(e.target.value),
+                });
                 setUserSelectedMonthIndex(null);
               }}
               aria-label={t('reports.selectYearAria')}

@@ -230,6 +230,8 @@
     "sellPrice": "Cena sprzedaży / wykupu (PLN)",
     "commission": "Prowizja",
     "commissionFee": "Prowizja / opłata (PLN)",
+    "fxFeePct": "Prowizja za przewalutowanie (%)",
+    "fxFeeHint": "Domyślnie 0.5% dla transakcji walutowych (można zmienić na 0%)",
     "currency": "Waluta transakcji",
     "date": "Data transakcji",
     "defaultToday": "Domyślnie: dzisiaj",

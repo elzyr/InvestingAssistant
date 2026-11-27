@@ -17,8 +17,26 @@ public record PortfolioTimelineResponse(
         BigDecimal periodProfitPct,
         BigDecimal periodTwrPct,
         List<TimelinePointDto> points,
-        List<ProfitContributorDto> contributors
+        List<ProfitContributorDto> contributors,
+        boolean degraded
 ) {
+
+    public PortfolioTimelineResponse(
+            UUID portfolioId,
+            String baseCurrency,
+            Timeframe timeframe,
+            TaxMode taxMode,
+            BigDecimal periodProfit,
+            BigDecimal periodProfitPct,
+            BigDecimal periodTwrPct,
+            List<TimelinePointDto> points,
+            List<ProfitContributorDto> contributors) {
+        this(portfolioId, baseCurrency, timeframe, taxMode, periodProfit, periodProfitPct, periodTwrPct, points, contributors, false);
+    }
+
+    public boolean isDegraded() {
+        return degraded;
+    }
 
     public record TimelinePointDto(
             LocalDate date,

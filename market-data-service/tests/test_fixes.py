@@ -1006,6 +1006,128 @@ class TestInflationServiceFixes(unittest.TestCase):
             ],
         )
 
+    def test_get_cpi_filters_null_rate_records(self):
+        from app.services.inflation_service import InflationService
+        from app.services import cache_service, market_history_repo
+
+        today = datetime.date.today()
+        records = [
+            {"year": today.year - 1, "month": 12, "rate": 3.8, "rateMm": 0.2, "source": "GUS"},
+            {"year": today.year, "month": today.month, "rate": 4.2, "rateMm": 0.1, "source": "GUS"},
+            {"year": today.year + 1, "month": 1, "rate": None, "rateMm": 0.4, "source": "GUS"},
+        ]
+
+        with patch.object(cache_service.cache_service, "get_or_set", side_effect=lambda k, fn, **kw: fn()):
+            with patch.object(market_history_repo.market_history_repo, "get_cpi_records", return_value=records):
+                with patch.object(InflationService, "sync_inflation_from_upstream"):
+                    result = InflationService.get_cpi()
+
+        self.assertEqual(result["currentCpi"], 4.2)
+        self.assertEqual(result["period"], f"{today.year}-{today.month:02d}")
+        self.assertTrue(all(item["cpi"] is not None for item in result["history"]))
+
+    def test_fetch_etf_market_metrics_preserves_older_than_5y_db_history(self):
+        from app.services.analytics_service import AnalyticsService
+        from app.services.market_history_repo import MarketHistoryRepository
+        from app.services import analytics_service as analytics_mod
+        from app.services import cache_service
+
+        conn = sqlite3.connect(":memory:")
+        repo = MarketHistoryRepository(connection=conn, dialect="sqlite")
+        repo.save_eod_prices_bulk(
+            "OLD.DE",
+            [
+                {"date": "2018-01-05", "close_price": 50.0, "currency": "EUR", "volume": 10},
+                {"date": "2025-12-01", "close_price": 100.0, "currency": "EUR", "volume": 10},
+            ],
+            "EUR",
+        )
+
+        dates = pd.date_range("2022-01-07", periods=10, freq="7D")
+        yf_hist = pd.DataFrame(
+            {
+                "Date": dates,
+                "Close": [110.0 + i for i in range(len(dates))],
+                "Volume": [100] * len(dates),
+            }
+        )
+        fake_stock = MagicMock()
+        fake_stock.fast_info = {"currency": "EUR"}
+        fake_stock.info = {}
+
+        with patch.object(analytics_mod, "market_history_repo", repo):
+            with patch.object(cache_service.cache_service, "get_or_set", side_effect=lambda k, fn, **kw: fn()):
+                with patch.object(analytics_mod.yf, "Ticker", return_value=fake_stock):
+                    with patch.object(analytics_mod, "download_clean_history", return_value=yf_hist):
+                        with patch.object(analytics_mod.YahooService, "get_historical_fx_rates", return_value={}):
+                            AnalyticsService.fetch_etf_market_metrics("OLD.DE")
+
+        saved_dates = {row["date"] for row in repo.get_historical_prices("OLD.DE")}
+        self.assertIn("2018-01-05", saved_dates)
+        conn.close()
+
+    def test_market_history_repo_synchronizes_pool_across_get_connection_and_close(self):
+        import threading
+        import time
+        from app.services.market_history_repo import MarketHistoryRepository
+
+        repo = MarketHistoryRepository(connection=MagicMock(), dialect="postgres")
+        repo.conn = None
+        repo._initialized = True
+        repo.database_url = "postgresql://u:p@localhost:5432/db"
+
+        def make_fake_pool():
+            pool = MagicMock()
+            first = {"done": False}
+
+            def getconn():
+                closed_conn = MagicMock()
+                if not first["done"]:
+                    first["done"] = True
+                    closed_conn.closed = 1
+                    time.sleep(0.005)
+                else:
+                    closed_conn.closed = 0
+                    closed_conn.cursor.return_value = MagicMock()
+                return closed_conn
+
+            pool.getconn.side_effect = getconn
+            pool.putconn.side_effect = lambda c, close=False: None
+            pool.closeall.side_effect = lambda: None
+            return pool
+
+        errors = []
+        for _ in range(15):
+            repo.pool = make_fake_pool()
+            barrier = threading.Barrier(2)
+
+            def reader():
+                try:
+                    barrier.wait(timeout=2)
+                    with repo._cursor(ensure_init=False):
+                        pass
+                except AttributeError as err:
+                    errors.append(err)
+                except Exception:
+                    pass
+
+            def closer():
+                try:
+                    barrier.wait(timeout=2)
+                    time.sleep(0.002)
+                    repo.close()
+                except Exception as err:
+                    errors.append(err)
+
+            t1 = threading.Thread(target=reader)
+            t2 = threading.Thread(target=closer)
+            t1.start()
+            t2.start()
+            t1.join(timeout=3)
+            t2.join(timeout=3)
+
+        self.assertEqual(errors, [])
+
 
 if __name__ == "__main__":
     unittest.main()

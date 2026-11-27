@@ -1,8 +1,14 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
+import axios from 'axios';
 import { configureStore } from '@reduxjs/toolkit';
 import portfolioReducer, { resetPortfolio } from './portfolio.slice.ts';
 import authReducer from './auth.slice.ts';
+import apiClient, {
+  getAccessToken,
+  refreshAuthResponse,
+  setAccessToken,
+} from '../../api/client.ts';
 import {
   createTransaction,
   deleteTransaction,
@@ -14,7 +20,7 @@ import {
   fetchValuation,
   updateTransaction,
 } from '../thunks/portfolio.thunk.ts';
-import { logoutThunk } from '../thunks/auth.thunk.ts';
+import { checkAuthThunk, loginThunk, logoutThunk } from '../thunks/auth.thunk.ts';
 import { portfolioService } from '../../services/portfolio.service.ts';
 
 describe('portfolioSlice & authSlice', () => {
@@ -316,5 +322,85 @@ describe('portfolioSlice & authSlice', () => {
       meta: { arg: { portfolioId: 'p1', timeframe: '1M', taxMode: 'NETTO' } },
     });
     assert.strictEqual(state.latestTimelineByPortfolio['p1:NETTO'], oneMonthTimeline);
+  });
+
+  it('ignores stale checkAuthThunk rejection after login and prevents logout refresh race from restoring access token', async () => {
+    const store = configureStore({
+      reducer: {
+        auth: authReducer,
+        portfolio: portfolioReducer,
+      },
+    });
+
+    store.dispatch({
+      type: loginThunk.fulfilled.type,
+      payload: {
+        accessToken: 'fresh-login-token',
+        user: { id: 'u1', email: 'user@example.com', defaultCurrency: 'PLN' },
+      },
+    });
+    store.dispatch({
+      type: fetchPortfolios.fulfilled.type,
+      payload: [{ id: 'p1', name: 'Main', baseCurrency: 'PLN' }],
+    });
+
+    store.dispatch({
+      type: checkAuthThunk.rejected.type,
+      payload: null,
+    });
+
+    assert.strictEqual(store.getState().auth.isAuthenticated, true);
+    assert.strictEqual(store.getState().auth.user?.id, 'u1');
+    assert.strictEqual(store.getState().portfolio.portfolios.length, 1);
+
+    const origGlobalAdapter = axios.defaults.adapter;
+    const origClientAdapter = apiClient.defaults.adapter;
+    let resolveRefresh;
+    const refreshPending = new Promise((resolve) => {
+      resolveRefresh = resolve;
+    });
+
+    const mockAdapter = async (config) => {
+      if (config.url?.includes('/api/auth/refresh')) {
+        await refreshPending;
+        return {
+          data: {
+            accessToken: 'stale-refreshed-token',
+            user: { id: 'u1', email: 'user@example.com', defaultCurrency: 'PLN' },
+          },
+          status: 200,
+          statusText: 'OK',
+          headers: {},
+          config,
+        };
+      }
+      if (config.url?.includes('/api/auth/logout')) {
+        return {
+          data: null,
+          status: 204,
+          statusText: 'No Content',
+          headers: {},
+          config,
+        };
+      }
+      throw new Error(`Unexpected request: ${config.url}`);
+    };
+
+    axios.defaults.adapter = mockAdapter;
+    apiClient.defaults.adapter = mockAdapter;
+    setAccessToken('active-session-token');
+    try {
+      const inflightRefresh = refreshAuthResponse().catch(() => null);
+      await store.dispatch(logoutThunk());
+      assert.strictEqual(getAccessToken(), null);
+
+      resolveRefresh();
+      await inflightRefresh;
+      assert.strictEqual(getAccessToken(), null);
+    } finally {
+      setAccessToken(null);
+      axios.defaults.adapter = origGlobalAdapter;
+      apiClient.defaults.adapter = origClientAdapter;
+    }
   });
 });

@@ -354,11 +354,11 @@ public final class MetricsCalculator {
       double start = p.startValue();
       double end = p.endValue();
       double flow = p.netCashFlow();
-      double base = start > 0.0 ? start : (start + flow);
+      double base = start + Math.max(0.0, flow);
       if (base <= 0.0) {
         continue;
       }
-      double subReturn = (end - (start > 0.0 ? flow : 0.0)) / base;
+      double subReturn = (end - Math.min(0.0, flow)) / base;
       if (Double.isFinite(subReturn)) {
         compoundProduct *= Math.max(0.0, subReturn);
         hasValidPeriod = true;

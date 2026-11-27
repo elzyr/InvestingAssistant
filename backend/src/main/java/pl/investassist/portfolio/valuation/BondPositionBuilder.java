@@ -67,8 +67,9 @@ final class BondPositionBuilder {
             ValuationEngine.Accumulator acc,
             PortfolioLedger.PositionKey key,
             PortfolioLedger.PositionReplayResult posResult,
-            Instrument inst) {
-        collectSeriesMetadata(acc, key, posResult, inst);
+            Instrument inst,
+            ValuationContext ctx) {
+        collectBondLots(acc, key, posResult, inst, ctx);
     }
 
     static void collectBondLots(
@@ -79,14 +80,22 @@ final class BondPositionBuilder {
             ValuationContext ctx) {
         String instSymbol = inst != null ? inst.getSymbol() : "";
         String family = collectSeriesMetadata(acc, key, posResult, inst);
-        if (posResult.activeLots().isEmpty()) {
+        List<PortfolioLedger.FifoLot> lotsToEvaluate =
+                posResult.allLots() != null ? posResult.allLots() : posResult.activeLots();
+        if (lotsToEvaluate.isEmpty()) {
             return;
         }
 
         String quoteCurrency = ValuationSupport.resolveQuoteCurrency(inst, null, null);
-        BigDecimal fxRate = ValuationSupport.requireFxRate(quoteCurrency, ctx.baseCurrency(), ctx.fxSeriesByPair(), ctx.today(), true);
+        boolean hasOpenLots = !posResult.activeLots().isEmpty();
+        BigDecimal openFxRate = hasOpenLots
+                ? ValuationSupport.requireFxRate(quoteCurrency, ctx.baseCurrency(), ctx.fxSeriesByPair(), ctx.today(), true)
+                : BigDecimal.ONE;
 
-        for (PortfolioLedger.FifoLot lot : posResult.activeLots()) {
+        for (PortfolioLedger.FifoLot lot : lotsToEvaluate) {
+            if (lot.initialQuantity().compareTo(BigDecimal.ZERO) <= 0) {
+                continue;
+            }
             String effectiveSeries = lot.seriesName() != null ? lot.seriesName() : instSymbol;
             BondValuationEngine.LotValuation lotVal = BondValuationEngine.evaluateLot(
                     lot.executedAt(),
@@ -97,37 +106,63 @@ final class BondPositionBuilder {
                     ctx.effectiveNow(),
                     effectiveSeries,
                     lot.termMonths());
-            BigDecimal lotValueBase = lot.remainingQuantity()
-                    .multiply(BigDecimal.valueOf(lotVal.unitPriceNative()))
-                    .multiply(fxRate);
-            BigDecimal lotCostBase = lot.remainingCostBase();
-            BigDecimal lotYieldPct = lotVal.rateUnavailable()
-                    ? null
-                    : BigDecimal.valueOf(lotVal.currentAnnualRatePct());
 
-            List<BondCouponBase> lotCoupons = new ArrayList<>(lotVal.completedCoupons().size());
+            List<BondCouponBase> subCoupons = new ArrayList<>(lotVal.completedCoupons().size());
             for (BondValuationEngine.CompletedCoupon c : lotVal.completedCoupons()) {
+                BigDecimal qtyAtCoupon = lot.quantityAt(c.couponDate());
+                boolean hasOpenShare = lot.remainingQuantity().compareTo(BigDecimal.ZERO) > 0;
+                if (qtyAtCoupon.compareTo(BigDecimal.ZERO) <= 0 && !hasOpenShare) {
+                    continue;
+                }
                 BigDecimal cFx = ValuationSupport.requireFxRate(
                         quoteCurrency, ctx.baseCurrency(), ctx.fxSeriesByPair(), c.couponDate(), false);
-                BigDecimal grossBase = BigDecimal.valueOf(c.grossCouponNative())
-                        .multiply(lot.remainingQuantity())
-                        .multiply(cFx);
-                lotCoupons.add(new BondCouponBase(c.couponDate(), grossBase));
-                acc.completedBondCouponsBase = acc.completedBondCouponsBase.add(grossBase);
-                acc.completedBondArt30aEvents.add(new TaxPolicy.Art30aPayoutEvent(
-                        c.couponDate().atStartOfDay(), grossBase, BigDecimal.ZERO));
-                BigDecimal couponNet = grossBase.subtract(TaxPolicy.computeBelka(grossBase, !ctx.shouldApplyTax()));
-                acc.completedBondCouponFlows.add(new MetricsCalculator.CashFlow(
-                        couponNet.doubleValue(), c.couponDate().atStartOfDay()));
+                if (qtyAtCoupon.compareTo(BigDecimal.ZERO) > 0) {
+                    BigDecimal grossBase = BigDecimal.valueOf(c.grossCouponNative())
+                            .multiply(qtyAtCoupon)
+                            .multiply(cFx);
+                    MetricsCalculator.CashFlow grossFlow =
+                            new MetricsCalculator.CashFlow(grossBase.doubleValue(), c.couponDate().atStartOfDay());
+                    acc.completedBondCouponsBase = acc.completedBondCouponsBase.add(grossBase);
+                    acc.completedBondArt30aEvents.add(
+                            new TaxPolicy.Art30aPayoutEvent(c.couponDate().atStartOfDay(), grossBase, BigDecimal.ZERO));
+                    acc.completedBondCouponFlows.add(grossFlow);
+                    acc.completedBondCouponsByFamily.merge(family, grossBase, BigDecimal::add);
+                    acc.completedBondCouponFlowsByFamily
+                            .computeIfAbsent(family, ignored -> new ArrayList<>())
+                            .add(grossFlow);
+                    BigDecimal couponTaxBase = TaxPolicy.computeBelka(grossBase, !ctx.shouldApplyTax());
+                    if (couponTaxBase.compareTo(BigDecimal.ZERO) > 0) {
+                        acc.completedBondCouponTaxByFamily.merge(family, couponTaxBase, BigDecimal::add);
+                        acc.completedBondCouponTaxFlowsByFamily
+                                .computeIfAbsent(family, ignored -> new ArrayList<>())
+                                .add(new MetricsCalculator.CashFlow(-couponTaxBase.doubleValue(), c.couponDate().atStartOfDay()));
+                    }
+                }
+                if (hasOpenShare) {
+                    BigDecimal subGrossBase = BigDecimal.valueOf(c.grossCouponNative())
+                            .multiply(lot.remainingQuantity())
+                            .multiply(cFx);
+                    subCoupons.add(new BondCouponBase(c.couponDate(), subGrossBase));
+                }
             }
 
-            acc.bondLotsByFamily.computeIfAbsent(family, ignored -> new ArrayList<>())
-                    .add(new BondLotEntry(
-                            lot, key.instrumentId(), lotValueBase, lotCostBase, lotYieldPct,
-                            lotVal.rateUnavailable(), lotCoupons));
+            if (lot.remainingQuantity().compareTo(BigDecimal.ZERO) > 0) {
+                BigDecimal lotValueBase = lot.remainingQuantity()
+                        .multiply(BigDecimal.valueOf(lotVal.unitPriceNative()))
+                        .multiply(openFxRate);
+                BigDecimal lotCostBase = lot.remainingCostBase();
+                BigDecimal lotYieldPct = lotVal.rateUnavailable()
+                        ? null
+                        : BigDecimal.valueOf(lotVal.currentAnnualRatePct());
 
-            acc.grossTotalValue = acc.grossTotalValue.add(lotValueBase);
-            acc.totalBondValue = acc.totalBondValue.add(lotValueBase);
+                acc.bondLotsByFamily.computeIfAbsent(family, ignored -> new ArrayList<>())
+                        .add(new BondLotEntry(
+                                lot, key.instrumentId(), lotValueBase, lotCostBase, lotYieldPct,
+                                lotVal.rateUnavailable(), subCoupons));
+
+                acc.grossTotalValue = acc.grossTotalValue.add(lotValueBase);
+                acc.totalBondValue = acc.totalBondValue.add(lotValueBase);
+            }
         }
     }
 
@@ -144,6 +179,7 @@ final class BondPositionBuilder {
         BigDecimal maxRate;
         BigDecimal latestMargin;
         BigDecimal familyDivs = BigDecimal.ZERO;
+        BigDecimal familyDividendTax = BigDecimal.ZERO;
         boolean rateUnavailable;
 
         FamilyAccumulator(String family, List<UUID> familyInstIds) {
@@ -155,7 +191,9 @@ final class BondPositionBuilder {
     static void buildBondPositions(
             ValuationEngine.Accumulator acc,
             Map<PortfolioLedger.DividendKey, List<MetricsCalculator.CashFlow>> dividendFlowsByKey,
+            Map<PortfolioLedger.DividendKey, List<MetricsCalculator.CashFlow>> dividendTaxFlowsByKey,
             Map<PortfolioLedger.DividendKey, BigDecimal> remainingDividends,
+            Map<PortfolioLedger.DividendKey, BigDecimal> remainingDividendTax,
             ValuationContext ctx) {
         List<FamilyAccumulator> openFamilies = new ArrayList<>(acc.bondLotsByFamily.size());
         Set<UUID> openBondInstIds = new LinkedHashSet<>();
@@ -195,12 +233,21 @@ final class BondPositionBuilder {
                 state.entriesBySubGroup
                         .computeIfAbsent(new SubGroupKey(lotSeries, lotDate), ignored -> new ArrayList<>())
                         .add(e);
-                for (BondCouponBase c : e.completedCoupons()) {
-                    state.familyDivs = state.familyDivs.add(c.grossBase());
-                    BigDecimal cNet = c.grossBase().subtract(
-                            TaxPolicy.computeBelka(c.grossBase(), !ctx.shouldApplyTax()));
-                    state.familyFlows.add(new MetricsCalculator.CashFlow(
-                            cNet.doubleValue(), c.date().atStartOfDay()));
+            }
+
+            BigDecimal completedCoupons = acc.completedBondCouponsByFamily.getOrDefault(family, BigDecimal.ZERO);
+            state.familyDivs = state.familyDivs.add(completedCoupons);
+            BigDecimal completedCouponTax = acc.completedBondCouponTaxByFamily.getOrDefault(family, BigDecimal.ZERO);
+            state.familyDividendTax = state.familyDividendTax.add(completedCouponTax);
+            List<MetricsCalculator.CashFlow> completedCouponFlows = acc.completedBondCouponFlowsByFamily.get(family);
+            if (completedCouponFlows != null) {
+                state.familyFlows.addAll(completedCouponFlows);
+            }
+            if (ctx.shouldApplyTax()) {
+                List<MetricsCalculator.CashFlow> completedCouponTaxFlows =
+                        acc.completedBondCouponTaxFlowsByFamily.get(family);
+                if (completedCouponTaxFlows != null) {
+                    state.familyFlows.addAll(completedCouponTaxFlows);
                 }
             }
 
@@ -210,12 +257,22 @@ final class BondPositionBuilder {
             for (UUID famInstId : effectiveInstIds) {
                 PortfolioLedger.DividendKey scopedKey = new PortfolioLedger.DividendKey(famInstId, family);
                 BigDecimal div = remainingDividends.remove(scopedKey);
+                BigDecimal divTax = remainingDividendTax != null ? remainingDividendTax.remove(scopedKey) : null;
                 if (div != null) {
                     state.familyDivs = state.familyDivs.add(div);
+                    state.familyDividendTax = state.familyDividendTax.add(
+                            divTax != null ? divTax : TaxPolicy.computeBelka(div, false));
+                } else if (divTax != null) {
+                    state.familyDividendTax = state.familyDividendTax.add(divTax);
                 }
                 List<MetricsCalculator.CashFlow> divFlows = dividendFlowsByKey.remove(scopedKey);
                 if (divFlows != null) {
                     state.familyFlows.addAll(divFlows);
+                }
+                List<MetricsCalculator.CashFlow> divTaxFlows =
+                        dividendTaxFlowsByKey != null ? dividendTaxFlowsByKey.remove(scopedKey) : null;
+                if (ctx.shouldApplyTax() && divTaxFlows != null) {
+                    state.familyFlows.addAll(divTaxFlows);
                 }
             }
             List<MetricsCalculator.CashFlow> recordedFlows = acc.bondFlowsByFamily.get(family);
@@ -228,7 +285,14 @@ final class BondPositionBuilder {
         for (UUID instId : openBondInstIds) {
             PortfolioLedger.DividendKey unscopedKey = new PortfolioLedger.DividendKey(instId, null);
             BigDecimal unscopedDiv = remainingDividends.remove(unscopedKey);
+            BigDecimal unscopedDivTax =
+                    remainingDividendTax != null ? remainingDividendTax.remove(unscopedKey) : null;
+            if (unscopedDiv != null && unscopedDivTax == null) {
+                unscopedDivTax = TaxPolicy.computeBelka(unscopedDiv, false);
+            }
             List<MetricsCalculator.CashFlow> unscopedFlows = dividendFlowsByKey.remove(unscopedKey);
+            List<MetricsCalculator.CashFlow> unscopedTaxFlows =
+                    dividendTaxFlowsByKey != null ? dividendTaxFlowsByKey.remove(unscopedKey) : null;
             if (unscopedDiv == null && (unscopedFlows == null || unscopedFlows.isEmpty())) {
                 continue;
             }
@@ -243,12 +307,19 @@ final class BondPositionBuilder {
                     s -> s.sumVal.doubleValue(),
                     s -> s.sumCost.doubleValue());
             List<BigDecimal> divPieces = ValuationSupport.splitAmount(unscopedDiv, shares);
+            List<BigDecimal> divTaxPieces = ValuationSupport.splitAmount(unscopedDivTax, shares);
             for (int i = 0; i < sharing.size(); i++) {
                 FamilyAccumulator target = sharing.get(i);
                 target.familyDivs = target.familyDivs.add(divPieces.get(i));
+                target.familyDividendTax = target.familyDividendTax.add(divTaxPieces.get(i));
+                double ratio = shares[i];
                 if (unscopedFlows != null) {
-                    double ratio = shares[i];
                     for (MetricsCalculator.CashFlow cf : unscopedFlows) {
+                        target.familyFlows.add(new MetricsCalculator.CashFlow(cf.amount() * ratio, cf.date()));
+                    }
+                }
+                if (ctx.shouldApplyTax() && unscopedTaxFlows != null) {
+                    for (MetricsCalculator.CashFlow cf : unscopedTaxFlows) {
                         target.familyFlows.add(new MetricsCalculator.CashFlow(cf.amount() * ratio, cf.date()));
                     }
                 }
@@ -259,7 +330,8 @@ final class BondPositionBuilder {
             String family = state.family;
             BigDecimal familyRealized = acc.closedBondRealizedByFamily.getOrDefault(family, BigDecimal.ZERO);
             TaxPolicy.PositionTaxBreakdown tax = TaxPolicy.computePositionTax(
-                    state.sumVal, state.sumCost, familyRealized, state.familyDivs, !ctx.shouldApplyTax());
+                    state.sumVal, state.sumCost, familyRealized, state.familyDivs,
+                    state.familyDividendTax, !ctx.shouldApplyTax());
             BigDecimal avgPrice = state.sumQty.compareTo(BigDecimal.ZERO) > 0
                     ? state.sumVal.divide(state.sumQty, 4, RoundingMode.HALF_UP)
                     : BigDecimal.valueOf(100);
@@ -276,13 +348,15 @@ final class BondPositionBuilder {
                 subs.add(buildBondSubPosition(family, subKey, state.entriesBySubGroup.get(subKey), ctx));
             }
 
-            LocalDateTime realizedTaxDate = state.familyFlows.stream()
+            BigDecimal disposalTax = TaxPolicy.computeBelka(familyRealized, !ctx.shouldApplyTax());
+            List<MetricsCalculator.CashFlow> recordedFlows = acc.bondFlowsByFamily.getOrDefault(family, List.of());
+            LocalDateTime realizedTaxDate = recordedFlows.stream()
                     .filter(cf -> cf.amount() > 0)
                     .map(MetricsCalculator.CashFlow::date)
                     .max(LocalDateTime::compareTo)
                     .orElse(ctx.effectiveNow());
             List<MetricsCalculator.CashFlow> xirrFlows = ValuationSupport.withSettledTaxFlow(
-                    state.familyFlows, tax.settledTax(), realizedTaxDate);
+                    state.familyFlows, disposalTax, realizedTaxDate);
             MetricsCalculator.XirrResult famXirr = MetricsCalculator.calculateHoldingXirr(
                     xirrFlows, tax.netValue().doubleValue(), ctx.effectiveNow(), ValuationSupport.XIRR_MIN_DAYS);
             UUID primaryInstId = state.openInstIds.isEmpty() ? null : state.openInstIds.getFirst();
@@ -336,11 +410,19 @@ final class BondPositionBuilder {
             BigDecimal closedRealized = acc.closedBondRealizedByFamily.getOrDefault(family, BigDecimal.ZERO);
             BigDecimal closedDivs = BigDecimal.ZERO;
             for (UUID instId : entry.getValue()) {
-                BigDecimal scoped = remainingDividends.remove(new PortfolioLedger.DividendKey(instId, family));
+                PortfolioLedger.DividendKey scopedKey = new PortfolioLedger.DividendKey(instId, family);
+                BigDecimal scoped = remainingDividends.remove(scopedKey);
+                if (remainingDividendTax != null) {
+                    remainingDividendTax.remove(scopedKey);
+                }
                 if (scoped != null) {
                     closedDivs = closedDivs.add(scoped);
                 }
-                BigDecimal unscoped = remainingDividends.remove(new PortfolioLedger.DividendKey(instId, null));
+                PortfolioLedger.DividendKey unscopedKey = new PortfolioLedger.DividendKey(instId, null);
+                BigDecimal unscoped = remainingDividends.remove(unscopedKey);
+                if (remainingDividendTax != null) {
+                    remainingDividendTax.remove(unscopedKey);
+                }
                 if (unscoped != null) {
                     closedDivs = closedDivs.add(unscoped);
                 }

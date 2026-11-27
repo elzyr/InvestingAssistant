@@ -70,6 +70,8 @@ export const StatementUploadModal: React.FC<StatementUploadModalProps> = ({
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const previewAbortRef = useRef<AbortController | null>(null);
   const previewGenRef = useRef<number>(0);
+  const sessionGenRef = useRef<number>(0);
+  const isMountedRef = useRef<boolean>(true);
 
   const [file, setFile] = useState<File | null>(null);
   const [bankProfile, setBankProfile] = useState<BankProfile>('AUTO');
@@ -86,10 +88,18 @@ export const StatementUploadModal: React.FC<StatementUploadModalProps> = ({
   const [visibleLimit, setVisibleLimit] = useState<number>(100);
 
   useEffect(() => {
+    isMountedRef.current = true;
     return () => {
+      isMountedRef.current = false;
       previewAbortRef.current?.abort();
     };
   }, []);
+
+  useEffect(() => {
+    if (!isOpen) {
+      sessionGenRef.current += 1;
+    }
+  }, [isOpen]);
 
   const cancelPendingPreview = () => {
     previewAbortRef.current?.abort();
@@ -99,6 +109,7 @@ export const StatementUploadModal: React.FC<StatementUploadModalProps> = ({
 
   const resetAll = () => {
     cancelPendingPreview();
+    sessionGenRef.current += 1;
     setFile(null);
     setBankProfile('AUTO');
     setAccountLabel('');
@@ -209,6 +220,7 @@ export const StatementUploadModal: React.FC<StatementUploadModalProps> = ({
 
   const handleCommit = async () => {
     if (!preview) return;
+    const commitGen = sessionGenRef.current;
     setCommitting(true);
     setError(null);
     try {
@@ -261,13 +273,21 @@ export const StatementUploadModal: React.FC<StatementUploadModalProps> = ({
 
       const latestMonth = monthBreakdown.at(-1)?.month ?? preview.periodEnd?.slice(0, 7) ?? undefined;
       await expenseService.commitStatement(payload);
+      if (!isMountedRef.current || commitGen !== sessionGenRef.current) {
+        return;
+      }
       resetAll();
       onCommitted(latestMonth);
       onClose();
     } catch (err) {
+      if (!isMountedRef.current || commitGen !== sessionGenRef.current) {
+        return;
+      }
       setError(extractApiErrorMessage(err, t('expenses.errors.commitFailed')));
     } finally {
-      setCommitting(false);
+      if (isMountedRef.current && commitGen === sessionGenRef.current) {
+        setCommitting(false);
+      }
     }
   };
 

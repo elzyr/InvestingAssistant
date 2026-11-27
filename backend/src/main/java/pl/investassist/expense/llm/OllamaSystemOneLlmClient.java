@@ -9,6 +9,7 @@ import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
+import java.time.Instant;
 import java.util.EnumMap;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
@@ -16,11 +17,15 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
+import java.util.regex.Pattern;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 import pl.investassist.expense.ExpenseSupport;
 import pl.investassist.expense.classifier.MerchantNormalizer;
 import pl.investassist.expense.classifier.MerchantRuleSnapshot;
+import pl.investassist.expense.classifier.PiiScrubber;
 import pl.investassist.expense.enums.ExpenseCategory;
 import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.ObjectMapper;
@@ -28,8 +33,11 @@ import tools.jackson.databind.ObjectMapper;
 @Component
 public class OllamaSystemOneLlmClient implements ExpenseLlmPort {
 
+  private static final Logger log = LoggerFactory.getLogger(OllamaSystemOneLlmClient.class);
   private static final Duration CONNECT_TIMEOUT = Duration.ofSeconds(5);
   private static final Duration READ_TIMEOUT = Duration.ofSeconds(30);
+  private static final Duration MAX_BATCH_DURATION = Duration.ofSeconds(120);
+  private static final int MAX_BATCH_ITEMS = 50;
   private static final int MIN_NUM_CTX = 1024;
   private static final int MAX_LEARNED_EXAMPLES = 60;
   private static final int MAX_STATEMENT_MERCHANTS = 40;
@@ -50,6 +58,7 @@ public class OllamaSystemOneLlmClient implements ExpenseLlmPort {
   private final int numCtx;
   private final HttpClient httpClient;
   private final ObjectMapper objectMapper;
+  private final PiiScrubber piiScrubber;
 
   public OllamaSystemOneLlmClient(
       @Value("${app.expenses.llm.provider:ollama}") String provider,
@@ -62,6 +71,7 @@ public class OllamaSystemOneLlmClient implements ExpenseLlmPort {
     this.numCtx = Math.max(MIN_NUM_CTX, numCtx);
     this.httpClient = HttpClient.newBuilder().connectTimeout(CONNECT_TIMEOUT).build();
     this.objectMapper = new ObjectMapper();
+    this.piiScrubber = new PiiScrubber();
   }
 
   @Override
@@ -101,19 +111,32 @@ public class OllamaSystemOneLlmClient implements ExpenseLlmPort {
         ? context
         : new LlmClassificationContext(null, List.of(), List.of());
     String ownerName = sanitizeLine(safeContext.accountOwnerName(), 120);
-    List<String> statementMerchants = sanitizeStatementMerchants(safeContext.statementMerchants());
-    List<LearnedExample> formattedExamples = sanitizeLearnedExamples(safeContext.learnedExamples());
+    List<String> statementMerchants =
+        sanitizeStatementMerchants(safeContext.statementMerchants(), ownerName);
+    List<LearnedExample> formattedExamples =
+        sanitizeLearnedExamples(safeContext.learnedExamples(), ownerName);
     URI endpoint = URI.create(baseUrl + "/v1/systemone");
     Map<String, LlmCategorySuggestion> results = new LinkedHashMap<>();
 
-    for (LlmClassifyInput item : items) {
+    int limit = Math.min(MAX_BATCH_ITEMS, items.size());
+    Instant deadline = Instant.now().plus(MAX_BATCH_DURATION);
+    for (int i = 0; i < limit; i++) {
+      if (Instant.now().isAfter(deadline)) {
+        log.warn("Ollama SystemOne batch deadline exceeded after {} items", results.size());
+        break;
+      }
+      LlmClassifyInput item = items.get(i);
       if (item == null || item.id() == null || item.id().isBlank()) {
         continue;
       }
-      LlmCategorySuggestion suggestion =
-          classifySingleItem(endpoint, item, ownerName, statementMerchants, formattedExamples);
-      if (suggestion != null) {
-        results.put(item.id(), suggestion);
+      try {
+        LlmCategorySuggestion suggestion =
+            classifySingleItem(endpoint, item, ownerName, statementMerchants, formattedExamples);
+        if (suggestion != null) {
+          results.put(item.id(), suggestion);
+        }
+      } catch (RuntimeException e) {
+        log.warn("Ollama SystemOne classification skipped for item={}: {}", item.id(), e.getMessage());
       }
     }
     return results;
@@ -159,8 +182,8 @@ public class OllamaSystemOneLlmClient implements ExpenseLlmPort {
       String ownerName,
       List<String> statementMerchants,
       List<LearnedExample> learnedExamples) {
-    String description = sanitizeLine(item.scrubbedDescription(), MAX_DESCRIPTION_CHARS);
-    String merchantDisplay = sanitizeLine(item.merchantDisplay(), 120);
+    String description = sanitizeForPrompt(item.scrubbedDescription(), ownerName, MAX_DESCRIPTION_CHARS);
+    String merchantDisplay = sanitizeForPrompt(item.merchantDisplay(), ownerName, 120);
     String amountStr = item.amount() != null ? item.amount().toPlainString() : "0.00";
     String currency = item.currency() != null && !item.currency().isBlank()
         ? item.currency().trim().toUpperCase(Locale.ROOT)
@@ -176,9 +199,6 @@ public class OllamaSystemOneLlmClient implements ExpenseLlmPort {
     state.append("Amount: ").append(amountStr).append(' ').append(currency)
         .append(" (").append(direction).append(")\n");
     state.append("Statement occurrences: ").append(Math.max(1, item.statementOccurrences())).append('\n');
-    if (!ownerName.isEmpty()) {
-      state.append("Account owner: ").append(ownerName).append('\n');
-    }
     if (!statementMerchants.isEmpty()) {
       state.append("Other merchants in statement: ").append(String.join(", ", statementMerchants)).append('\n');
     }
@@ -212,13 +232,13 @@ public class OllamaSystemOneLlmClient implements ExpenseLlmPort {
     return criteria;
   }
 
-  private static List<String> sanitizeStatementMerchants(List<String> merchants) {
+  private List<String> sanitizeStatementMerchants(List<String> merchants, String ownerName) {
     if (merchants == null || merchants.isEmpty()) {
       return List.of();
     }
     Set<String> unique = new LinkedHashSet<>();
     for (String m : merchants) {
-      String cleaned = sanitizeLine(m, 80);
+      String cleaned = sanitizeForPrompt(m, ownerName, 80);
       if (cleaned.isEmpty() || "unknown".equalsIgnoreCase(cleaned)) {
         continue;
       }
@@ -230,8 +250,8 @@ public class OllamaSystemOneLlmClient implements ExpenseLlmPort {
     return List.copyOf(unique);
   }
 
-  private static List<LearnedExample> sanitizeLearnedExamples(
-      List<MerchantRuleSnapshot> learnedExamples) {
+  private List<LearnedExample> sanitizeLearnedExamples(
+      List<MerchantRuleSnapshot> learnedExamples, String ownerName) {
     if (learnedExamples == null || learnedExamples.isEmpty()) {
       return List.of();
     }
@@ -246,7 +266,8 @@ public class OllamaSystemOneLlmClient implements ExpenseLlmPort {
           || MerchantNormalizer.isGatewayKey(normalizedKey)) {
         continue;
       }
-      String label = normalizedKey.replace('_', ' ').replaceAll("\\s+", " ").trim();
+      String spaced = normalizedKey.replace('_', ' ').replaceAll("\\s+", " ").trim();
+      String label = sanitizeForPrompt(spaced, ownerName, 120);
       if (label.isEmpty()) {
         continue;
       }
@@ -256,6 +277,23 @@ public class OllamaSystemOneLlmClient implements ExpenseLlmPort {
       }
     }
     return List.copyOf(deduplicated.values());
+  }
+
+  private String sanitizeForPrompt(String value, String ownerName, int maxChars) {
+    String cleaned = sanitizeLine(value, maxChars * 2);
+    if (cleaned.isEmpty()) {
+      return "";
+    }
+    if (ownerName != null && !ownerName.isBlank()) {
+      String trimmedOwner = ownerName.trim();
+      if (trimmedOwner.length() >= 3) {
+        cleaned = Pattern.compile(Pattern.quote(trimmedOwner), Pattern.CASE_INSENSITIVE | Pattern.UNICODE_CASE)
+            .matcher(cleaned)
+            .replaceAll("[OWNER]");
+      }
+    }
+    cleaned = piiScrubber.scrub(cleaned);
+    return sanitizeLine(cleaned, maxChars);
   }
 
   private static String sanitizeLine(String value, int maxChars) {

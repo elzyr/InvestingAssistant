@@ -132,7 +132,12 @@ public final class ValuationSupport {
 
     public record BondLotsStepResult(
             BigDecimal carryingValueNative,
-            BigDecimal completedCouponsNative) {}
+            BigDecimal completedCouponsNative,
+            boolean rateUnavailable) {
+        public BondLotsStepResult(BigDecimal carryingValueNative, BigDecimal completedCouponsNative) {
+            this(carryingValueNative, completedCouponsNative, false);
+        }
+    }
 
     public static BondLotsStepResult evaluateBondLotsNative(
             List<PortfolioLedger.FifoLot> lots,
@@ -141,12 +146,13 @@ public final class ValuationSupport {
             java.util.NavigableMap<LocalDate, BigDecimal> nbpReferenceRates,
             String fallbackSeriesName) {
         if (lots == null || lots.isEmpty()) {
-            return new BondLotsStepResult(BigDecimal.ZERO, BigDecimal.ZERO);
+            return new BondLotsStepResult(BigDecimal.ZERO, BigDecimal.ZERO, false);
         }
         BigDecimal total = BigDecimal.ZERO;
         BigDecimal coupons = BigDecimal.ZERO;
+        boolean anyRateUnavailable = false;
         for (PortfolioLedger.FifoLot lot : lots) {
-            if (lot.remainingQuantity().compareTo(BigDecimal.ZERO) <= 0) {
+            if (lot.initialQuantity().compareTo(BigDecimal.ZERO) <= 0) {
                 continue;
             }
             String series = lot.seriesName() != null ? lot.seriesName() : fallbackSeriesName;
@@ -159,12 +165,18 @@ public final class ValuationSupport {
                     targetDateTime,
                     series,
                     lot.termMonths());
-            total = total.add(lot.remainingQuantity().multiply(BigDecimal.valueOf(lotVal.unitPriceNative())));
+            if (lot.remainingQuantity().compareTo(BigDecimal.ZERO) > 0) {
+                total = total.add(lot.remainingQuantity().multiply(BigDecimal.valueOf(lotVal.unitPriceNative())));
+                anyRateUnavailable |= lotVal.rateUnavailable();
+            }
             for (BondValuationEngine.CompletedCoupon c : lotVal.completedCoupons()) {
-                coupons = coupons.add(lot.remainingQuantity().multiply(BigDecimal.valueOf(c.grossCouponNative())));
+                BigDecimal qtyAtCoupon = lot.quantityAt(c.couponDate());
+                if (qtyAtCoupon.compareTo(BigDecimal.ZERO) > 0) {
+                    coupons = coupons.add(qtyAtCoupon.multiply(BigDecimal.valueOf(c.grossCouponNative())));
+                }
             }
         }
-        return new BondLotsStepResult(total, coupons);
+        return new BondLotsStepResult(total, coupons, anyRateUnavailable);
     }
 
     public static String resolveCategoryCode(Instrument inst, Transaction sampleTx) {

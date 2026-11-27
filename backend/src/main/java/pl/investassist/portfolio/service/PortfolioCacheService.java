@@ -4,12 +4,14 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.data.redis.core.StringRedisTemplate;
+import org.springframework.data.redis.core.script.RedisScript;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.support.TransactionSynchronization;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
 import pl.investassist.config.CacheConfig;
 
 import java.time.Duration;
+import java.util.List;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 
@@ -20,6 +22,14 @@ public class PortfolioCacheService {
     private static final String REDIS_VERSION_PREFIX = CacheConfig.KEY_PREFIX + "portfolioVersion::";
     private static final Duration VERSION_TTL = Duration.ofHours(24);
     private static final long REDIS_FALLBACK_BYPASS_NANOS = Duration.ofMinutes(15).toNanos();
+    private static final RedisScript<Long> BUMP_TO_MIN_SCRIPT = RedisScript.of(
+            "local cur = tonumber(redis.call('GET', KEYS[1]) or '0')\n"
+                    + "local target = tonumber(ARGV[1])\n"
+                    + "local ttl = tonumber(ARGV[2])\n"
+                    + "local val = math.max(cur, target)\n"
+                    + "redis.call('SET', KEYS[1], tostring(val), 'EX', ttl)\n"
+                    + "return val",
+            Long.class);
 
     private final StringRedisTemplate stringRedisTemplate;
     private final ConcurrentHashMap<UUID, Long> localVersions = new ConcurrentHashMap<>();
@@ -84,7 +94,14 @@ public class PortfolioCacheService {
                     long localNext = localVersions.getOrDefault(portfolioId, 0L) + 1L;
                     long resolved = Math.max(next, localNext);
                     if (resolved > next) {
-                        stringRedisTemplate.opsForValue().set(key, Long.toString(resolved), VERSION_TTL);
+                        Long luaResult = stringRedisTemplate.execute(
+                                BUMP_TO_MIN_SCRIPT,
+                                List.of(key),
+                                Long.toString(resolved),
+                                Long.toString(VERSION_TTL.toSeconds()));
+                        if (luaResult != null) {
+                            resolved = luaResult;
+                        }
                     } else {
                         stringRedisTemplate.expire(key, VERSION_TTL);
                     }

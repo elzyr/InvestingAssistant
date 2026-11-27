@@ -119,6 +119,7 @@ public final class AnnualReportEngine {
         BigDecimal baselineNetProfit = BigDecimal.ZERO;
         BigDecimal baselineSettledTax = BigDecimal.ZERO;
         BigDecimal baselineExtFlow = BigDecimal.ZERO;
+        boolean anyDegraded = false;
         Map<String, BigDecimal> prevPositionNetProfit = new LinkedHashMap<>();
 
         if (hasPriorYearBaseline) {
@@ -132,11 +133,12 @@ public final class AnnualReportEngine {
                     false,
                     true,
                     false);
+            anyDegraded |= baselineStep.degraded();
             baselineValue = baselineStep.displayValuation();
             baselineGrossProfit = baselineStep.grossProfit();
             baselineNetProfit = baselineStep.netProfit();
             baselineSettledTax = baselineStep.settledTax();
-            baselineExtFlow = ledger.cumulativeExternalCashFlow();
+            baselineExtFlow = ledger.cumulativeExternalCashFlow().subtract(baselineStep.completedBondCouponsBase());
             for (StepGroupContributor c : baselineStep.contributorsByKey().values()) {
                 prevPositionNetProfit.put(c.key(), ValuationSupport.scale(c.netProfit(), 2));
             }
@@ -175,6 +177,7 @@ public final class AnnualReportEngine {
                     isCurrentMonth,
                     true,
                     true);
+            anyDegraded |= step.degraded();
 
             BigDecimal displayVal = step.displayValuation();
             BigDecimal totalInvested = step.totalInvested();
@@ -230,9 +233,25 @@ public final class AnnualReportEngine {
             prevPositionNetProfit = curPositionNetProfit;
 
             BigDecimal realProfitPct = null;
-            if (monthInflation != null && inflation != null && inflation.monthlyByYear() != null) {
-                Double hurdle = MetricsCalculator.compoundCpiPathHurdle(
-                        ledger.snapshot().portfolioCashFlows(), inflation.monthlyByYear(), targetDateTime);
+            if (monthInflation != null) {
+                Double hurdle = null;
+                if (inflation != null && inflation.monthlyByYear() != null) {
+                    hurdle = MetricsCalculator.compoundCpiPathHurdle(
+                            ledger.snapshot().portfolioCashFlows(), inflation.monthlyByYear(), targetDateTime);
+                }
+                if (hurdle == null) {
+                    List<MetricsCalculator.CostLot> activeLots = new ArrayList<>();
+                    for (PortfolioLedger.PositionAccumulator acc : ledger.accumulators().values()) {
+                        for (PortfolioLedger.FifoLot lot : acc.activeLots()) {
+                            activeLots.add(new MetricsCalculator.CostLot(
+                                    lot.remainingCostBase().doubleValue(), lot.executedAt()));
+                        }
+                    }
+                    if (!activeLots.isEmpty()) {
+                        hurdle = MetricsCalculator.compoundHurdle(
+                                activeLots, monthInflation.doubleValue(), targetDateTime);
+                    }
+                }
                 if (hurdle != null && hurdle > 0.0) {
                     double pct = (displayVal.doubleValue() / hurdle - 1.0) * 100.0;
                     realProfitPct = ValuationSupport.bd(pct, 2);
@@ -257,7 +276,9 @@ public final class AnnualReportEngine {
                     positions);
             rawMonths.add(rawDto);
             recordedEntries.add(new RecordedMonthEntry(
-                    rawDto, ledger.cumulativeExternalCashFlow(), step.settledTax()));
+                    rawDto,
+                    ledger.cumulativeExternalCashFlow().subtract(step.completedBondCouponsBase()),
+                    step.settledTax()));
         }
 
         List<MonthlyReportDto> finalMonths = new ArrayList<>(12);
@@ -362,7 +383,8 @@ public final class AnnualReportEngine {
                 ytdTwrPct,
                 ytdRealReturnPct,
                 avgCpi,
-                finalMonths);
+                finalMonths,
+                anyDegraded);
     }
 
     private static MonthlyReportDto emptyMonth(int monthIndex, MonthStatus status) {

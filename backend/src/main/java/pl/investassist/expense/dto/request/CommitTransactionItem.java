@@ -4,6 +4,7 @@ import jakarta.validation.constraints.DecimalMax;
 import jakarta.validation.constraints.DecimalMin;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.NotNull;
+import jakarta.validation.constraints.Positive;
 import jakarta.validation.constraints.Size;
 import java.math.BigDecimal;
 import java.time.LocalDate;
@@ -22,7 +23,7 @@ public record CommitTransactionItem(
     @NotBlank @Size(max = 8) String currency,
     @NotNull BigDecimal baseAmount,
     @NotBlank @Size(max = 8) String baseCurrency,
-    @NotNull BigDecimal fxRate,
+    @NotNull @Positive BigDecimal fxRate,
     Boolean fxDegraded,
     @NotNull FlowKind flowKind,
     @NotNull ExpenseCategory category,

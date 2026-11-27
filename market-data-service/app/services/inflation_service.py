@@ -222,8 +222,9 @@ class InflationService:
         def _build() -> dict:
             nonlocal cache_ttl
             all_records = InflationService._load_fresh_cpi_records()
-            latest = max(all_records, key=lambda r: (r["year"], r["month"])) if all_records else None
-            last_per_year = {r["year"]: r["rate"] for r in all_records}
+            rate_records = [r for r in all_records if r.get("rate") is not None]
+            latest = max(rate_records, key=lambda r: (r["year"], r["month"])) if rate_records else None
+            last_per_year = {r["year"]: r["rate"] for r in rate_records}
 
             cache_ttl = 86400 if latest else 300
             return {

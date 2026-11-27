@@ -20,7 +20,9 @@ export interface TransactionFormState {
   quantity: string;
   price: string;
   commission: string;
+  fxFeePct: string;
   currency: Currency;
+  defaultCurrency: Currency;
   transactionDate: string;
   seriesName: string;
   interestType: 'FIXED' | 'INFLATION';
@@ -38,6 +40,7 @@ export type TransactionFormField =
   | 'quantity'
   | 'price'
   | 'commission'
+  | 'fxFeePct'
   | 'currency'
   | 'transactionDate'
   | 'interestType'
@@ -48,6 +51,14 @@ export type TransactionFormField =
   | 'submitting'
   | 'deleting'
   | 'error';
+
+export function computeDefaultFxFeePct(
+  currency: Currency,
+  defaultCurrency: Currency,
+  isBond: boolean
+): string {
+  return !isBond && currency !== defaultCurrency ? '0.5' : '0';
+}
 
 export type TransactionFormAction =
   | { type: 'SELECT_INSTRUMENT'; instrument: InstrumentResponse }
@@ -77,13 +88,18 @@ function buildNewState(
   todayDate: string
 ): TransactionFormState {
   const isBond = isBondInstrument(instrument);
+  const currency: Currency = isBond
+    ? 'PLN'
+    : ((instrument?.currency as Currency) || defaultCurrency);
   return {
     selectedInstrument: instrument || null,
     transactionType: 'BUY',
     quantity: '10',
     price: '100.00',
     commission: '0',
-    currency: isBond ? 'PLN' : ((instrument?.currency as Currency) || defaultCurrency),
+    fxFeePct: computeDefaultFxFeePct(currency, defaultCurrency, isBond),
+    currency,
+    defaultCurrency,
     transactionDate: todayDate,
     seriesName: '',
     interestType: 'FIXED',
@@ -124,7 +140,12 @@ function buildEditState(
     quantity: transaction.quantity?.toString() || '1',
     price: transaction.price?.toString() || '100',
     commission: transaction.commission?.toString() || '0',
+    fxFeePct:
+      transaction.fxFeePct !== undefined && transaction.fxFeePct !== null
+        ? transaction.fxFeePct.toString()
+        : '0',
     currency: transaction.currency || defaultCurrency,
+    defaultCurrency,
     transactionDate: transaction.executedAt ? standardizeDate(transaction.executedAt) : fallbackDate,
     seriesName: transaction.seriesName || '',
     interestType: isInflationBond ? 'INFLATION' : 'FIXED',
@@ -151,12 +172,14 @@ export function transactionFormReducer(
   switch (action.type) {
     case 'SELECT_INSTRUMENT': {
       const bond = isBondInstrument(action.instrument);
+      const nextCurrency: Currency = bond ? 'PLN' : action.instrument.currency || 'USD';
       return {
         ...state,
         selectedInstrument: action.instrument,
         transactionType:
           bond && state.transactionType === 'DIVIDEND' ? 'BUY' : state.transactionType,
-        currency: bond ? 'PLN' : action.instrument.currency || 'USD',
+        currency: nextCurrency,
+        fxFeePct: computeDefaultFxFeePct(nextCurrency, state.defaultCurrency, bond),
         price: bond ? '100.00' : state.price,
         termMonths: bond ? state.termMonths || '36' : '',
         loadingPrice: !bond,
@@ -181,6 +204,18 @@ export function transactionFormReducer(
     case 'SET_FIELD':
       if (action.field === 'interestType' && action.value === 'FIXED') {
         return { ...state, interestType: 'FIXED', bondMargin: '' };
+      }
+      if (action.field === 'currency') {
+        const nextCurrency = action.value as Currency;
+        const bond = isBondInstrument(state.selectedInstrument);
+        const nextFxFee = bond
+          ? '0'
+          : nextCurrency === state.defaultCurrency
+          ? '0'
+          : state.fxFeePct === '0'
+          ? '0.5'
+          : state.fxFeePct;
+        return { ...state, currency: nextCurrency, fxFeePct: nextFxFee };
       }
       return { ...state, [action.field]: action.value };
   }

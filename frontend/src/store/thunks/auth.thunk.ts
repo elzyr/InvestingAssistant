@@ -1,7 +1,12 @@
 import { createAsyncThunk } from '@reduxjs/toolkit';
 import type { AuthResponse, LoginRequest, RegisterRequest, UserProfileResponse } from '../../types/auth.ts';
 import { authService } from '../../services/auth.service.ts';
-import { extractApiErrorMessage, refreshAuthResponse, setAccessToken } from '../../api/client.ts';
+import {
+  extractApiErrorMessage,
+  getAuthEpoch,
+  refreshAuthResponse,
+  setAccessToken,
+} from '../../api/client.ts';
 
 function toAuthPayload(authData: AuthResponse): { accessToken: string; user: UserProfileResponse } {
   setAccessToken(authData.accessToken);
@@ -37,15 +42,21 @@ export const checkAuthThunk = createAsyncThunk<
   void,
   { rejectValue: null }
 >('auth/checkAuth', async (_, { rejectWithValue }) => {
+  const startEpoch = getAuthEpoch();
   try {
-    return toAuthPayload(await refreshAuthResponse());
+    const authData = await refreshAuthResponse();
+    if (getAuthEpoch() !== startEpoch) {
+      return rejectWithValue(null);
+    }
+    return toAuthPayload(authData);
   } catch {
-    setAccessToken(null);
+    setAccessToken(null, startEpoch);
     return rejectWithValue(null);
   }
 });
 
 export const logoutThunk = createAsyncThunk<void, void>('auth/logout', async () => {
+  setAccessToken(null);
   try {
     await authService.logout();
   } finally {

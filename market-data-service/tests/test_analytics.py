@@ -603,6 +603,97 @@ class TestPostgresRepositorySeam(unittest.TestCase):
         self.assertLess(netto_real["summary"]["terminalP50"], brutto_real["summary"]["terminalP50"])
         self.assertLess(no_rollover["summary"]["terminalP50"], with_rollover["summary"]["terminalP50"])
 
+    def test_monte_carlo_seed_validation_volatility_drag_zero_equity_dca_and_streaming_memory(self):
+        import tracemalloc
+        from pydantic import ValidationError
+        from app.routers.analytics_router import MonteCarloRequest
+        from app.services.monte_carlo_service import run_monte_carlo
+
+        with self.assertRaises(ValidationError):
+            MonteCarloRequest(horizonYears=5, seed=-1)
+
+        weekly = {f"2025-W{w:02d}": (0.04 if w % 2 == 0 else -0.03) for w in range(1, 55)}
+        high_vol_metrics = {
+            "symbol": "VOL.DE",
+            "annualReturn": 0.10,
+            "annualVolatility": 0.40,
+            "ter": 0.0,
+            "currency": "PLN",
+            "weeklyReturns": weekly,
+        }
+        vol_req = {
+            "horizonYears": 10,
+            "startDate": "2026-01-01",
+            "equityHoldings": [{"symbol": "VOL.DE", "categoryCode": "MSCI_WORLD", "valueBase": 10000.0}],
+            "bondSeed": {"startFixedValue": 0.0, "startIndexedValue": 0.0},
+            "startInvestedCapital": 10000.0,
+            "monthlyDca": 0.0,
+            "dcaEquityShare": 1.0,
+            "taxMode": "BRUTTO",
+            "realMode": False,
+            "bondRollover": False,
+            "cpiPct": 0.0,
+            "seed": 42,
+        }
+        with patch("app.services.analytics_service.AnalyticsService.fetch_etf_market_metrics", return_value=high_vol_metrics):
+            vol_out = run_monte_carlo(vol_req)
+        self.assertGreater(vol_out["summary"]["terminalP50"], 23000.0)
+
+        zero_eq_req = {
+            "horizonYears": 1,
+            "startDate": "2026-01-01",
+            "equityHoldings": [],
+            "bondSeed": {
+                "startFixedValue": 0.0,
+                "startIndexedValue": 0.0,
+                "fixedRatePct": 5.0,
+                "indexedRatePct": 5.0,
+                "avgRemainingMonths": 12,
+            },
+            "startInvestedCapital": 0.0,
+            "monthlyDca": 1000.0,
+            "dcaEquityShare": 0.7,
+            "taxMode": "BRUTTO",
+            "realMode": False,
+            "bondRollover": False,
+            "cpiPct": 0.0,
+            "seed": 42,
+        }
+        with patch("app.services.analytics_service.AnalyticsService.fetch_etf_market_metrics", return_value=high_vol_metrics):
+            zero_eq_out = run_monte_carlo(zero_eq_req)
+        self.assertAlmostEqual(zero_eq_out["summary"]["totalInvested"], 12000.0, places=2)
+        self.assertGreater(zero_eq_out["summary"]["terminalP50"], 12000.0)
+
+        holdings_10 = [
+            {"symbol": f"ETF{i}.DE", "categoryCode": "MSCI_WORLD", "valueBase": 5000.0}
+            for i in range(10)
+        ]
+        stream_req = {
+            "horizonYears": 40,
+            "startDate": "2026-01-01",
+            "equityHoldings": holdings_10,
+            "bondSeed": {"startFixedValue": 10000.0, "startIndexedValue": 0.0},
+            "startInvestedCapital": 60000.0,
+            "monthlyDca": 500.0,
+            "dcaEquityShare": 0.8,
+            "taxMode": "BRUTTO",
+            "realMode": False,
+            "bondRollover": True,
+            "cpiPct": 2.5,
+            "seed": 7,
+        }
+        with patch(
+            "app.services.analytics_service.AnalyticsService.fetch_etf_market_metrics",
+            side_effect=lambda sym: {**high_vol_metrics, "symbol": sym, "annualVolatility": 0.15},
+        ):
+            tracemalloc.start()
+            try:
+                run_monte_carlo(stream_req)
+                _, peak_bytes = tracemalloc.get_traced_memory()
+            finally:
+                tracemalloc.stop()
+        self.assertLess(peak_bytes, 50 * 1024 * 1024)
+
 
 if __name__ == "__main__":
     unittest.main()

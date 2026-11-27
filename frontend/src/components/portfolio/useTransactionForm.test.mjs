@@ -1,9 +1,15 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
+import React from 'react';
+import { renderToStaticMarkup } from 'react-dom/server';
+import { Provider } from 'react-redux';
+import { store } from '../../store/store.ts';
+import { portfolioService } from '../../services/portfolio.service.ts';
 import {
   createInitialTransactionFormState,
   transactionFormReducer,
 } from './transactionFormReducer.ts';
+import { useTransactionForm } from './useTransactionForm.ts';
 
 const EQUITY_INST = {
   id: 'inst-etf',
@@ -251,5 +257,256 @@ describe('transactionFormReducer', () => {
       value: 'EDO0534',
     });
     assert.strictEqual(buyWithSeries.transactionDate, '2024-05-01');
+  });
+
+  it('defaults fxFeePct to 0.5 only on cross-currency non-bond transactions and preserves edit fee', () => {
+    const usdEtf = {
+      id: 'inst-usd',
+      symbol: 'AAPL',
+      name: 'Apple',
+      type: 'STOCK',
+      currency: 'USD',
+    };
+    const plnEtf = {
+      id: 'inst-pln',
+      symbol: 'ETFSP500.WA',
+      name: 'Beta S&P 500 PLN',
+      type: 'ETF',
+      currency: 'PLN',
+    };
+
+    const crossState = createInitialTransactionFormState({
+      transaction: null,
+      instrument: usdEtf,
+      cachedInstruments: [usdEtf, plnEtf, BOND_INST],
+      defaultCurrency: 'PLN',
+      todayDate: '2026-04-15',
+    });
+    assert.strictEqual(crossState.fxFeePct, '0.5');
+
+    const editedFee = transactionFormReducer(crossState, {
+      type: 'SET_FIELD',
+      field: 'fxFeePct',
+      value: '0',
+    });
+    assert.strictEqual(editedFee.fxFeePct, '0');
+
+    const switchedToPln = transactionFormReducer(crossState, {
+      type: 'SELECT_INSTRUMENT',
+      instrument: plnEtf,
+    });
+    assert.strictEqual(switchedToPln.fxFeePct, '0');
+
+    const switchedToBond = transactionFormReducer(crossState, {
+      type: 'SELECT_INSTRUMENT',
+      instrument: BOND_INST,
+    });
+    assert.strictEqual(switchedToBond.fxFeePct, '0');
+
+    const switchedBackToUsd = transactionFormReducer(switchedToBond, {
+      type: 'SELECT_INSTRUMENT',
+      instrument: usdEtf,
+    });
+    assert.strictEqual(switchedBackToUsd.fxFeePct, '0.5');
+
+    const editHydrated = createInitialTransactionFormState({
+      transaction: {
+        id: 'tx-fx-1',
+        instrumentId: 'inst-usd',
+        transactionType: 'BUY',
+        quantity: 5,
+        price: 100,
+        commission: 0,
+        currency: 'USD',
+        exchangeRate: 1,
+        executedAt: '2026-04-10T12:00:00',
+        fxFeePct: 0.25,
+      },
+      instrument: usdEtf,
+      cachedInstruments: [usdEtf],
+      defaultCurrency: 'PLN',
+      todayDate: '2026-04-15',
+    });
+    assert.strictEqual(editHydrated.fxFeePct, '0.25');
+
+    const editMissingFee = createInitialTransactionFormState({
+      transaction: {
+        id: 'tx-fx-2',
+        instrumentId: 'inst-usd',
+        transactionType: 'BUY',
+        quantity: 5,
+        price: 100,
+        commission: 0,
+        currency: 'USD',
+        exchangeRate: 1,
+        executedAt: '2026-04-10T12:00:00',
+      },
+      instrument: usdEtf,
+      cachedInstruments: [usdEtf],
+      defaultCurrency: 'PLN',
+      todayDate: '2026-04-15',
+    });
+    assert.strictEqual(editMissingFee.fxFeePct, '0');
+  });
+
+  it('updates fxFeePct on SET_FIELD currency toggle while preserving custom non-zero fee', () => {
+    const basePln = createInitialTransactionFormState({
+      transaction: null,
+      instrument: {
+        id: 'inst-pln',
+        symbol: 'PKO.WA',
+        name: 'PKO BP',
+        type: 'STOCK',
+        currency: 'PLN',
+      },
+      defaultCurrency: 'PLN',
+      todayDate: '2026-04-15',
+    });
+    assert.strictEqual(basePln.fxFeePct, '0');
+
+    const switchedToUsd = transactionFormReducer(basePln, {
+      type: 'SET_FIELD',
+      field: 'currency',
+      value: 'USD',
+    });
+    assert.strictEqual(switchedToUsd.currency, 'USD');
+    assert.strictEqual(switchedToUsd.fxFeePct, '0.5');
+
+    const withCustomFee = transactionFormReducer(switchedToUsd, {
+      type: 'SET_FIELD',
+      field: 'fxFeePct',
+      value: '0.75',
+    });
+    const switchedToEur = transactionFormReducer(withCustomFee, {
+      type: 'SET_FIELD',
+      field: 'currency',
+      value: 'EUR',
+    });
+    assert.strictEqual(switchedToEur.currency, 'EUR');
+    assert.strictEqual(switchedToEur.fxFeePct, '0.75');
+
+    const switchedBackToDefault = transactionFormReducer(switchedToEur, {
+      type: 'SET_FIELD',
+      field: 'currency',
+      value: 'PLN',
+    });
+    assert.strictEqual(switchedBackToDefault.fxFeePct, '0');
+
+    const bondState = createInitialTransactionFormState({
+      transaction: null,
+      instrument: BOND_INST,
+      defaultCurrency: 'PLN',
+      todayDate: '2026-04-15',
+    });
+    const bondCurrencyChanged = transactionFormReducer(bondState, {
+      type: 'SET_FIELD',
+      field: 'currency',
+      value: 'USD',
+    });
+    assert.strictEqual(bondCurrencyChanged.fxFeePct, '0');
+  });
+});
+
+describe('useTransactionForm executedAt formatting', () => {
+  function mountHook(params) {
+    let captured;
+    function Harness() {
+      captured = useTransactionForm(params);
+      return null;
+    }
+    renderToStaticMarkup(
+      React.createElement(
+        Provider,
+        { store },
+        React.createElement(Harness)
+      )
+    );
+    return captured;
+  }
+
+  it('formats executedAt with local HH:mm:ss for today, noon for past dates, and preserves edit timestamp', async () => {
+    const origCreate = portfolioService.createTransaction;
+    const origUpdate = portfolioService.updateTransaction;
+    const RealDate = globalThis.Date;
+    const capturedRequests = [];
+
+    class FixedTodayDate extends RealDate {
+      constructor(...args) {
+        if (args.length === 0) {
+          super(2026, 3, 15, 8, 5, 9, 0);
+        } else {
+          super(...args);
+        }
+      }
+      static now() {
+        return new RealDate(2026, 3, 15, 8, 5, 9, 0).getTime();
+      }
+    }
+
+    portfolioService.createTransaction = async (_portfolioId, req) => {
+      capturedRequests.push(req);
+      return { id: 'tx-created', exchangeRate: 1, ...req };
+    };
+    portfolioService.updateTransaction = async (_portfolioId, transactionId, req) => {
+      capturedRequests.push({ transactionId, ...req });
+      return { id: transactionId, exchangeRate: 1, ...req };
+    };
+
+    try {
+      globalThis.Date = FixedTodayDate;
+
+      const todayHook = mountHook({
+        onClose: () => {},
+        portfolioId: 'p-1',
+        defaultCurrency: 'PLN',
+        instrument: EQUITY_INST,
+      });
+      await todayHook.handleSubmit({ preventDefault() {} });
+      assert.strictEqual(capturedRequests[0].executedAt, '2026-04-15T08:05:09');
+
+      const editPreservedHook = mountHook({
+        onClose: () => {},
+        portfolioId: 'p-1',
+        defaultCurrency: 'PLN',
+        instrument: EQUITY_INST,
+        transaction: {
+          id: 'tx-edit-1',
+          instrumentId: EQUITY_INST.id,
+          transactionType: 'BUY',
+          quantity: 2,
+          price: 100,
+          commission: 0,
+          currency: 'EUR',
+          exchangeRate: 1,
+          executedAt: '2026-04-10T09:15:30',
+        },
+      });
+      await editPreservedHook.handleSubmit({ preventDefault() {} });
+      assert.strictEqual(capturedRequests[1].executedAt, '2026-04-10T09:15:30');
+
+      const pastNoonHook = mountHook({
+        onClose: () => {},
+        portfolioId: 'p-1',
+        defaultCurrency: 'PLN',
+        instrument: EQUITY_INST,
+        transaction: {
+          id: 'tx-edit-2',
+          instrumentId: EQUITY_INST.id,
+          transactionType: 'BUY',
+          quantity: 2,
+          price: 100,
+          commission: 0,
+          currency: 'EUR',
+          exchangeRate: 1,
+          executedAt: '2026-04-10',
+        },
+      });
+      await pastNoonHook.handleSubmit({ preventDefault() {} });
+      assert.strictEqual(capturedRequests[2].executedAt, '2026-04-10T12:00:00');
+    } finally {
+      globalThis.Date = RealDate;
+      portfolioService.createTransaction = origCreate;
+      portfolioService.updateTransaction = origUpdate;
+    }
   });
 });

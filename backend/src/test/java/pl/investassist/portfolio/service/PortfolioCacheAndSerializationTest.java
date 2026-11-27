@@ -49,6 +49,7 @@ import java.util.UUID;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyCollection;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.inOrder;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.times;
@@ -181,13 +182,16 @@ class PortfolioCacheAndSerializationTest {
         when(valueOps.increment(expectedKey))
                 .thenThrow(new RuntimeException("Redis connection lost"))
                 .thenReturn(1L);
+        when(redisTemplate.execute(any(org.springframework.data.redis.core.script.RedisScript.class), eq(List.of(expectedKey)), any(), any()))
+                .thenReturn(2L);
 
         PortfolioCacheService service = new PortfolioCacheService(redisTemplate);
         service.evictPortfolio(portfolioId);
         assertThat(service.versionOf(portfolioId)).isEqualTo("1");
 
         service.evictPortfolio(portfolioId);
-        verify(valueOps).set(expectedKey, "2", java.time.Duration.ofHours(24));
+        verify(valueOps, org.mockito.Mockito.never()).set(any(), any(), any(java.time.Duration.class));
+        verify(redisTemplate).execute(any(org.springframework.data.redis.core.script.RedisScript.class), eq(List.of(expectedKey)), any(), any());
         when(valueOps.get(expectedKey)).thenReturn("2");
         assertThat(service.versionOf(portfolioId)).isEqualTo("2");
     }
@@ -337,6 +341,219 @@ class PortfolioCacheAndSerializationTest {
             assertThat(second.isDegraded()).isFalse();
             verify(marketDataPort, times(2)).getBatchQuotes(anyCollection());
         }
+    }
+
+    @Test
+    void springCacheable_doesNotCacheDegradedTimelineOrAnnualReport() {
+        TransactionRepository txRepo = mock(TransactionRepository.class);
+        InstrumentRepository instRepo = mock(InstrumentRepository.class);
+        MarketDataPort marketDataPort = mock(MarketDataPort.class);
+        PlatformTransactionManager txManager = mock(PlatformTransactionManager.class);
+
+        Portfolio portfolio = samplePortfolio(UUID.randomUUID());
+        Instrument etf = sampleInstrument("SXR8.DE", InstrumentType.ETF, Currency.EUR);
+        Transaction buy = sampleTx(portfolio, etf.getId(), TransactionType.BUY,
+                new BigDecimal("1"), new BigDecimal("400"), Currency.EUR, new BigDecimal("4.20"),
+                LocalDateTime.of(2026, 1, 10, 10, 0), null, null, null);
+
+        when(txManager.getTransaction(any())).thenAnswer(inv -> new SimpleTransactionStatus());
+        when(txRepo.findAllByPortfolioIdOrderByExecutedAtAsc(portfolio.getId())).thenReturn(List.of(buy));
+        when(instRepo.findAllById(anyCollection())).thenReturn(List.of(etf));
+        when(marketDataPort.getBatchQuotes(anyCollection())).thenThrow(new MarketDataUnavailableException("Down"));
+        when(marketDataPort.getBatchHistory(anyCollection(), any())).thenReturn(Map.of());
+        when(marketDataPort.getBatchFxHistory(anyCollection(), any(), any())).thenReturn(Map.of(
+                "EUR:PLN", new MarketDataPort.FxSeries("EUR", "PLN", new BigDecimal("4.25"), new TreeMap<>(Map.of(
+                        LocalDate.of(2026, 1, 1), new BigDecimal("4.25"),
+                        LocalDate.of(2026, 4, 15), new BigDecimal("4.25"))))));
+        when(marketDataPort.getCurrentCpi()).thenReturn(new BigDecimal("3.0"));
+        when(marketDataPort.getInflation()).thenReturn(new MarketDataPort.InflationSnapshot(new BigDecimal("3.0"), Map.of()));
+
+        try (AnnotationConfigApplicationContext ctx = new AnnotationConfigApplicationContext()) {
+            ctx.registerBean(TransactionRepository.class, () -> txRepo);
+            ctx.registerBean(InstrumentRepository.class, () -> instRepo);
+            ctx.registerBean(MarketDataPort.class, () -> marketDataPort);
+            ctx.registerBean(PlatformTransactionManager.class, () -> txManager);
+            ctx.register(TestCacheWiringConfig.class);
+            ctx.refresh();
+
+            PortfolioAnalyticsService analytics = ctx.getBean(PortfolioAnalyticsService.class);
+            analytics.getTimeline(portfolio, Timeframe.YTD, TaxMode.NETTO);
+            analytics.getAnnualReport(portfolio, 2026, TaxMode.NETTO);
+
+            org.mockito.Mockito.doReturn(Map.of(
+                    "SXR8.DE", new MarketDataPort.MarketQuote("SXR8.DE", new BigDecimal("450"), new BigDecimal("445"), "EUR", false)))
+                    .when(marketDataPort).getBatchQuotes(anyCollection());
+
+            PortfolioTimelineResponse recoveredTimeline = analytics.getTimeline(portfolio, Timeframe.YTD, TaxMode.NETTO);
+            AnnualReportResponse recoveredReport = analytics.getAnnualReport(portfolio, 2026, TaxMode.NETTO);
+
+            assertThat(recoveredTimeline.points().getLast().value()).isGreaterThan(new BigDecimal("1500.00"));
+            assertThat(recoveredReport.ytdPortfolioValue()).isGreaterThan(new BigDecimal("1500.00"));
+            verify(marketDataPort, times(4)).getBatchQuotes(anyCollection());
+        }
+    }
+
+    @Test
+    void springCacheable_doesNotCacheDegradedTimelineOrPriorYearReportWhenBatchHistoryFails() {
+        TransactionRepository txRepo = mock(TransactionRepository.class);
+        InstrumentRepository instRepo = mock(InstrumentRepository.class);
+        MarketDataPort marketDataPort = mock(MarketDataPort.class);
+        PlatformTransactionManager txManager = mock(PlatformTransactionManager.class);
+
+        Portfolio portfolio = samplePortfolio(UUID.randomUUID());
+        Instrument etf = sampleInstrument("SXR8.DE", InstrumentType.ETF, Currency.EUR);
+        Transaction buy = sampleTx(portfolio, etf.getId(), TransactionType.BUY,
+                new BigDecimal("1"), new BigDecimal("400"), Currency.EUR, new BigDecimal("4.20"),
+                LocalDateTime.of(2025, 1, 10, 10, 0), null, null, null);
+
+        when(txManager.getTransaction(any())).thenAnswer(inv -> new SimpleTransactionStatus());
+        when(txRepo.findAllByPortfolioIdOrderByExecutedAtAsc(portfolio.getId())).thenReturn(List.of(buy));
+        when(instRepo.findAllById(anyCollection())).thenReturn(List.of(etf));
+        when(marketDataPort.getBatchQuotes(anyCollection())).thenReturn(Map.of(
+                "SXR8.DE", new MarketDataPort.MarketQuote("SXR8.DE", new BigDecimal("450"), new BigDecimal("445"), "EUR", false)));
+        when(marketDataPort.getBatchHistory(anyCollection(), any()))
+                .thenThrow(new MarketDataUnavailableException("History down"));
+        when(marketDataPort.getBatchFxHistory(anyCollection(), any(), any())).thenReturn(Map.of(
+                "EUR:PLN", new MarketDataPort.FxSeries("EUR", "PLN", new BigDecimal("4.25"), new TreeMap<>(Map.of(
+                        LocalDate.of(2025, 1, 1), new BigDecimal("4.25"),
+                        LocalDate.of(2025, 12, 31), new BigDecimal("4.25"),
+                        LocalDate.of(2026, 4, 15), new BigDecimal("4.25"))))));
+        when(marketDataPort.getCurrentCpi()).thenReturn(new BigDecimal("3.0"));
+        when(marketDataPort.getInflation()).thenReturn(new MarketDataPort.InflationSnapshot(new BigDecimal("3.0"), Map.of()));
+
+        try (AnnotationConfigApplicationContext ctx = new AnnotationConfigApplicationContext()) {
+            ctx.registerBean(TransactionRepository.class, () -> txRepo);
+            ctx.registerBean(InstrumentRepository.class, () -> instRepo);
+            ctx.registerBean(MarketDataPort.class, () -> marketDataPort);
+            ctx.registerBean(PlatformTransactionManager.class, () -> txManager);
+            ctx.register(TestCacheWiringConfig.class);
+            ctx.refresh();
+
+            PortfolioAnalyticsService analytics = ctx.getBean(PortfolioAnalyticsService.class);
+
+            PortfolioTimelineResponse degradedTimeline =
+                    analytics.getTimeline(portfolio, Timeframe.YTD, TaxMode.NETTO);
+            AnnualReportResponse degradedPriorReport =
+                    analytics.getAnnualReport(portfolio, 2025, TaxMode.NETTO);
+
+            assertThat(degradedTimeline.isDegraded()).isTrue();
+            assertThat(degradedPriorReport.isDegraded()).isTrue();
+            verify(marketDataPort, times(1)).getBatchQuotes(anyCollection());
+
+            TreeMap<LocalDate, BigDecimal> prices = new TreeMap<>(Map.of(
+                    LocalDate.of(2025, 1, 10), new BigDecimal("400"),
+                    LocalDate.of(2025, 12, 31), new BigDecimal("430"),
+                    LocalDate.of(2026, 4, 14), new BigDecimal("445")));
+            org.mockito.Mockito.doReturn(Map.of(
+                    "SXR8.DE", new MarketDataPort.PriceHistory("SXR8.DE", "EUR", prices)))
+                    .when(marketDataPort).getBatchHistory(anyCollection(), any());
+
+            PortfolioTimelineResponse recoveredTimeline =
+                    analytics.getTimeline(portfolio, Timeframe.YTD, TaxMode.NETTO);
+            AnnualReportResponse recoveredPriorReport =
+                    analytics.getAnnualReport(portfolio, 2025, TaxMode.NETTO);
+
+            assertThat(recoveredTimeline.isDegraded()).isFalse();
+            assertThat(recoveredPriorReport.isDegraded()).isFalse();
+            assertThat(recoveredPriorReport.ytdPortfolioValue()).isEqualByComparingTo("1799.48");
+            verify(marketDataPort, times(4)).getBatchHistory(anyCollection(), any());
+            verify(marketDataPort, times(2)).getBatchQuotes(anyCollection());
+        }
+    }
+
+    @Test
+    void getValuation_fetchesCpiAndNbpRatesForClosedBondPositions() {
+        TransactionRepository txRepo = mock(TransactionRepository.class);
+        InstrumentRepository instRepo = mock(InstrumentRepository.class);
+        MarketDataPort marketDataPort = mock(MarketDataPort.class);
+        PlatformTransactionManager txManager = mock(PlatformTransactionManager.class);
+        when(txManager.getTransaction(any())).thenAnswer(inv -> new SimpleTransactionStatus());
+
+        Clock fixedClock = Clock.fixed(Instant.parse("2026-04-15T12:00:00Z"), ZoneOffset.UTC);
+        PortfolioAnalyticsService service = new PortfolioAnalyticsService(
+                txRepo, instRepo, marketDataPort, fixedClock, txManager);
+
+        Portfolio coiPortfolio = samplePortfolio(UUID.randomUUID());
+        Instrument coi = sampleInstrument("PL_BOND", InstrumentType.BOND, Currency.PLN);
+        Transaction coiBuy = sampleTx(coiPortfolio, coi.getId(), TransactionType.BUY,
+                new BigDecimal("10"), new BigDecimal("100"), Currency.PLN, BigDecimal.ONE,
+                LocalDateTime.of(2024, 1, 10, 10, 0), "COI0128",
+                new BigDecimal("6.50"), new BigDecimal("1.25"));
+        coiBuy.setTermMonths(48);
+        Transaction coiSell = sampleTx(coiPortfolio, coi.getId(), TransactionType.SELL,
+                new BigDecimal("10"), new BigDecimal("100"), Currency.PLN, BigDecimal.ONE,
+                LocalDateTime.of(2026, 3, 1, 10, 0), "COI0128",
+                null, null);
+
+        when(txRepo.findAllByPortfolioIdOrderByExecutedAtAsc(coiPortfolio.getId()))
+                .thenReturn(List.of(coiBuy, coiSell));
+        when(instRepo.findAllById(anyCollection())).thenReturn(List.of(coi));
+        when(marketDataPort.getInflation()).thenReturn(new MarketDataPort.InflationSnapshot(
+                new BigDecimal("3.00"),
+                Map.of(2024, Map.of(11, new BigDecimal("4.75")))));
+        when(marketDataPort.getNbpReferenceRates()).thenReturn(new TreeMap<>());
+
+        PortfolioValuationResponse coiValuation = service.getValuation(coiPortfolio, TaxMode.NETTO);
+        verify(marketDataPort, times(1)).getInflation();
+        verify(marketDataPort, times(1)).getNbpReferenceRates();
+        assertThat(coiValuation.isDegraded()).isFalse();
+        assertThat(coiValuation.summary().dividendsTotal()).isEqualByComparingTo("125.00");
+        assertThat(coiValuation.summary().taxPaid()).isEqualByComparingTo("23.75");
+        assertThat(coiValuation.summary().netProfit()).isEqualByComparingTo("101.25");
+        assertThat(coiValuation.summary().xirrPct()).isNotNull().isPositive();
+
+        Portfolio rorPortfolio = samplePortfolio(UUID.randomUUID());
+        Instrument ror = sampleInstrument("PL_BOND", InstrumentType.BOND, Currency.PLN);
+        Transaction rorBuy = sampleTx(rorPortfolio, ror.getId(), TransactionType.BUY,
+                new BigDecimal("10"), new BigDecimal("100"), Currency.PLN, BigDecimal.ONE,
+                LocalDateTime.of(2025, 12, 10, 10, 0), "ROR0127",
+                new BigDecimal("5.00"), BigDecimal.ZERO);
+        rorBuy.setTermMonths(12);
+        Transaction rorSell = sampleTx(rorPortfolio, ror.getId(), TransactionType.SELL,
+                new BigDecimal("10"), new BigDecimal("100"), Currency.PLN, BigDecimal.ONE,
+                LocalDateTime.of(2026, 3, 1, 10, 0), "ROR0127",
+                null, null);
+
+        when(txRepo.findAllByPortfolioIdOrderByExecutedAtAsc(rorPortfolio.getId()))
+                .thenReturn(List.of(rorBuy, rorSell));
+        when(instRepo.findAllById(anyCollection())).thenReturn(List.of(ror));
+        TreeMap<LocalDate, BigDecimal> nbpRates = new TreeMap<>();
+        nbpRates.put(LocalDate.of(2025, 12, 1), new BigDecimal("5.00"));
+        nbpRates.put(LocalDate.of(2026, 1, 1), new BigDecimal("4.50"));
+        nbpRates.put(LocalDate.of(2026, 2, 1), new BigDecimal("4.00"));
+        when(marketDataPort.getNbpReferenceRates()).thenReturn(nbpRates);
+
+        PortfolioValuationResponse rorValuation = service.getValuation(rorPortfolio, TaxMode.NETTO);
+        verify(marketDataPort, times(2)).getInflation();
+        verify(marketDataPort, times(2)).getNbpReferenceRates();
+        assertThat(rorValuation.isDegraded()).isFalse();
+        assertThat(rorValuation.summary().dividendsTotal())
+                .isCloseTo(new BigDecimal("8.07"), org.assertj.core.data.Offset.offset(new BigDecimal("0.02")));
+        assertThat(rorValuation.summary().netProfit())
+                .isCloseTo(new BigDecimal("6.54"), org.assertj.core.data.Offset.offset(new BigDecimal("0.02")));
+    }
+
+    @Test
+    @SuppressWarnings("unchecked")
+    void evictPortfolio_recoversStaleRedisVersionAtomicallyViaLuaScript() {
+        StringRedisTemplate redisTemplate = mock(StringRedisTemplate.class);
+        ValueOperations<String, String> valueOps = mock(ValueOperations.class);
+        when(redisTemplate.opsForValue()).thenReturn(valueOps);
+
+        UUID portfolioId = UUID.randomUUID();
+        String expectedKey = CacheConfig.KEY_PREFIX + "portfolioVersion::" + portfolioId;
+        when(valueOps.increment(expectedKey))
+                .thenThrow(new RuntimeException("Redis connection lost"))
+                .thenReturn(1L);
+        when(redisTemplate.execute(any(org.springframework.data.redis.core.script.RedisScript.class), any(List.class), any(), any()))
+                .thenReturn(2L);
+
+        PortfolioCacheService service = new PortfolioCacheService(redisTemplate);
+        service.evictPortfolio(portfolioId);
+        service.evictPortfolio(portfolioId);
+
+        verify(valueOps, org.mockito.Mockito.never()).set(any(), any(), any(java.time.Duration.class));
+        verify(redisTemplate).execute(any(org.springframework.data.redis.core.script.RedisScript.class), eq(List.of(expectedKey)), any(), any());
     }
 
     @Configuration

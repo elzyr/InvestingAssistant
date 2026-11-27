@@ -990,6 +990,16 @@ class ExpenseClassifierAndPiiTest {
     assertThat(result.get(2).category()).isEqualTo(ExpenseCategory.INCOME);
   }
 
+  @Test
+  void piiScrubber_scrubsPolishNipAndShortIbanTokens() {
+    String raw = "FAKTURA NIP 123-456-32-18 RACHUNEK PL1234567890, BIEDRONKA";
+    String scrubbed = scrubber.scrub(raw);
+    assertThat(scrubbed)
+        .contains("BIEDRONKA")
+        .doesNotContain("123-456-32-18")
+        .doesNotContain("PL1234567890");
+  }
+
   private static final class StubLlmPort implements ExpenseLlmPort {
     private final boolean enabled;
     private Map<String, LlmCategorySuggestion> suggestions = Map.of();

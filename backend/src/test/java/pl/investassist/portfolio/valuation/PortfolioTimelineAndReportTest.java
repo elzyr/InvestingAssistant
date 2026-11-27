@@ -511,7 +511,7 @@ class PortfolioTimelineAndReportTest {
 
         double noDietz = MetricsCalculator.calculateTwr(List.of(
                 new MetricsCalculator.TwrPeriod(100.0, 150.0, 200.0)));
-        assertThat(noDietz).isCloseTo(-1.0, org.assertj.core.data.Offset.offset(1e-9));
+        assertThat(noDietz).isCloseTo(-0.5, org.assertj.core.data.Offset.offset(1e-9));
     }
 
     @Test
@@ -593,5 +593,184 @@ class PortfolioTimelineAndReportTest {
                 lots, flows, partialCpi, 1100.0, 4.0, 0.10, LocalDateTime.of(2025, 3, 1, 0, 0));
         assertThat(fallbackMetrics).isNotNull();
         assertThat(fallbackMetrics.realProfitAmount()).isGreaterThan(0.0);
+    }
+
+    @Test
+    void twr_handlesLargeDcaDepositWithoutFalseTotalWipeout() {
+        double twr = MetricsCalculator.calculateTwr(List.of(
+                new MetricsCalculator.TwrPeriod(1000.0, 9900.0, 10000.0)));
+        assertThat(twr).isGreaterThan(-0.5).isLessThan(0.0);
+        assertThat(twr).isCloseTo(-0.10, org.assertj.core.data.Offset.offset(0.05));
+    }
+
+    @Test
+    void stepValuator_includesCompletedBondCouponsAndTaxConsistentlyInTimelineAndReport() {
+        Portfolio p = new Portfolio();
+        p.setId(UUID.randomUUID());
+        p.setUserId(UUID.randomUUID());
+        p.setBaseCurrency(Currency.PLN);
+
+        Instrument coi = new Instrument();
+        coi.setId(UUID.randomUUID());
+        coi.setSymbol("PL_BOND");
+        coi.setName("Obligacje COI");
+        coi.setType(InstrumentType.BOND);
+        coi.setCurrency(Currency.PLN);
+
+        Transaction buy = new Transaction();
+        buy.setId(UUID.randomUUID());
+        buy.setPortfolio(p);
+        buy.setInstrumentId(coi.getId());
+        buy.setTransactionType(TransactionType.BUY);
+        buy.setQuantity(new BigDecimal("20"));
+        buy.setPrice(new BigDecimal("100"));
+        buy.setCommission(BigDecimal.ZERO);
+        buy.setCurrency(Currency.PLN);
+        buy.setExchangeRate(BigDecimal.ONE);
+        buy.setBaseAmount(new BigDecimal("2000"));
+        buy.setExchangeRateToBase(BigDecimal.ONE);
+        buy.setExecutedAt(LocalDateTime.of(2025, 1, 10, 10, 0));
+        buy.setSeriesName("COI0129");
+        buy.setBondRate(new BigDecimal("10.00"));
+        buy.setBondMargin(new BigDecimal("1.50"));
+        buy.setTermMonths(48);
+
+        Map<Integer, Map<Integer, BigDecimal>> monthlyCpi = Map.of(
+                2025, Map.of(11, new BigDecimal("3.00"), 12, new BigDecimal("3.00")));
+        LocalDateTime now = LocalDateTime.of(2026, 4, 15, 14, 0);
+
+        PortfolioValuationResponse val = ValuationEngine.evaluate(
+                p, List.of(buy), Map.of(coi.getId(), coi), Map.of(), Map.of(),
+                new BigDecimal("3.00"), monthlyCpi, new java.util.TreeMap<>(), TaxMode.NETTO, now);
+
+        PortfolioTimelineResponse timeline = TimelineEngine.build(
+                p, List.of(buy), Map.of(coi.getId(), coi), Map.of(), Map.of(), Map.of(),
+                new BigDecimal("3.00"), monthlyCpi, new java.util.TreeMap<>(), Timeframe.MAX, TaxMode.NETTO, now);
+
+        AnnualReportResponse report = AnnualReportEngine.build(
+                p, List.of(buy), Map.of(coi.getId(), coi), Map.of(), Map.of(), Map.of(),
+                new pl.investassist.portfolio.port.MarketDataPort.InflationSnapshot(new BigDecimal("3.00"), monthlyCpi),
+                2026, TaxMode.NETTO, now);
+
+        assertThat(timeline.points().getLast().netProfit()).isEqualByComparingTo(val.summary().netProfit());
+        assertThat(timeline.points().getLast().value()).isEqualByComparingTo(val.summary().totalValue());
+        assertThat(report.months().get(3).profitNet()).isEqualByComparingTo(val.summary().netProfit());
+
+        Transaction partialSell = new Transaction();
+        partialSell.setId(UUID.randomUUID());
+        partialSell.setPortfolio(p);
+        partialSell.setInstrumentId(coi.getId());
+        partialSell.setTransactionType(TransactionType.SELL);
+        partialSell.setQuantity(new BigDecimal("10"));
+        partialSell.setPrice(new BigDecimal("100"));
+        partialSell.setCommission(BigDecimal.ZERO);
+        partialSell.setCurrency(Currency.PLN);
+        partialSell.setExchangeRate(BigDecimal.ONE);
+        partialSell.setBaseAmount(new BigDecimal("1000"));
+        partialSell.setExchangeRateToBase(BigDecimal.ONE);
+        partialSell.setExecutedAt(LocalDateTime.of(2026, 3, 1, 10, 0));
+        partialSell.setSeriesName("COI0129");
+
+        PortfolioValuationResponse partialVal = ValuationEngine.evaluate(
+                p, List.of(buy, partialSell), Map.of(coi.getId(), coi), Map.of(), Map.of(),
+                new BigDecimal("3.00"), monthlyCpi, new java.util.TreeMap<>(), TaxMode.NETTO, now);
+        PortfolioTimelineResponse partialTimeline = TimelineEngine.build(
+                p, List.of(buy, partialSell), Map.of(coi.getId(), coi), Map.of(), Map.of(), Map.of(),
+                new BigDecimal("3.00"), monthlyCpi, new java.util.TreeMap<>(), Timeframe.MAX, TaxMode.NETTO, now);
+        AnnualReportResponse partialReport = AnnualReportEngine.build(
+                p, List.of(buy, partialSell), Map.of(coi.getId(), coi), Map.of(), Map.of(), Map.of(),
+                new pl.investassist.portfolio.port.MarketDataPort.InflationSnapshot(new BigDecimal("3.00"), monthlyCpi),
+                2026, TaxMode.NETTO, now);
+
+        assertThat(partialVal.summary().dividendsTotal()).isEqualByComparingTo("200.00");
+        assertThat(partialTimeline.points().getLast().netProfit()).isEqualByComparingTo(partialVal.summary().netProfit());
+        assertThat(partialTimeline.points().getLast().value()).isEqualByComparingTo(partialVal.summary().totalValue());
+        assertThat(partialReport.months().get(3).profitNet()).isEqualByComparingTo(partialVal.summary().netProfit());
+        assertThat(partialReport.months().get(3).portfolioValue()).isEqualByComparingTo(partialVal.summary().totalValue());
+
+        Transaction fullSell = new Transaction();
+        fullSell.setId(UUID.randomUUID());
+        fullSell.setPortfolio(p);
+        fullSell.setInstrumentId(coi.getId());
+        fullSell.setTransactionType(TransactionType.SELL);
+        fullSell.setQuantity(new BigDecimal("20"));
+        fullSell.setPrice(new BigDecimal("100"));
+        fullSell.setCommission(BigDecimal.ZERO);
+        fullSell.setCurrency(Currency.PLN);
+        fullSell.setExchangeRate(BigDecimal.ONE);
+        fullSell.setBaseAmount(new BigDecimal("2000"));
+        fullSell.setExchangeRateToBase(BigDecimal.ONE);
+        fullSell.setExecutedAt(LocalDateTime.of(2026, 3, 1, 10, 0));
+        fullSell.setSeriesName("COI0129");
+
+        PortfolioValuationResponse fullVal = ValuationEngine.evaluate(
+                p, List.of(buy, fullSell), Map.of(coi.getId(), coi), Map.of(), Map.of(),
+                new BigDecimal("3.00"), monthlyCpi, new java.util.TreeMap<>(), TaxMode.NETTO, now);
+        PortfolioTimelineResponse fullTimeline = TimelineEngine.build(
+                p, List.of(buy, fullSell), Map.of(coi.getId(), coi), Map.of(), Map.of(), Map.of(),
+                new BigDecimal("3.00"), monthlyCpi, new java.util.TreeMap<>(), Timeframe.MAX, TaxMode.NETTO, now);
+        AnnualReportResponse fullReport = AnnualReportEngine.build(
+                p, List.of(buy, fullSell), Map.of(coi.getId(), coi), Map.of(), Map.of(), Map.of(),
+                new pl.investassist.portfolio.port.MarketDataPort.InflationSnapshot(new BigDecimal("3.00"), monthlyCpi),
+                2026, TaxMode.NETTO, now);
+
+        assertThat(fullVal.summary().dividendsTotal()).isEqualByComparingTo("200.00");
+        assertThat(fullVal.summary().taxPaid()).isEqualByComparingTo("38.00");
+        assertThat(fullVal.summary().netProfit()).isEqualByComparingTo("162.00");
+        assertThat(fullTimeline.points().getLast().netProfit()).isEqualByComparingTo("162.00");
+        assertThat(fullTimeline.points().getLast().value()).isEqualByComparingTo("0.00");
+        assertThat(fullReport.months().get(3).profitNet()).isEqualByComparingTo("162.00");
+        assertThat(fullReport.months().get(3).portfolioValue()).isEqualByComparingTo("0.00");
+    }
+
+    @Test
+    void annualReport_usesCurrentYearCpiFallbackForRealProfitPctWhenLatestMonthCpiMissing() {
+        Portfolio p = new Portfolio();
+        p.setId(UUID.randomUUID());
+        p.setUserId(UUID.randomUUID());
+        p.setBaseCurrency(Currency.PLN);
+
+        Instrument etf = new Instrument();
+        etf.setId(UUID.randomUUID());
+        etf.setSymbol("SXR8.DE");
+        etf.setName("S&P 500");
+        etf.setType(InstrumentType.ETF);
+        etf.setCurrency(Currency.PLN);
+
+        Transaction buy = new Transaction();
+        buy.setId(UUID.randomUUID());
+        buy.setPortfolio(p);
+        buy.setInstrumentId(etf.getId());
+        buy.setTransactionType(TransactionType.BUY);
+        buy.setQuantity(new BigDecimal("10"));
+        buy.setPrice(new BigDecimal("100"));
+        buy.setCommission(BigDecimal.ZERO);
+        buy.setCurrency(Currency.PLN);
+        buy.setExchangeRate(BigDecimal.ONE);
+        buy.setBaseAmount(new BigDecimal("1000"));
+        buy.setExecutedAt(LocalDateTime.of(2026, 2, 10, 9, 0));
+
+        FakeMarketDataPort market = new FakeMarketDataPort()
+                .withQuote("SXR8.DE", 120.0, 118.0, "PLN")
+                .withHistory("SXR8.DE", "PLN", Map.of(
+                        LocalDate.of(2026, 2, 28), new BigDecimal("105"),
+                        LocalDate.of(2026, 3, 31), new BigDecimal("112")))
+                .withCurrentCpi(new BigDecimal("3.6"))
+                .withMonthlyCpi(2026, 2, 3.8)
+                .withMonthlyCpi(2026, 3, 3.6);
+
+        AnnualReportResponse report = AnnualReportEngine.build(
+                p,
+                List.of(buy),
+                Map.of(etf.getId(), etf),
+                market.getBatchQuotes(List.of("SXR8.DE")),
+                market.getBatchHistory(List.of("SXR8.DE"), LocalDate.of(2026, 1, 1)),
+                Map.of(),
+                market.getInflation(),
+                2026,
+                TaxMode.NETTO,
+                NOW);
+
+        assertThat(report.months().get(3).realProfitPct()).isNotNull().isPositive();
     }
 }

@@ -8,13 +8,22 @@ interface CustomAxiosRequestConfig extends InternalAxiosRequestConfig {
 const API_BASE_URL = import.meta.env?.VITE_API_BASE_URL || '';
 
 let memoryToken: string | null = null;
+let authEpoch = 0;
 let onAuthExpiredCallback: (() => void) | null = null;
 
 export const setOnAuthExpired = (callback: () => void): void => {
   onAuthExpiredCallback = callback;
 };
 
-export const setAccessToken = (token: string | null): void => {
+export const getAuthEpoch = (): number => authEpoch;
+
+export const setAccessToken = (token: string | null, expectedEpoch?: number): void => {
+  if (expectedEpoch !== undefined && expectedEpoch !== authEpoch) {
+    return;
+  }
+  if (expectedEpoch === undefined) {
+    authEpoch += 1;
+  }
   memoryToken = token;
 };
 
@@ -59,6 +68,7 @@ let refreshPromise: Promise<AuthResponse> | null = null;
 
 export const refreshAuthResponse = (): Promise<AuthResponse> => {
   if (!refreshPromise) {
+    const requestEpoch = authEpoch;
     refreshPromise = axios
       .post<AuthResponse>(
         `${API_BASE_URL}/api/auth/refresh`,
@@ -67,12 +77,12 @@ export const refreshAuthResponse = (): Promise<AuthResponse> => {
       )
       .then((res) => {
         const authData = res.data;
-        setAccessToken(authData.accessToken);
+        setAccessToken(authData.accessToken, requestEpoch);
         return authData;
       })
       .catch((err) => {
         const status = axios.isAxiosError(err) ? err.response?.status : undefined;
-        if (status === 401 || status === 403) {
+        if ((status === 401 || status === 403) && requestEpoch === authEpoch) {
           setAccessToken(null);
           onAuthExpiredCallback?.();
         }

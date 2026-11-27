@@ -319,7 +319,7 @@ class PortfolioValuationTest {
         assertThat(withoutCpi.positions()).hasSize(1);
         assertThat(withoutCpi.positions().getFirst().isCpiUnavailable()).isTrue();
 
-        Map<Integer, Map<Integer, BigDecimal>> monthlyCpi = Map.of(2025, Map.of(5, new BigDecimal("3.6")));
+        Map<Integer, Map<Integer, BigDecimal>> monthlyCpi = Map.of(2025, Map.of(4, new BigDecimal("3.6")));
         PortfolioValuationResponse withCpi = ValuationEngine.evaluate(
                 p, List.of(edo2024), Map.of(edo.getId(), edo), Map.of(), Map.of(),
                 new BigDecimal("3.6"), monthlyCpi, new java.util.TreeMap<>(), TaxMode.NETTO, NOW);
@@ -347,7 +347,7 @@ class PortfolioValuationTest {
         double twr = MetricsCalculator.calculateTwr(List.of(
                 new MetricsCalculator.TwrPeriod(1000.0, 1100.0, 0.0),
                 new MetricsCalculator.TwrPeriod(1100.0, 2200.0, 1000.0)));
-        assertThat(twr).isCloseTo(0.20, org.assertj.core.data.Offset.offset(1e-6));
+        assertThat(twr).isCloseTo(1.1 * (2200.0 / 2100.0) - 1.0, org.assertj.core.data.Offset.offset(1e-6));
 
         MetricsCalculator.FxDecomposition decomp = MetricsCalculator.calculateFxDecomposition(100.0, 110.0, 4.0, 4.2);
         assertThat(decomp).isNotNull();
@@ -509,7 +509,7 @@ class PortfolioValuationTest {
         partialSell.setExecutedAt(LocalDateTime.of(2026, 1, 10, 10, 0));
         partialSell.setSeriesName("EDO0135");
 
-        Map<Integer, Map<Integer, BigDecimal>> monthlyCpi = Map.of(2025, Map.of(12, new BigDecimal("3.0")));
+        Map<Integer, Map<Integer, BigDecimal>> monthlyCpi = Map.of(2025, Map.of(11, new BigDecimal("3.0")));
         PortfolioValuationResponse netto = ValuationEngine.evaluate(
                 pf,
                 List.of(buy, partialSell),
@@ -651,7 +651,7 @@ class PortfolioValuationTest {
     void calculateTwrUsesUniformSubPeriodFormulaAndTreatsZeroSubReturnAsTotalLoss() {
         double exactFlowMatch = MetricsCalculator.calculateTwr(List.of(
                 new MetricsCalculator.TwrPeriod(1000.0, 500.0, 500.0)));
-        assertThat(exactFlowMatch).isCloseTo(-1.0, org.assertj.core.data.Offset.offset(1e-9));
+        assertThat(exactFlowMatch).isCloseTo(-2.0 / 3.0, org.assertj.core.data.Offset.offset(1e-6));
 
         double withZeroPeriod = MetricsCalculator.calculateTwr(List.of(
                 new MetricsCalculator.TwrPeriod(1000.0, 1200.0, 0.0),
@@ -791,7 +791,7 @@ class PortfolioValuationTest {
                 null,
                 TaxMode.NETTO,
                 NOW);
-        assertThat(netto.summary().taxPaid()).isEqualByComparingTo("23.00");
+        assertThat(netto.summary().taxPaid()).isEqualByComparingTo("38.00");
         assertThat(netto.projectionSeed().belkaTaxRate()).isEqualByComparingTo("0.19");
 
         PortfolioValuationResponse brutto = ValuationEngine.evaluate(
@@ -875,8 +875,8 @@ class PortfolioValuationTest {
     void edo_historicalPerPeriodCpiWithOneMonthLag() {
         LocalDateTime purchase = LocalDateTime.of(2024, 6, 15, 0, 0);
         Map<Integer, Map<Integer, BigDecimal>> monthlyCpi = Map.of(
-                2025, Map.of(5, new BigDecimal("4.00"), 6, new BigDecimal("9.99")),
-                2026, Map.of(5, new BigDecimal("2.50")));
+                2025, Map.of(4, new BigDecimal("4.00"), 5, new BigDecimal("9.99")),
+                2026, Map.of(4, new BigDecimal("2.50")));
         BondValuationEngine.LotValuation val = BondValuationEngine.evaluateLot(
                 purchase,
                 new BigDecimal("6.80"),
@@ -997,5 +997,141 @@ class PortfolioValuationTest {
                 NOW,
                 30);
         assertThat(shortWindow.xirr()).isNull();
+    }
+
+    @Test
+    void coiCompletedCoupon_taxesBelkaOnceInPortfolioAndFamilyXirrAndRetainedAfterSale() {
+        Portfolio pf = portfolio(Currency.PLN);
+        Instrument coi = instrument("PL_BOND", "Obligacje COI", InstrumentType.BOND, Currency.PLN);
+
+        Transaction buy = tx(pf, coi.getId(), TransactionType.BUY, 20, 100.0, Currency.PLN, 1.0, 2000.0,
+                LocalDateTime.of(2025, 1, 10, 10, 0));
+        buy.setSeriesName("COI0129");
+        buy.setBondRate(new BigDecimal("10.00"));
+        buy.setBondMargin(new BigDecimal("1.50"));
+        buy.setTermMonths(48);
+
+        Map<Integer, Map<Integer, BigDecimal>> monthlyCpi = Map.of(
+                2025, Map.of(11, new BigDecimal("3.00"), 12, new BigDecimal("3.00")));
+        LocalDateTime evalDate = LocalDateTime.of(2026, 6, 15, 12, 0);
+
+        PortfolioValuationResponse held = ValuationEngine.evaluate(
+                pf, List.of(buy), Map.of(coi.getId(), coi), Map.of(), Map.of(),
+                new BigDecimal("3.00"), monthlyCpi, new java.util.TreeMap<>(), TaxMode.NETTO, evalDate);
+
+        ValuationPositionDto heldPos = held.positions().getFirst();
+        assertThat(held.summary().dividendsTotal()).isEqualByComparingTo("200.00");
+
+        double openTax = held.summary().grossTotalValue().subtract(held.summary().totalValue()).doubleValue();
+        double settledCouponTax = held.summary().taxPaid().doubleValue() - openTax;
+        assertThat(settledCouponTax).isCloseTo(38.00, org.assertj.core.data.Offset.offset(0.01));
+
+        List<MetricsCalculator.CashFlow> singleTaxedFlows = List.of(
+                new MetricsCalculator.CashFlow(-2000.0, LocalDateTime.of(2025, 1, 10, 10, 0)),
+                new MetricsCalculator.CashFlow(162.0, LocalDateTime.of(2026, 1, 10, 0, 0)));
+        BigDecimal expectedXirr = ValuationSupport.toXirrPct(
+                MetricsCalculator.calculateHoldingXirr(singleTaxedFlows, held.summary().totalValue().doubleValue(), evalDate, 30));
+
+        assertThat(held.summary().xirrPct()).isCloseTo(expectedXirr, org.assertj.core.data.Offset.offset(new BigDecimal("0.05")));
+        assertThat(heldPos.xirrPct()).isCloseTo(expectedXirr, org.assertj.core.data.Offset.offset(new BigDecimal("0.05")));
+
+        Transaction partialSell = tx(pf, coi.getId(), TransactionType.SELL, 10, 100.0, Currency.PLN, 1.0, 1000.0,
+                LocalDateTime.of(2026, 3, 1, 10, 0));
+        partialSell.setSeriesName("COI0129");
+        PortfolioValuationResponse afterPartial = ValuationEngine.evaluate(
+                pf, List.of(buy, partialSell), Map.of(coi.getId(), coi), Map.of(), Map.of(),
+                new BigDecimal("3.00"), monthlyCpi, new java.util.TreeMap<>(), TaxMode.NETTO, evalDate);
+        assertThat(afterPartial.summary().dividendsTotal()).isEqualByComparingTo("200.00");
+        assertThat(afterPartial.positions().getFirst().dividendsBase()).isEqualByComparingTo("200.00");
+        assertThat(afterPartial.summary().taxPaid()).isEqualByComparingTo("41.65");
+        assertThat(afterPartial.summary().netProfit()).isEqualByComparingTo("177.58");
+
+        Transaction fullSell = tx(pf, coi.getId(), TransactionType.SELL, 20, 100.0, Currency.PLN, 1.0, 2000.0,
+                LocalDateTime.of(2026, 3, 1, 10, 0));
+        fullSell.setSeriesName("COI0129");
+        PortfolioValuationResponse afterFull = ValuationEngine.evaluate(
+                pf, List.of(buy, fullSell), Map.of(coi.getId(), coi), Map.of(), Map.of(),
+                new BigDecimal("3.00"), monthlyCpi, new java.util.TreeMap<>(), TaxMode.NETTO, evalDate);
+        assertThat(afterFull.positions()).isEmpty();
+        assertThat(afterFull.summary().dividendsTotal()).isEqualByComparingTo("200.00");
+        assertThat(afterFull.summary().taxPaid()).isEqualByComparingTo("38.00");
+        assertThat(afterFull.summary().netProfit()).isEqualByComparingTo("162.00");
+    }
+
+    @Test
+    void inflationBond_usesTwoMonthCpiLagForYearTwoReset() {
+        LocalDateTime purchase = LocalDateTime.of(2024, 5, 1, 0, 0);
+        Map<Integer, Map<Integer, BigDecimal>> monthlyCpi = Map.of(
+                2025, Map.of(3, new BigDecimal("4.00"), 4, new BigDecimal("9.99")));
+
+        BondValuationEngine.LotValuation val = BondValuationEngine.evaluateLot(
+                purchase,
+                new BigDecimal("6.80"),
+                new BigDecimal("1.50"),
+                monthlyCpi,
+                new java.util.TreeMap<>(),
+                LocalDateTime.of(2026, 5, 1, 0, 0),
+                "EDO0534",
+                120);
+
+        assertThat(val.rateUnavailable()).isFalse();
+        assertThat(val.unitPriceNative()).isCloseTo(112.674, org.assertj.core.data.Offset.offset(0.01));
+    }
+
+    @Test
+    void foreignDividend_deductsWithholdingTaxFromNetProfitAndCapsAtMaxOfBelkaOrWht() {
+        Portfolio pf = portfolio(Currency.PLN);
+        Instrument us = instrument("AAPL", "Apple Inc.", InstrumentType.STOCK, Currency.USD);
+        Transaction buy = tx(pf, us.getId(), TransactionType.BUY, 10, 100.0, Currency.PLN, 1.0, 1000.0, NOW.minusMonths(6));
+        Transaction div15 = tx(pf, us.getId(), TransactionType.DIVIDEND, 1, 100.0, Currency.PLN, 1.0, 100.0, NOW.minusMonths(1));
+        div15.setWithholdingTaxPct(new BigDecimal("15.00"));
+
+        FakeMarketDataPort market = new FakeMarketDataPort().withQuote("AAPL", 100.0, 100.0, "PLN");
+        PortfolioValuationResponse resp15 = ValuationEngine.evaluate(
+                pf, List.of(buy, div15), Map.of(us.getId(), us), market.getBatchQuotes(List.of("AAPL")),
+                Map.of(), null, TaxMode.NETTO, NOW);
+
+        assertThat(resp15.summary().taxPaid()).isEqualByComparingTo("19.00");
+        assertThat(resp15.summary().netProfit()).isEqualByComparingTo("81.00");
+        assertThat(resp15.positions().getFirst().profitBase()).isEqualByComparingTo("81.00");
+
+        Transaction div30 = tx(pf, us.getId(), TransactionType.DIVIDEND, 1, 100.0, Currency.PLN, 1.0, 100.0, NOW.minusMonths(1));
+        div30.setWithholdingTaxPct(new BigDecimal("30.00"));
+        PortfolioValuationResponse resp30 = ValuationEngine.evaluate(
+                pf, List.of(buy, div30), Map.of(us.getId(), us), market.getBatchQuotes(List.of("AAPL")),
+                Map.of(), null, TaxMode.NETTO, NOW);
+
+        assertThat(resp30.summary().taxPaid()).isEqualByComparingTo("30.00");
+        assertThat(resp30.summary().netProfit()).isEqualByComparingTo("70.00");
+        assertThat(resp30.positions().getFirst().profitBase()).isEqualByComparingTo("70.00");
+    }
+
+    @Test
+    void taxPolicy_separatesArt30aBondGainsFromArt30bEquityLossOffsetting() {
+        Portfolio pf = portfolio(Currency.PLN);
+        Instrument stock = instrument("CDR.WA", "CD Projekt", InstrumentType.STOCK, Currency.PLN);
+        Instrument bond = instrument("EDO0135", "Obligacje EDO0135", InstrumentType.BOND, Currency.PLN);
+
+        Transaction buyStock = tx(pf, stock.getId(), TransactionType.BUY, 10, 100.0, Currency.PLN, 1.0, 1000.0,
+                LocalDateTime.of(2025, 1, 10, 10, 0));
+        Transaction sellStockLoss = tx(pf, stock.getId(), TransactionType.SELL, 10, 80.0, Currency.PLN, 1.0, 800.0,
+                LocalDateTime.of(2025, 6, 10, 10, 0));
+
+        Transaction buyBond = tx(pf, bond.getId(), TransactionType.BUY, 10, 100.0, Currency.PLN, 1.0, 1000.0,
+                LocalDateTime.of(2025, 1, 10, 10, 0));
+        buyBond.setSeriesName("EDO0135");
+        buyBond.setBondRate(new BigDecimal("6.60"));
+        buyBond.setTermMonths(120);
+        Transaction sellBondGain = tx(pf, bond.getId(), TransactionType.SELL, 10, 120.0, Currency.PLN, 1.0, 1200.0,
+                LocalDateTime.of(2025, 7, 10, 10, 0));
+        sellBondGain.setSeriesName("EDO0135");
+
+        PortfolioValuationResponse resp = ValuationEngine.evaluate(
+                pf,
+                List.of(buyStock, sellStockLoss, buyBond, sellBondGain),
+                Map.of(stock.getId(), stock, bond.getId(), bond),
+                Map.of(), Map.of(), null, TaxMode.NETTO, NOW);
+
+        assertThat(resp.summary().taxPaid()).isEqualByComparingTo("38.00");
     }
 }

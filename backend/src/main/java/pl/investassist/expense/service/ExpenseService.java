@@ -2,6 +2,7 @@ package pl.investassist.expense.service;
 
 import java.io.IOException;
 import java.math.BigDecimal;
+import java.time.Instant;
 import java.time.LocalDate;
 import java.time.ZoneOffset;
 import java.util.ArrayList;
@@ -72,6 +73,7 @@ import pl.investassist.portfolio.port.MarketDataPort;
 public class ExpenseService {
 
   private static final Logger log = LoggerFactory.getLogger(ExpenseService.class);
+  private static final int FINGERPRINT_CHUNK_SIZE = 1000;
 
   private final UserRepository userRepository;
   private final ExpenseStatementRepository statementRepository;
@@ -155,9 +157,7 @@ public class ExpenseService {
         .orElse(Currency.PLN.name());
     String accountOwnerName = user.map(ExpenseService::resolveOwnerName).orElse(null);
     List<String> fingerprints = fingerprinter.computeFingerprints(rows);
-    Set<String> existingFingerprints = fingerprints.isEmpty()
-        ? Set.of()
-        : transactionRepository.findExistingFingerprints(userId, fingerprints);
+    Set<String> existingFingerprints = findExistingFingerprintsChunked(userId, fingerprints);
     boolean alreadyUploaded =
         statementRepository.existsByUserIdAndFileHashSha256(userId, ingested.fileHashSha256());
 
@@ -261,14 +261,15 @@ public class ExpenseService {
   @Transactional
   public StatementSummaryResponse commitStatement(UUID userId, CommitStatementRequest request) {
     List<CommitTransactionItem> items = request.transactions() != null ? request.transactions() : List.of();
+    for (CommitTransactionItem item : items) {
+      validateCommitItem(item);
+    }
     List<String> candidateFingerprints = items.stream()
         .map(CommitTransactionItem::fingerprint)
         .filter(fp -> fp != null && !fp.isBlank())
         .toList();
 
-    Set<String> existingFingerprints = candidateFingerprints.isEmpty()
-        ? Set.of()
-        : new HashSet<>(transactionRepository.findExistingFingerprints(userId, candidateFingerprints));
+    Set<String> existingFingerprints = findExistingFingerprintsChunked(userId, candidateFingerprints);
     Set<String> seenInBatch = new HashSet<>();
 
     List<CommitTransactionItem> toSave = new ArrayList<>();
@@ -286,10 +287,49 @@ public class ExpenseService {
       resolvedFlows.add(resolvedFlow);
     }
 
+    String fileHash = truncate(request.fileHashSha256(), 64);
+    if (toSave.isEmpty() && !items.isEmpty() && fileHash != null && !fileHash.isBlank()) {
+      Optional<ExpenseStatement> existingStmt =
+          statementRepository.findFirstByUserIdAndFileHashSha256OrderByCreatedAtDesc(userId, fileHash);
+      if (existingStmt.isPresent()) {
+        ExpenseStatement st = existingStmt.get();
+        return new StatementSummaryResponse(
+            st.getId(),
+            st.getFileName(),
+            st.getFormat(),
+            st.getBankProfile(),
+            st.getAccountLabel(),
+            st.getCurrency(),
+            st.getPeriodStart(),
+            st.getPeriodEnd(),
+            st.getReconciliationStatus(),
+            st.getReconciliationDelta(),
+            0,
+            skippedDuplicates,
+            st.getCreatedAt() != null ? st.getCreatedAt().toInstant(ZoneOffset.UTC) : Instant.now());
+      }
+      if (statementRepository.existsByUserIdAndFileHashSha256(userId, fileHash)) {
+        return new StatementSummaryResponse(
+            null,
+            truncate(request.fileName(), 255),
+            request.format(),
+            request.bankProfile(),
+            truncate(request.accountLabel(), 120),
+            truncate(Currency.normalizeCode(request.currency(), "PLN"), 8),
+            request.periodStart(),
+            request.periodEnd(),
+            request.reconciliationStatus(),
+            request.reconciliationDelta(),
+            0,
+            skippedDuplicates,
+            Instant.now());
+      }
+    }
+
     ExpenseStatement statement = new ExpenseStatement();
     statement.setUserId(userId);
     statement.setFileName(truncate(request.fileName(), 255));
-    statement.setFileHashSha256(truncate(request.fileHashSha256(), 64));
+    statement.setFileHashSha256(fileHash);
     statement.setFormat(request.format());
     statement.setBankProfile(request.bankProfile());
     statement.setAccountLabel(truncate(request.accountLabel(), 120));
@@ -310,18 +350,6 @@ public class ExpenseService {
     ExpenseStatement savedStatement = statementRepository.save(statement);
 
     List<ExpenseTransaction> txEntities = new ArrayList<>(toSave.size());
-    boolean hasRulesToRemember = toSave.stream().anyMatch(item -> Boolean.TRUE.equals(item.rememberRule()));
-    Map<RuleLookupKey, ExpenseMerchantRule> existingRulesByKey = new HashMap<>();
-    if (hasRulesToRemember) {
-      for (ExpenseMerchantRule existing : ruleRepository.findAllByUserIdOrderByUpdatedAtDesc(userId)) {
-        String key = existing.getMatchKey() != null
-            ? existing.getMatchKey().trim().toLowerCase(Locale.ROOT)
-            : "";
-        existingRulesByKey.putIfAbsent(new RuleLookupKey(existing.getMatchType(), key), existing);
-      }
-    }
-    Map<RuleLookupKey, ExpenseMerchantRule> rulesToPersist = new LinkedHashMap<>();
-
     for (int i = 0; i < toSave.size(); i++) {
       CommitTransactionItem item = toSave.get(i);
       FlowKind flowKind = resolvedFlows.get(i);
@@ -353,23 +381,12 @@ public class ExpenseService {
       if (Boolean.TRUE.equals(item.rememberRule())) {
         RuleTarget target = resolveRuleTarget(
             item.merchantKey(), item.phraseKey(), item.merchantDisplay());
-        if (target != null) {
-          ExpenseMerchantRule updatedRule = prepareLearnedRule(
-              userId, target, item.category(), flowKind, existingRulesByKey);
-          if (updatedRule != null) {
-            RuleLookupKey lookupKey = new RuleLookupKey(target.matchType, target.matchKey);
-            existingRulesByKey.put(lookupKey, updatedRule);
-            rulesToPersist.put(lookupKey, updatedRule);
-          }
-        }
+        persistLearnedRule(userId, target, item.category(), flowKind);
       }
     }
 
     if (!txEntities.isEmpty()) {
       transactionRepository.saveAll(txEntities);
-    }
-    if (!rulesToPersist.isEmpty()) {
-      ruleRepository.saveAll(rulesToPersist.values());
     }
 
     return toStatementSummary(savedStatement);
@@ -488,7 +505,7 @@ public class ExpenseService {
         saved.getMerchantKey(), saved.getPhraseKey(), saved.getMerchantDisplay());
 
     if (Boolean.TRUE.equals(request.rememberRule()) && ruleTarget != null) {
-      upsertLearnedRule(userId, ruleTarget, saved.getCategory(), saved.getFlowKind());
+      persistLearnedRule(userId, ruleTarget, saved.getCategory(), saved.getFlowKind());
     }
 
     if (Boolean.TRUE.equals(request.applyToMatching()) && ruleTarget != null) {
@@ -592,7 +609,7 @@ public class ExpenseService {
     ExpenseClassifier.ClassificationBatchResult batch =
         classifier.classifyBatchWithMeta(classifiable, userRules, true, accountOwnerName);
 
-    List<ExpenseTransaction> toSave = new ArrayList<>();
+    List<ExpenseTransaction> candidates = new ArrayList<>();
     for (int i = 0; i < eligible.size(); i++) {
       ExpenseTransaction tx = eligible.get(i);
       ClassifiedTransaction cls = batch.transactions().get(i);
@@ -643,10 +660,11 @@ public class ExpenseService {
         tx.setFlowKind(nextFlowKind);
         tx.setClassificationSource(nextSource);
         tx.setConfidence(nextConfidence);
-        toSave.add(tx);
+        candidates.add(tx);
       }
     }
 
+    List<ExpenseTransaction> toSave = filterConcurrentlyOverridden(candidates, includeManualOverrides);
     if (!toSave.isEmpty()) {
       transactionRepository.saveAll(toSave);
     }
@@ -655,60 +673,107 @@ public class ExpenseService {
         eligible.size(), toSave.size(), batch.aiUsed(), batch.aiWarning());
   }
 
-  private void upsertLearnedRule(
-      UUID userId, RuleTarget target, ExpenseCategory category, FlowKind flowKind) {
-    ExpenseMerchantRule existing = ruleRepository
-        .findByUserIdAndMatchTypeAndMatchKey(userId, target.matchType, target.matchKey)
-        .orElse(null);
-    ExpenseMerchantRule rule = applyRuleFields(existing, userId, target, category, flowKind);
-    if (rule != null) {
-      ruleRepository.save(rule);
+  private List<ExpenseTransaction> filterConcurrentlyOverridden(
+      List<ExpenseTransaction> candidates, boolean includeManualOverrides) {
+    if (candidates.isEmpty() || includeManualOverrides) {
+      return candidates;
+    }
+    List<UUID> ids = candidates.stream()
+        .map(ExpenseTransaction::getId)
+        .filter(Objects::nonNull)
+        .toList();
+    if (ids.isEmpty()) {
+      return candidates;
+    }
+    Map<UUID, ExpenseTransaction> latestById = new HashMap<>();
+    for (int i = 0; i < ids.size(); i += FINGERPRINT_CHUNK_SIZE) {
+      List<UUID> chunk = ids.subList(i, Math.min(i + FINGERPRINT_CHUNK_SIZE, ids.size()));
+      Iterable<ExpenseTransaction> found = transactionRepository.findAllById(chunk);
+      if (found != null) {
+        for (ExpenseTransaction latest : found) {
+          latestById.put(latest.getId(), latest);
+        }
+      }
+    }
+    if (latestById.isEmpty()) {
+      return candidates;
+    }
+    List<ExpenseTransaction> filtered = new ArrayList<>(candidates.size());
+    for (ExpenseTransaction candidate : candidates) {
+      ExpenseTransaction latest = candidate.getId() != null ? latestById.get(candidate.getId()) : null;
+      if (latest != null && latest.getClassificationSource() == ClassificationSource.USER_OVERRIDE) {
+        continue;
+      }
+      filtered.add(candidate);
+    }
+    return filtered;
+  }
+
+  private Set<String> findExistingFingerprintsChunked(UUID userId, List<String> fingerprints) {
+    if (fingerprints == null || fingerprints.isEmpty()) {
+      return Set.of();
+    }
+    Set<String> existing = new HashSet<>();
+    for (int i = 0; i < fingerprints.size(); i += FINGERPRINT_CHUNK_SIZE) {
+      List<String> chunk = fingerprints.subList(i, Math.min(i + FINGERPRINT_CHUNK_SIZE, fingerprints.size()));
+      Set<String> chunkMatches = transactionRepository.findExistingFingerprints(userId, chunk);
+      if (chunkMatches != null) {
+        existing.addAll(chunkMatches);
+      }
+    }
+    return existing;
+  }
+
+  private static void validateCommitItem(CommitTransactionItem item) {
+    if (item == null || item.txDate() == null) {
+      throw new IllegalArgumentException("Transaction date is required");
+    }
+    if (item.amount() == null || item.amount().compareTo(BigDecimal.ZERO) == 0) {
+      throw new IllegalArgumentException("Transaction amount must be non-zero");
+    }
+    if (item.baseAmount() == null || item.baseAmount().signum() != item.amount().signum()) {
+      throw new IllegalArgumentException("Base amount must match transaction amount sign");
+    }
+    if (item.fxRate() == null || item.fxRate().compareTo(BigDecimal.ZERO) <= 0) {
+      throw new IllegalArgumentException("FX rate must be positive");
+    }
+    if (!isThreeLetterCurrency(item.currency()) || !isThreeLetterCurrency(item.baseCurrency())) {
+      throw new IllegalArgumentException("Currency must be a 3-letter code");
     }
   }
 
-  private ExpenseMerchantRule prepareLearnedRule(
-      UUID userId,
-      RuleTarget target,
-      ExpenseCategory category,
-      FlowKind flowKind,
-      Map<RuleLookupKey, ExpenseMerchantRule> existingRulesByKey) {
-    ExpenseMerchantRule existing =
-        existingRulesByKey.get(new RuleLookupKey(target.matchType, target.matchKey));
-    return applyRuleFields(existing, userId, target, category, flowKind);
+  private static boolean isThreeLetterCurrency(String code) {
+    if (code == null) {
+      return false;
+    }
+    String trimmed = code.trim();
+    return trimmed.length() == 3
+        && Character.isLetter(trimmed.charAt(0))
+        && Character.isLetter(trimmed.charAt(1))
+        && Character.isLetter(trimmed.charAt(2));
   }
 
-  private ExpenseMerchantRule applyRuleFields(
-      ExpenseMerchantRule existing,
-      UUID userId,
-      RuleTarget target,
-      ExpenseCategory category,
-      FlowKind flowKind) {
-    if (category == null || flowKind == null) {
-      return null;
+  private void persistLearnedRule(
+      UUID userId, RuleTarget target, ExpenseCategory category, FlowKind flowKind) {
+    if (target == null || category == null || flowKind == null) {
+      return;
     }
     FlowKind ruleFlowKind = flowKind;
     if (ruleFlowKind == FlowKind.REFUND) {
       if (!category.isConsumption()) {
-        return null;
+        return;
       }
       ruleFlowKind = category.defaultFlowKind();
     }
-
-    ExpenseMerchantRule rule = existing;
-    if (rule == null) {
-      rule = new ExpenseMerchantRule();
-      rule.setUserId(userId);
-      rule.setMatchType(target.matchType);
-      rule.setMatchKey(truncate(target.matchKey, 160));
-      rule.setHitCount(0);
-    }
-
-    rule.setDisplayLabel(truncate(target.displayLabel, 160));
-    rule.setCategory(category);
-    rule.setFlowKind(ruleFlowKind);
-    rule.setSource(ClassificationSource.USER_OVERRIDE.name());
-    rule.setHitCount(rule.getHitCount() + 1);
-    return rule;
+    ruleRepository.upsertRule(
+        UUID.randomUUID(),
+        userId,
+        target.matchType.name(),
+        truncate(target.matchKey, 160),
+        truncate(target.displayLabel, 160),
+        category.name(),
+        ruleFlowKind.name(),
+        ClassificationSource.USER_OVERRIDE.name());
   }
 
   private static RuleTarget resolveRuleTarget(
@@ -930,6 +995,4 @@ public class ExpenseService {
   private record FxConversion(BigDecimal baseAmount, BigDecimal rate, boolean degraded) {}
 
   private record RuleTarget(RuleMatchType matchType, String matchKey, String displayLabel) {}
-
-  private record RuleLookupKey(RuleMatchType matchType, String matchKey) {}
 }

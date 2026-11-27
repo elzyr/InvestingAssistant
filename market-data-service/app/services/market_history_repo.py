@@ -104,12 +104,14 @@ class MarketHistoryRepository:
         )
 
     def close(self) -> None:
-        if self.pool is not None:
+        with self._pool_lock:
+            pool = self.pool
+            self.pool = None
+        if pool is not None:
             try:
-                self.pool.closeall()
+                pool.closeall()
             except Exception:
                 pass
-            self.pool = None
 
     def _ensure_initialized(self) -> None:
         if self._initialized or self.conn is not None:
@@ -123,7 +125,7 @@ class MarketHistoryRepository:
     def _cursor(self, commit: bool = False, ensure_init: bool = True) -> Iterator[Any]:
         if ensure_init:
             self._ensure_initialized()
-        conn, is_external = self._get_connection()
+        conn, is_external, origin_pool = self._acquire_connection()
         try:
             cursor = conn.cursor()
             try:
@@ -136,7 +138,7 @@ class MarketHistoryRepository:
                 except Exception:
                     pass
         finally:
-            self._release_connection(conn, is_external)
+            self._release_connection(conn, is_external, origin_pool)
 
     @property
     def _ph(self) -> str:
@@ -160,53 +162,61 @@ class MarketHistoryRepository:
             except Exception as e:
                 logging.warning(f"Postgres connection pool initialization failed: {e}")
 
-    def _get_connection(self) -> tuple[Any, bool]:
+    def _acquire_connection(self) -> tuple[Any, bool, Any]:
         if self.conn is not None:
-            return self.conn, True
+            return self.conn, True, None
         if self.is_postgres:
             self._ensure_pool()
-            if self.pool is not None:
-                conn = self.pool.getconn()
-                if _is_conn_closed(conn):
-                    try:
-                        self.pool.putconn(conn, close=True)
-                    except Exception:
-                        pass
-                    conn = self.pool.getconn()
-            else:
-                import psycopg2
-                conn = psycopg2.connect(
-                    self.database_url,
-                    connect_timeout=5,
-                    options=f"-c search_path={self.schema},public",
-                )
-            return conn, False
+            with self._pool_lock:
+                origin_pool = self.pool
+                if origin_pool is not None:
+                    conn = origin_pool.getconn()
+                    if _is_conn_closed(conn):
+                        try:
+                            origin_pool.putconn(conn, close=True)
+                        except Exception:
+                            pass
+                        conn = origin_pool.getconn()
+                    return conn, False, origin_pool
+            import psycopg2
+            conn = psycopg2.connect(
+                self.database_url,
+                connect_timeout=5,
+                options=f"-c search_path={self.schema},public",
+            )
+            return conn, False, None
         db_dir = os.path.dirname(self.db_path)
         if db_dir:
             os.makedirs(db_dir, exist_ok=True)
         conn = sqlite3.connect(self.db_path, check_same_thread=False)
         conn.execute("PRAGMA busy_timeout=5000;")
-        return conn, False
+        return conn, False, None
 
-    def _release_connection(self, conn: Any, is_external: bool) -> None:
+    def _get_connection(self) -> tuple[Any, bool]:
+        conn, is_external, _ = self._acquire_connection()
+        return conn, is_external
+
+    def _release_connection(self, conn: Any, is_external: bool, origin_pool: Any = None) -> None:
         if is_external:
             return
         if self.is_postgres:
-            if self.pool is not None:
-                try:
-                    if _is_conn_closed(conn):
-                        self.pool.putconn(conn, close=True)
-                        return
-                    conn.rollback()
-                    self.pool.putconn(conn)
-                    return
-                except Exception as e:
-                    logging.warning(f"Failed to return Postgres connection to pool: {e}")
+            with self._pool_lock:
+                target_pool = origin_pool if origin_pool is not None else self.pool
+                if target_pool is not None and target_pool is self.pool:
                     try:
-                        self.pool.putconn(conn, close=True)
+                        if _is_conn_closed(conn):
+                            target_pool.putconn(conn, close=True)
+                            return
+                        conn.rollback()
+                        target_pool.putconn(conn)
                         return
-                    except Exception:
-                        pass
+                    except Exception as e:
+                        logging.warning(f"Failed to return Postgres connection to pool: {e}")
+                        try:
+                            target_pool.putconn(conn, close=True)
+                            return
+                        except Exception:
+                            pass
             try:
                 conn.close()
             except Exception as e:
@@ -346,12 +356,20 @@ class MarketHistoryRepository:
         symbol: str,
         records: List[Dict[str, Any]],
         currency: Optional[str] = None,
+        preserve_older: bool = False,
     ) -> int:
         valid_rows = self._prepare_eod_rows(symbol, records, currency)
         if not valid_rows:
             return 0
         with self._cursor(commit=True) as cursor:
-            cursor.execute(f"DELETE FROM daily_price_history WHERE symbol = {self._ph}", (symbol,))
+            if preserve_older:
+                min_date = min(row[1] for row in valid_rows)
+                cursor.execute(
+                    f"DELETE FROM daily_price_history WHERE symbol = {self._ph} AND date >= {self._ph}",
+                    (symbol, min_date),
+                )
+            else:
+                cursor.execute(f"DELETE FROM daily_price_history WHERE symbol = {self._ph}", (symbol,))
             self._upsert_eod_rows(cursor, valid_rows)
             return len(valid_rows)
 

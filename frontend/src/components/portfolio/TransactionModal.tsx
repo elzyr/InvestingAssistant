@@ -201,8 +201,11 @@ const TransactionModalContent: React.FC<Omit<TransactionModalProps, 'isOpen'>> =
               onPriceChange={(v) => setField('price', v)}
               commission={state.commission}
               onCommissionChange={(v) => setField('commission', v)}
+              fxFeePct={state.fxFeePct}
+              onFxFeePctChange={(v) => setField('fxFeePct', v)}
               currency={state.currency}
               onCurrencyChange={(v) => setField('currency', v)}
+              showFxFeeHint={state.currency !== state.defaultCurrency}
               loadingPrice={state.loadingPrice}
             />
           )}

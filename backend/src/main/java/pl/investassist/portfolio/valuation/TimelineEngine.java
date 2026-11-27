@@ -135,6 +135,7 @@ public final class TimelineEngine {
         BigDecimal prevExtFlow = BigDecimal.ZERO;
         BigDecimal prevSettledTax = BigDecimal.ZERO;
         BigDecimal prevNetProfit = BigDecimal.ZERO;
+        boolean anyDegraded = false;
         int evalIdx = 0;
 
         for (LocalDate stepDate : evalDates) {
@@ -150,9 +151,10 @@ public final class TimelineEngine {
                     isToday,
                     true,
                     false);
+            anyDegraded |= step.degraded();
 
             BigDecimal displayValuation = step.displayValuation();
-            BigDecimal extFlow = ledger.cumulativeExternalCashFlow();
+            BigDecimal extFlow = ledger.cumulativeExternalCashFlow().subtract(step.completedBondCouponsBase());
             BigDecimal settledTax = step.settledTax();
 
             if (evalIdx > 0 || !hasPriorTransactions) {
@@ -196,7 +198,8 @@ public final class TimelineEngine {
                 periodProfitPct,
                 periodTwrPct,
                 finalPoints,
-                latestContributors);
+                latestContributors,
+                anyDegraded);
     }
 
     private static List<LocalDate> buildSampleDates(LocalDate startDate, LocalDate endDate) {

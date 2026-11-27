@@ -112,14 +112,10 @@ def run_monte_carlo(req: Dict[str, Any]) -> Dict[str, Any]:
         cov = nearest_psd(cov)
         dt = 1.0 / 12.0
         L = np.linalg.cholesky(cov * dt)
-        drift = (mu - 0.5 * np.diag(cov)) * dt
-
-        z_half = rng.standard_normal((n_months, half_paths, n_eq))
-        z = np.concatenate([z_half, -z_half], axis=1)
-        log_ret = drift[None, None, :] + z @ L.T
-        eq_factors = np.exp(log_ret)
+        drift = np.log1p(np.maximum(mu, -0.9999)) * dt
     else:
-        eq_factors = np.ones((n_months, n_paths, 0), dtype=np.float64)
+        L = np.zeros((0, 0), dtype=np.float64)
+        drift = np.zeros(0, dtype=np.float64)
 
     fixed_bond_val = max(0.0, float(bond_seed.get("startFixedValue") or 0.0))
     indexed_bond_val = max(0.0, float(bond_seed.get("startIndexedValue") or 0.0))
@@ -142,8 +138,12 @@ def run_monte_carlo(req: Dict[str, Any]) -> Dict[str, Any]:
 
     fixed_monthly_factor = (1.0 + fixed_rate_pct / 100.0) ** (1.0 / 12.0)
     indexed_monthly_factor = (1.0 + indexed_rate_pct / 100.0) ** (1.0 / 12.0)
-    dca_eq = monthly_dca * dca_equity_share
-    dca_bond = monthly_dca * (1.0 - dca_equity_share)
+    if n_eq == 0:
+        dca_eq = 0.0
+        dca_bond = monthly_dca
+    else:
+        dca_eq = monthly_dca * dca_equity_share
+        dca_bond = monthly_dca * (1.0 - dca_equity_share)
     cpi_dec = max(-0.99, cpi_pct / 100.0)
 
     points: List[Dict[str, Any]] = []
@@ -151,7 +151,9 @@ def run_monte_carlo(req: Dict[str, Any]) -> Dict[str, Any]:
 
     for m in range(1, n_months + 1):
         if n_eq > 0:
-            eq_vals *= eq_factors[m - 1]
+            z_half = rng.standard_normal((half_paths, n_eq))
+            z = np.concatenate([z_half, -z_half], axis=0)
+            eq_vals *= np.exp(drift[None, :] + z @ L.T)
             eq_vals += dca_eq * eq_weights[None, :]
             eq_cost += dca_eq
 

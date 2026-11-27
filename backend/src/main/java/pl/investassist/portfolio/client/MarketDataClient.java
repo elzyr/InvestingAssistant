@@ -43,6 +43,7 @@ public class MarketDataClient implements MarketDataPort {
   private static final Logger log = LoggerFactory.getLogger(MarketDataClient.class);
 
   private final RestClient restClient;
+  private final RestClient longTimeoutRestClient;
 
   @Autowired
   public MarketDataClient(
@@ -51,14 +52,23 @@ public class MarketDataClient implements MarketDataPort {
     factory.setConnectTimeout(Duration.ofSeconds(5));
     factory.setReadTimeout(Duration.ofSeconds(10));
 
+    SimpleClientHttpRequestFactory longFactory = new SimpleClientHttpRequestFactory();
+    longFactory.setConnectTimeout(Duration.ofSeconds(5));
+    longFactory.setReadTimeout(Duration.ofSeconds(60));
+
     this.restClient = RestClient.builder()
         .baseUrl(marketDataServiceUrl)
         .requestFactory(factory)
+        .build();
+    this.longTimeoutRestClient = RestClient.builder()
+        .baseUrl(marketDataServiceUrl)
+        .requestFactory(longFactory)
         .build();
   }
 
   MarketDataClient(RestClient restClient) {
     this.restClient = restClient;
+    this.longTimeoutRestClient = restClient;
   }
 
   @Override
@@ -82,7 +92,7 @@ public class MarketDataClient implements MarketDataPort {
 
   @Override
   @Cacheable(
-      cacheNames = CacheConfig.CACHE_EXCHANGE_RATES_HISTORICAL,
+      cacheResolver = "fxCacheResolver",
       key = "'nbp-tax:' + #from + '-' + #to + '-' + #eventDate",
       condition = "#from != null && #to != null && #eventDate != null && !#from.equals(#to)",
       unless = "#result == null")
@@ -177,12 +187,13 @@ public class MarketDataClient implements MarketDataPort {
   }
 
   private <T> Map<String, T> postBatch(
+      RestClient client,
       String uri,
       Map<String, ?> body,
       ParameterizedTypeReference<Map<String, T>> typeRef,
       String context) {
     try {
-      Map<String, T> response = restClient.post()
+      Map<String, T> response = client.post()
           .uri(uri)
           .contentType(MediaType.APPLICATION_JSON)
           .body(body)
@@ -218,6 +229,7 @@ public class MarketDataClient implements MarketDataPort {
       return Map.of();
     }
     Map<String, RawQuoteDto> response = postBatch(
+        restClient,
         "/api/prices/batch",
         Map.of("symbols", cleanSymbols),
         new ParameterizedTypeReference<>() {},
@@ -256,6 +268,7 @@ public class MarketDataClient implements MarketDataPort {
       body.put("period", "1y");
     }
     Map<String, RawHistoryDto> response = postBatch(
+        longTimeoutRestClient,
         "/api/prices/history/batch",
         body,
         new ParameterizedTypeReference<>() {},
@@ -328,6 +341,7 @@ public class MarketDataClient implements MarketDataPort {
       body.put("end_date", endDate.toString());
     }
     Map<String, RawFxHistoryDto> response = postBatch(
+        longTimeoutRestClient,
         "/api/currencies/history/batch",
         body,
         new ParameterizedTypeReference<>() {},
@@ -359,7 +373,7 @@ public class MarketDataClient implements MarketDataPort {
   @Override
   public BigDecimal getCurrentCpi() {
     try {
-      RawInflationDto cpiDto = restClient.get()
+      RawInflationDto cpiDto = longTimeoutRestClient.get()
           .uri("/api/market/inflation")
           .retrieve()
           .body(RawInflationDto.class);
@@ -372,7 +386,7 @@ public class MarketDataClient implements MarketDataPort {
   private Map<Integer, Map<Integer, BigDecimal>> getMonthlyInflation() {
     Map<Integer, Map<Integer, BigDecimal>> byYear = new HashMap<>();
     try {
-      List<RawMonthlyCpiDto> monthlyList = restClient.get()
+      List<RawMonthlyCpiDto> monthlyList = longTimeoutRestClient.get()
           .uri("/api/market/inflation/monthly")
           .retrieve()
           .body(new ParameterizedTypeReference<>() {});
@@ -457,7 +471,7 @@ public class MarketDataClient implements MarketDataPort {
   @Override
   public pl.investassist.portfolio.dto.response.ProjectionResponse runMonteCarlo(MonteCarloRequest request) {
     try {
-      return restClient
+      return longTimeoutRestClient
           .post()
           .uri("/api/market/analytics/monte-carlo")
           .body(request)

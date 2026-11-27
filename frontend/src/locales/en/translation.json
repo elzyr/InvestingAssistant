@@ -230,6 +230,8 @@
     "sellPrice": "Selling / redemption price (PLN)",
     "commission": "Commission",
     "commissionFee": "Commission / fee (PLN)",
+    "fxFeePct": "FX conversion fee (%)",
+    "fxFeeHint": "Default 0.5% for cross-currency trades (editable to 0%)",
     "currency": "Transaction currency",
     "date": "Transaction date",
     "defaultToday": "Default: today",

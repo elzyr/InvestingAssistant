@@ -1108,4 +1108,226 @@ class TransactionServiceTest {
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("termMonths=120");
   }
+
+  @Test
+  void createTransaction_appliesFxFeePctOnBuySellDividendAndEnforcesBounds() throws Exception {
+    tools.jackson.databind.ObjectMapper mapper = new tools.jackson.databind.ObjectMapper();
+    InstrumentResponse usdEtf = new InstrumentResponse(
+        instrumentId, "CSPX.L", "iShares Core S&P 500", InstrumentType.ETF, Currency.USD);
+    when(instrumentService.getInstrument(instrumentId)).thenReturn(usdEtf);
+    when(portfolioService.validateAndGetPortfolioEntity(userId, portfolioId)).thenReturn(portfolio);
+    when(marketDataClient.getNbpTaxRate(eq(Currency.USD), eq(Currency.PLN), any()))
+        .thenReturn(new BigDecimal("4.0000"));
+    when(transactionRepository.save(any(Transaction.class))).thenAnswer(i -> {
+      Transaction tx = i.getArgument(0);
+      if (tx.getId() == null) {
+        tx.setId(UUID.randomUUID());
+      }
+      return tx;
+    });
+
+    String buyJson = """
+        {
+          "instrumentId": "%s",
+          "transactionType": "BUY",
+          "price": 100.00,
+          "quantity": 10,
+          "commission": 0,
+          "currency": "USD",
+          "executedAt": "2025-01-15T10:00:00",
+          "fxFeePct": 0.50
+        }
+        """.formatted(instrumentId);
+    CreateTransactionRequest buyReq = mapper.readValue(buyJson, CreateTransactionRequest.class);
+    TransactionResponse buyResp = transactionService.createTransaction(userId, portfolioId, buyReq);
+    assertThat(buyResp.baseAmount()).isEqualByComparingTo("4020.0000");
+    assertThat(buyResp.exchangeRateToBase()).isEqualByComparingTo("4.0000");
+    assertThat(mapper.valueToTree(buyResp).path("fxFeePct").decimalValue())
+        .isEqualByComparingTo("0.50");
+
+    Transaction priorBuy = new Transaction();
+    priorBuy.setId(UUID.randomUUID());
+    priorBuy.setPortfolio(portfolio);
+    priorBuy.setInstrumentId(instrumentId);
+    priorBuy.setTransactionType(TransactionType.BUY);
+    priorBuy.setQuantity(new BigDecimal("10"));
+    priorBuy.setPrice(new BigDecimal("100"));
+    priorBuy.setCommission(BigDecimal.ZERO);
+    priorBuy.setCurrency(Currency.USD);
+    priorBuy.setBaseAmount(new BigDecimal("4020.0000"));
+    priorBuy.setExecutedAt(LocalDateTime.of(2025, 1, 15, 10, 0));
+    when(transactionRepository.findAllByPortfolioIdAndInstrumentIdOrderByExecutedAtAsc(portfolioId, instrumentId))
+        .thenReturn(java.util.List.of(priorBuy));
+
+    String sellJson = """
+        {
+          "instrumentId": "%s",
+          "transactionType": "SELL",
+          "price": 100.00,
+          "quantity": 10,
+          "commission": 0,
+          "currency": "USD",
+          "executedAt": "2025-02-15T10:00:00",
+          "fxFeePct": 0.50
+        }
+        """.formatted(instrumentId);
+    CreateTransactionRequest sellReq = mapper.readValue(sellJson, CreateTransactionRequest.class);
+    TransactionResponse sellResp = transactionService.createTransaction(userId, portfolioId, sellReq);
+    assertThat(sellResp.baseAmount()).isEqualByComparingTo("3980.0000");
+    assertThat(mapper.valueToTree(sellResp).path("fxFeePct").decimalValue())
+        .isEqualByComparingTo("0.50");
+
+    String divJson = """
+        {
+          "instrumentId": "%s",
+          "transactionType": "DIVIDEND",
+          "price": 10.00,
+          "quantity": 10,
+          "commission": 0,
+          "currency": "USD",
+          "executedAt": "2025-03-01T10:00:00",
+          "fxFeePct": 0.50
+        }
+        """.formatted(instrumentId);
+    CreateTransactionRequest divReq = mapper.readValue(divJson, CreateTransactionRequest.class);
+    TransactionResponse divResp = transactionService.createTransaction(userId, portfolioId, divReq);
+    assertThat(divResp.baseAmount()).isEqualByComparingTo("398.0000");
+
+    String sellMaxFeeJson = """
+        {
+          "instrumentId": "%s",
+          "transactionType": "SELL",
+          "price": 100.00,
+          "quantity": 10,
+          "commission": 0,
+          "currency": "USD",
+          "executedAt": "2025-02-15T10:00:00",
+          "fxFeePct": 100.00
+        }
+        """.formatted(instrumentId);
+    TransactionResponse zeroProceeds = transactionService.createTransaction(
+        userId, portfolioId, mapper.readValue(sellMaxFeeJson, CreateTransactionRequest.class));
+    assertThat(zeroProceeds.baseAmount()).isEqualByComparingTo("0.0000");
+
+    Validator validator = Validation.buildDefaultValidatorFactory().getValidator();
+    CreateTransactionRequest negFee = mapper.readValue(
+        buyJson.replace("0.50", "-0.01"), CreateTransactionRequest.class);
+    CreateTransactionRequest overFee = mapper.readValue(
+        buyJson.replace("0.50", "100.01"), CreateTransactionRequest.class);
+    assertThat(validator.validate(negFee)).isNotEmpty();
+    assertThat(validator.validate(overFee)).isNotEmpty();
+  }
+
+  @Test
+  void updateTransaction_updatesFxFeePctAndRecomputesBaseAmount() {
+    InstrumentResponse usdEtf = new InstrumentResponse(
+        instrumentId, "CSPX.L", "iShares Core S&P 500", InstrumentType.ETF, Currency.USD);
+    when(instrumentService.getInstrument(instrumentId)).thenReturn(usdEtf);
+    when(portfolioService.validateAndGetPortfolioEntity(userId, portfolioId)).thenReturn(portfolio);
+    when(marketDataClient.getNbpTaxRate(eq(Currency.USD), eq(Currency.PLN), any()))
+        .thenReturn(new BigDecimal("4.0000"));
+    when(transactionRepository.save(any(Transaction.class))).thenAnswer(i -> i.getArgument(0));
+
+    UUID buyId = UUID.randomUUID();
+    Transaction existingBuy = new Transaction();
+    existingBuy.setId(buyId);
+    existingBuy.setPortfolio(portfolio);
+    existingBuy.setInstrumentId(instrumentId);
+    existingBuy.setTransactionType(TransactionType.BUY);
+    existingBuy.setQuantity(new BigDecimal("10"));
+    existingBuy.setPrice(new BigDecimal("100.00"));
+    existingBuy.setCommission(BigDecimal.ZERO);
+    existingBuy.setCurrency(Currency.USD);
+    existingBuy.setExchangeRate(BigDecimal.ONE);
+    existingBuy.setExchangeRateToBase(new BigDecimal("4.0000"));
+    existingBuy.setBaseAmount(new BigDecimal("4020.0000"));
+    existingBuy.setFxFeePct(new BigDecimal("0.50"));
+    existingBuy.setExecutedAt(LocalDateTime.of(2025, 1, 15, 10, 0));
+
+    when(transactionRepository.findByIdAndPortfolioId(buyId, portfolioId)).thenReturn(Optional.of(existingBuy));
+    when(transactionRepository.findAllByPortfolioIdAndInstrumentIdOrderByExecutedAtAsc(portfolioId, instrumentId))
+        .thenReturn(java.util.List.of(existingBuy));
+
+    CreateTransactionRequest clearFeeReq = new CreateTransactionRequest(
+        instrumentId, TransactionType.BUY, new BigDecimal("100.00"), new BigDecimal("10"),
+        BigDecimal.ZERO, Currency.USD, LocalDateTime.of(2025, 1, 15, 10, 0),
+        null, null, null, null, null, null, null, null, BigDecimal.ZERO);
+    TransactionResponse cleared = transactionService.updateTransaction(userId, portfolioId, buyId, clearFeeReq);
+    assertThat(cleared.fxFeePct()).isEqualByComparingTo("0.00");
+    assertThat(cleared.baseAmount()).isEqualByComparingTo("4000.0000");
+
+    CreateTransactionRequest applyFeeReq = new CreateTransactionRequest(
+        instrumentId, TransactionType.BUY, new BigDecimal("100.00"), new BigDecimal("10"),
+        BigDecimal.ZERO, Currency.USD, LocalDateTime.of(2025, 1, 15, 10, 0),
+        null, null, null, null, null, null, null, null, new BigDecimal("0.50"));
+    TransactionResponse reapplied = transactionService.updateTransaction(userId, portfolioId, buyId, applyFeeReq);
+    assertThat(reapplied.fxFeePct()).isEqualByComparingTo("0.50");
+    assertThat(reapplied.baseAmount()).isEqualByComparingTo("4020.0000");
+
+    UUID sellId = UUID.randomUUID();
+    Transaction existingSell = new Transaction();
+    existingSell.setId(sellId);
+    existingSell.setPortfolio(portfolio);
+    existingSell.setInstrumentId(instrumentId);
+    existingSell.setTransactionType(TransactionType.SELL);
+    existingSell.setQuantity(new BigDecimal("10"));
+    existingSell.setPrice(new BigDecimal("100.00"));
+    existingSell.setCommission(BigDecimal.ZERO);
+    existingSell.setCurrency(Currency.USD);
+    existingSell.setExchangeRate(BigDecimal.ONE);
+    existingSell.setExchangeRateToBase(new BigDecimal("4.0000"));
+    existingSell.setBaseAmount(new BigDecimal("4000.0000"));
+    existingSell.setFxFeePct(BigDecimal.ZERO);
+    existingSell.setExecutedAt(LocalDateTime.of(2025, 2, 15, 10, 0));
+
+    when(transactionRepository.findByIdAndPortfolioId(sellId, portfolioId)).thenReturn(Optional.of(existingSell));
+    when(transactionRepository.findAllByPortfolioIdAndInstrumentIdOrderByExecutedAtAsc(portfolioId, instrumentId))
+        .thenReturn(java.util.List.of(existingBuy, existingSell));
+
+    CreateTransactionRequest sellFeeReq = new CreateTransactionRequest(
+        instrumentId, TransactionType.SELL, new BigDecimal("100.00"), new BigDecimal("10"),
+        BigDecimal.ZERO, Currency.USD, LocalDateTime.of(2025, 2, 15, 10, 0),
+        null, null, null, null, null, null, null, null, new BigDecimal("0.50"));
+    TransactionResponse sellUpdated = transactionService.updateTransaction(userId, portfolioId, sellId, sellFeeReq);
+    assertThat(sellUpdated.fxFeePct()).isEqualByComparingTo("0.50");
+    assertThat(sellUpdated.baseAmount()).isEqualByComparingTo("3980.0000");
+  }
+
+  @Test
+  void createTransactionRequest_allowsTodayWarsawNoonBefore12Utc() {
+    Validator utcMorningValidator = Validation.byDefaultProvider()
+        .configure()
+        .clockProvider(() -> java.time.Clock.fixed(
+            java.time.Instant.parse("2026-06-15T10:00:00Z"), java.time.ZoneOffset.UTC))
+        .buildValidatorFactory()
+        .getValidator();
+
+    CreateTransactionRequest warsawNoonToday = new CreateTransactionRequest(
+        instrumentId,
+        TransactionType.BUY,
+        new BigDecimal("100.00"),
+        new BigDecimal("5"),
+        BigDecimal.ZERO,
+        Currency.PLN,
+        LocalDateTime.of(2026, 6, 15, 12, 0),
+        null, null, null, null, null);
+
+    assertThat(utcMorningValidator.validate(warsawNoonToday)).isEmpty();
+  }
+
+  @Test
+  void v4Migration_addsFxFeePctVersionAndCascadeForeignKey() throws Exception {
+    java.nio.file.Path v4Path = java.nio.file.Path.of(
+        "src/main/resources/db/migration/V4__fx_conversion_fee_and_audit_fixes.sql");
+    if (!java.nio.file.Files.exists(v4Path)) {
+      v4Path = java.nio.file.Path.of(
+          "backend/src/main/resources/db/migration/V4__fx_conversion_fee_and_audit_fixes.sql");
+    }
+    assertThat(v4Path).exists();
+    String sql = java.nio.file.Files.readString(v4Path);
+    assertThat(sql).containsIgnoringCase("fx_fee_pct");
+    assertThat(sql).containsIgnoringCase("version");
+    assertThat(sql).containsIgnoringCase("fk_transaction_portfolio");
+    assertThat(sql).containsIgnoringCase("ON DELETE CASCADE");
+  }
 }

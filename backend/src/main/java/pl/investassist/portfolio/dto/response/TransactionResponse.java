@@ -24,12 +24,56 @@ public record TransactionResponse(
     BigDecimal baseAmount,
     BigDecimal exchangeRateToBase,
     BigDecimal instrumentToTxRate,
-    BigDecimal withholdingTaxPct) {
+    BigDecimal withholdingTaxPct,
+    BigDecimal fxFeePct) {
+
+  public TransactionResponse(
+      UUID id,
+      UUID instrumentId,
+      TransactionType transactionType,
+      BigDecimal quantity,
+      BigDecimal price,
+      BigDecimal commission,
+      Currency currency,
+      BigDecimal exchangeRate,
+      LocalDateTime executedAt,
+      String seriesName,
+      BigDecimal bondRate,
+      BigDecimal bondMargin,
+      Integer termMonths,
+      BigDecimal baseAmount,
+      BigDecimal exchangeRateToBase,
+      BigDecimal instrumentToTxRate,
+      BigDecimal withholdingTaxPct) {
+    this(
+        id,
+        instrumentId,
+        transactionType,
+        quantity,
+        price,
+        commission,
+        currency,
+        exchangeRate,
+        executedAt,
+        seriesName,
+        bondRate,
+        bondMargin,
+        termMonths,
+        baseAmount,
+        exchangeRateToBase,
+        instrumentToTxRate,
+        withholdingTaxPct,
+        null);
+  }
 
   public static TransactionResponse from(Transaction transaction) {
     if (transaction == null) {
       return null;
     }
+    BigDecimal resolvedInstrumentToTxRate =
+        transaction.getInstrumentToTxRate() != null
+            ? transaction.getInstrumentToTxRate()
+            : transaction.getExchangeRate();
     return new TransactionResponse(
         transaction.getId(),
         transaction.getInstrumentId(),
@@ -46,7 +90,8 @@ public record TransactionResponse(
         transaction.getTermMonths(),
         transaction.getBaseAmount(),
         transaction.getExchangeRateToBase(),
-        transaction.getExchangeRate(),
-        transaction.getWithholdingTaxPct());
+        resolvedInstrumentToTxRate,
+        transaction.getWithholdingTaxPct(),
+        transaction.getFxFeePct());
   }
 }

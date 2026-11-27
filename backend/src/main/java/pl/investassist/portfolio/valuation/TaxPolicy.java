@@ -20,7 +20,11 @@ public final class TaxPolicy {
     return taxMode == null || taxMode == TaxMode.NETTO;
   }
 
-  public record CapitalDisposalEvent(LocalDateTime executedAt, BigDecimal profitBase) {}
+  public record CapitalDisposalEvent(LocalDateTime executedAt, BigDecimal profitBase, boolean bond) {
+    public CapitalDisposalEvent(LocalDateTime executedAt, BigDecimal profitBase) {
+      this(executedAt, profitBase, false);
+    }
+  }
 
   public record Art30aPayoutEvent(
       LocalDateTime executedAt, BigDecimal grossBase, BigDecimal withholdingTaxPct) {}
@@ -61,19 +65,23 @@ public final class TaxPolicy {
     return computeBelka(unrealized, false).min(grossValue);
   }
 
-  public static BigDecimal computeArt30aTopUp(
+  private static BigDecimal normalizeWhtRate(BigDecimal withholdingTaxPct) {
+    if (withholdingTaxPct == null) {
+      return BigDecimal.ZERO;
+    }
+    return withholdingTaxPct
+        .divide(HUNDRED, 6, RoundingMode.HALF_UP)
+        .max(BigDecimal.ZERO)
+        .min(BigDecimal.ONE);
+  }
+
+  public static BigDecimal computeArt30aTotalTax(
       BigDecimal grossBase, BigDecimal withholdingTaxPct, boolean skipTax) {
     if (skipTax || grossBase == null || grossBase.compareTo(BigDecimal.ZERO) <= 0) {
       return BigDecimal.ZERO;
     }
-    BigDecimal whtRate =
-        withholdingTaxPct != null
-            ? withholdingTaxPct
-                .divide(HUNDRED, 6, RoundingMode.HALF_UP)
-                .max(BigDecimal.ZERO)
-                .min(BELKA_RATE_BD)
-            : BigDecimal.ZERO;
-    return grossBase.multiply(BELKA_RATE_BD.subtract(whtRate));
+    BigDecimal effectiveRate = BELKA_RATE_BD.max(normalizeWhtRate(withholdingTaxPct));
+    return grossBase.multiply(effectiveRate);
   }
 
   public static PortfolioTaxResult computePortfolioTax(
@@ -89,9 +97,21 @@ public final class TaxPolicy {
 
     TreeMap<Integer, BigDecimal> capitalByYear = new TreeMap<>();
     TreeMap<Integer, LocalDateTime> latestDisposalByYear = new TreeMap<>();
+    List<MetricsCalculator.CashFlow> settledTaxFlows = new ArrayList<>();
+    BigDecimal settledArt30aTax = BigDecimal.ZERO;
     if (disposals != null) {
       for (CapitalDisposalEvent d : disposals) {
         if (d.profitBase() == null) continue;
+        if (d.bond()) {
+          BigDecimal bondTax = computeBelka(d.profitBase(), false);
+          if (bondTax.compareTo(BigDecimal.ZERO) > 0) {
+            settledArt30aTax = settledArt30aTax.add(bondTax);
+            if (d.executedAt() != null) {
+              settledTaxFlows.add(new MetricsCalculator.CashFlow(-bondTax.doubleValue(), d.executedAt()));
+            }
+          }
+          continue;
+        }
         int year = d.executedAt() != null ? d.executedAt().getYear() : 1970;
         capitalByYear.merge(year, d.profitBase(), BigDecimal::add);
         if (d.executedAt() != null) {
@@ -101,7 +121,6 @@ public final class TaxPolicy {
     }
 
     List<LossBucket> losses = new ArrayList<>();
-    List<MetricsCalculator.CashFlow> settledTaxFlows = new ArrayList<>();
     BigDecimal settledCapitalTax = BigDecimal.ZERO;
     for (Map.Entry<Integer, BigDecimal> entry : capitalByYear.entrySet()) {
       int year = entry.getKey();
@@ -135,10 +154,9 @@ public final class TaxPolicy {
       }
     }
 
-    BigDecimal settledArt30aTax = BigDecimal.ZERO;
     if (payouts != null) {
       for (Art30aPayoutEvent p : payouts) {
-        BigDecimal payoutTax = computeArt30aTopUp(p.grossBase(), p.withholdingTaxPct(), false);
+        BigDecimal payoutTax = computeArt30aTotalTax(p.grossBase(), p.withholdingTaxPct(), false);
         settledArt30aTax = settledArt30aTax.add(payoutTax);
         if (payoutTax.compareTo(BigDecimal.ZERO) > 0 && p.executedAt() != null) {
           settledTaxFlows.add(new MetricsCalculator.CashFlow(-payoutTax.doubleValue(), p.executedAt()));
@@ -173,13 +191,27 @@ public final class TaxPolicy {
       BigDecimal realizedProfitBase,
       BigDecimal dividendsBase,
       boolean taxExempt) {
+    return computePositionTax(valueBase, investedBase, realizedProfitBase, dividendsBase, null, taxExempt);
+  }
+
+  public static PositionTaxBreakdown computePositionTax(
+      BigDecimal valueBase,
+      BigDecimal investedBase,
+      BigDecimal realizedProfitBase,
+      BigDecimal dividendsBase,
+      BigDecimal explicitDividendTax,
+      boolean taxExempt) {
     BigDecimal val = valueBase != null ? valueBase : BigDecimal.ZERO;
     BigDecimal inv = investedBase != null ? investedBase : BigDecimal.ZERO;
     BigDecimal real = realizedProfitBase != null ? realizedProfitBase : BigDecimal.ZERO;
     BigDecimal divs = dividendsBase != null ? dividendsBase : BigDecimal.ZERO;
     BigDecimal grossProfit = val.subtract(inv).add(real).add(divs);
     BigDecimal openTax = computePositionOpenTax(val, inv, taxExempt);
-    BigDecimal settledTax = computeBelka(real, taxExempt).add(computeBelka(divs, taxExempt));
+    BigDecimal divTax =
+        taxExempt
+            ? BigDecimal.ZERO
+            : (explicitDividendTax != null ? explicitDividendTax : computeBelka(divs, false));
+    BigDecimal settledTax = computeBelka(real, taxExempt).add(divTax);
     BigDecimal totalTax = openTax.add(settledTax);
     BigDecimal netProfit = grossProfit.subtract(totalTax);
     BigDecimal netValue = val.subtract(openTax).max(BigDecimal.ZERO);

@@ -297,7 +297,7 @@ class AnalyticsService:
                     fast_info = _safe_fast_info(stock)
                     currency, price_scale = normalize_quote_currency(_read_fast_info_field(fast_info, "currency"), sym)
 
-                    replace_history = bool(max_date and fetch_full_history)
+                    replace_history = False
                     if max_date and not fetch_full_history:
                         matching_row = hist[hist[date_col].astype(str).str[:10] == max_date]
                         if not matching_row.empty:
@@ -322,6 +322,8 @@ class AnalyticsService:
                     ]
                     if replace_history:
                         market_history_repo.replace_symbol_prices(sym, records, currency)
+                    elif fetch_full_history:
+                        market_history_repo.replace_symbol_prices(sym, records, currency, preserve_older=True)
                     else:
                         market_history_repo.save_eod_prices_bulk(sym, records, currency)
 

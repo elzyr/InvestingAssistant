@@ -190,7 +190,6 @@ class ExpenseServiceTest {
       st.setId(UUID.randomUUID());
       return st;
     });
-    when(ruleRepository.findAllByUserIdOrderByUpdatedAtDesc(userId)).thenReturn(List.of());
 
     LocalDate txDate = LocalDate.of(2026, 10, 8);
     CommitTransactionItem existing = commitItem("fp-existing", "biedronka", "Biedronka", null, "-50.00", ExpenseCategory.GROCERIES, false);
@@ -224,13 +223,17 @@ class ExpenseServiceTest {
     assertThat(txCaptor.getValue()).hasSize(1);
     assertThat(txCaptor.getValue().get(0).getFingerprint()).isEqualTo("fp-new");
 
-    ArgumentCaptor<Iterable<ExpenseMerchantRule>> rulesCaptor = ArgumentCaptor.forClass(Iterable.class);
-    verify(ruleRepository).saveAll(rulesCaptor.capture());
-    List<ExpenseMerchantRule> savedRules = new java.util.ArrayList<>();
-    rulesCaptor.getValue().forEach(savedRules::add);
-    assertThat(savedRules).hasSize(1);
-    assertThat(savedRules.get(0).getMatchType()).isEqualTo(RuleMatchType.PHRASE);
-    assertThat(savedRules.get(0).getMatchKey()).isEqualTo("kurs angielskiego");
+    verify(ruleRepository).upsertRule(
+        any(UUID.class),
+        eq(userId),
+        eq("PHRASE"),
+        eq("kurs angielskiego"),
+        eq("Kurs angielskiego"),
+        eq("EDUCATION"),
+        eq("EXPENSE"),
+        eq("USER_OVERRIDE"));
+    verify(ruleRepository, never()).saveAll(any());
+    verify(ruleRepository, never()).save(any());
   }
 
   @Test
@@ -248,8 +251,6 @@ class ExpenseServiceTest {
 
     when(transactionRepository.findByIdAndUserId(outflowId, userId)).thenReturn(Optional.of(zalandoOutflow));
     when(transactionRepository.save(any(ExpenseTransaction.class))).thenAnswer(inv -> inv.getArgument(0));
-    when(ruleRepository.findByUserIdAndMatchTypeAndMatchKey(userId, RuleMatchType.MERCHANT, "zalando"))
-        .thenReturn(Optional.empty());
     when(transactionRepository.findAllByUserIdAndMerchantKey(userId, "zalando"))
         .thenReturn(List.of(zalandoOutflow, otherOutflow, zalandoRefund));
 
@@ -271,19 +272,31 @@ class ExpenseServiceTest {
         gatewayTxId, userId, LocalDate.of(2026, 10, 9), "payu", "Kurs", "kurs angielskiego",
         "-200.00", FlowKind.EXPENSE, ExpenseCategory.OTHER_EXPENSE);
     when(transactionRepository.findByIdAndUserId(gatewayTxId, userId)).thenReturn(Optional.of(gatewayTx));
-    when(ruleRepository.findByUserIdAndMatchTypeAndMatchKey(userId, RuleMatchType.PHRASE, "kurs angielskiego"))
-        .thenReturn(Optional.empty());
 
     expenseService.updateTransaction(
         userId,
         gatewayTxId,
         new UpdateExpenseTransactionRequest(ExpenseCategory.EDUCATION, FlowKind.EXPENSE, false, null, true, false));
 
-    ArgumentCaptor<ExpenseMerchantRule> ruleCaptor = ArgumentCaptor.forClass(ExpenseMerchantRule.class);
-    verify(ruleRepository, org.mockito.Mockito.times(2)).save(ruleCaptor.capture());
-    ExpenseMerchantRule gatewaySavedRule = ruleCaptor.getAllValues().get(1);
-    assertThat(gatewaySavedRule.getMatchType()).isEqualTo(RuleMatchType.PHRASE);
-    assertThat(gatewaySavedRule.getMatchKey()).isEqualTo("kurs angielskiego");
+    verify(ruleRepository).upsertRule(
+        any(UUID.class),
+        eq(userId),
+        eq("MERCHANT"),
+        eq("zalando"),
+        eq("Zalando"),
+        eq("SHOPPING"),
+        eq("EXPENSE"),
+        eq("USER_OVERRIDE"));
+    verify(ruleRepository).upsertRule(
+        any(UUID.class),
+        eq(userId),
+        eq("PHRASE"),
+        eq("kurs angielskiego"),
+        eq("Kurs"),
+        eq("EDUCATION"),
+        eq("EXPENSE"),
+        eq("USER_OVERRIDE"));
+    verify(ruleRepository, never()).save(any());
   }
 
   @Test
@@ -421,8 +434,6 @@ class ExpenseServiceTest {
 
     when(transactionRepository.findByIdAndUserId(gatewayTxId, userId)).thenReturn(Optional.of(gatewayTx));
     when(transactionRepository.save(any(ExpenseTransaction.class))).thenAnswer(inv -> inv.getArgument(0));
-    when(ruleRepository.findByUserIdAndMatchTypeAndMatchKey(userId, RuleMatchType.PHRASE, "kurs angielskiego"))
-        .thenReturn(Optional.empty());
     when(transactionRepository.findAllByUserIdAndPhraseKey(userId, "kurs angielskiego"))
         .thenReturn(List.of(gatewayTx, samePhrasePayu));
 
@@ -436,6 +447,15 @@ class ExpenseServiceTest {
     assertThat(samePhrasePayu.getClassificationSource()).isEqualTo(ClassificationSource.USER_RULE);
     assertThat(unrelatedPayu.getCategory()).isEqualTo(ExpenseCategory.OTHER_EXPENSE);
 
+    verify(ruleRepository).upsertRule(
+        any(UUID.class),
+        eq(userId),
+        eq("PHRASE"),
+        eq("kurs angielskiego"),
+        eq("Kurs"),
+        eq("EDUCATION"),
+        eq("EXPENSE"),
+        eq("USER_OVERRIDE"));
     verify(transactionRepository).findAllByUserIdAndPhraseKey(userId, "kurs angielskiego");
     verify(transactionRepository, never()).findAllByUserIdAndMerchantKey(eq(userId), any());
 
@@ -636,8 +656,6 @@ class ExpenseServiceTest {
 
     when(transactionRepository.findByIdAndUserId(refundId, userId)).thenReturn(Optional.of(refundTx));
     when(transactionRepository.save(any(ExpenseTransaction.class))).thenAnswer(inv -> inv.getArgument(0));
-    when(ruleRepository.findByUserIdAndMatchTypeAndMatchKey(userId, RuleMatchType.MERCHANT, "sklep_alfa"))
-        .thenReturn(Optional.of(existingRule));
 
     ExpenseTransactionResponse updated = expenseService.updateTransaction(
         userId,
@@ -648,7 +666,6 @@ class ExpenseServiceTest {
     assertThat(updated.flowKind()).isEqualTo(FlowKind.REFUND);
     assertThat(existingRule.getFlowKind()).isEqualTo(FlowKind.EXPENSE);
     assertThat(existingRule.getCategory()).isEqualTo(ExpenseCategory.SHOPPING);
-    assertThat(existingRule.getHitCount()).isEqualTo(2);
 
     stubUserPln();
     String csv = String.join("\n",
@@ -700,20 +717,28 @@ class ExpenseServiceTest {
             txDate, txDate, null, null, new BigDecimal("150.00"), BigDecimal.ZERO,
             ReconciliationStatus.UNAVAILABLE, null, List.of(newConsumptionRefund, plainRefundRuleIgnored)));
 
-    ArgumentCaptor<ExpenseMerchantRule> ruleCaptor = ArgumentCaptor.forClass(ExpenseMerchantRule.class);
-    verify(ruleRepository, org.mockito.Mockito.times(1)).save(ruleCaptor.capture());
-
-    ArgumentCaptor<Iterable<ExpenseMerchantRule>> batchRulesCaptor = ArgumentCaptor.forClass(Iterable.class);
-    verify(ruleRepository).saveAll(batchRulesCaptor.capture());
-    List<ExpenseMerchantRule> savedRules = new java.util.ArrayList<>();
-    batchRulesCaptor.getValue().forEach(savedRules::add);
-    assertThat(savedRules).hasSize(1);
-    ExpenseMerchantRule createdButikRule = savedRules.get(0);
-    assertThat(createdButikRule.getMatchKey()).isEqualTo("nowy_butik");
-    assertThat(createdButikRule.getCategory()).isEqualTo(ExpenseCategory.SHOPPING);
-    assertThat(createdButikRule.getFlowKind()).isEqualTo(FlowKind.EXPENSE);
-    assertThat(createdButikRule.getHitCount()).isEqualTo(1);
-    verify(ruleRepository, never()).findByUserIdAndMatchTypeAndMatchKey(userId, RuleMatchType.MERCHANT, "sklep_beta");
+    verify(ruleRepository).upsertRule(
+        any(UUID.class),
+        eq(userId),
+        eq("MERCHANT"),
+        eq("sklep_alfa"),
+        eq("Sklep Alfa"),
+        eq("SHOPPING"),
+        eq("EXPENSE"),
+        eq("USER_OVERRIDE"));
+    verify(ruleRepository).upsertRule(
+        any(UUID.class),
+        eq(userId),
+        eq("MERCHANT"),
+        eq("nowy_butik"),
+        eq("Nowy Butik"),
+        eq("SHOPPING"),
+        eq("EXPENSE"),
+        eq("USER_OVERRIDE"));
+    verify(ruleRepository, never()).upsertRule(
+        any(), any(), any(), eq("sklep_beta"), any(), any(), any(), any());
+    verify(ruleRepository, never()).save(any());
+    verify(ruleRepository, never()).saveAll(any());
   }
 
   @Test
@@ -761,18 +786,21 @@ class ExpenseServiceTest {
         "-45.00", FlowKind.EXPENSE, ExpenseCategory.GROCERIES);
     when(transactionRepository.findByIdAndUserId(txId, userId)).thenReturn(Optional.of(tx));
     when(transactionRepository.save(any(ExpenseTransaction.class))).thenAnswer(inv -> inv.getArgument(0));
-    when(ruleRepository.findByUserIdAndMatchTypeAndMatchKey(userId, RuleMatchType.MERCHANT, "lokalny_warzywniak"))
-        .thenReturn(Optional.of(persistedRule));
 
     expenseService.updateTransaction(
         userId,
         txId,
         new UpdateExpenseTransactionRequest(ExpenseCategory.HEALTH, FlowKind.EXPENSE, false, null, true, false));
 
-    ArgumentCaptor<ExpenseMerchantRule> ruleCaptor = ArgumentCaptor.forClass(ExpenseMerchantRule.class);
-    verify(ruleRepository).save(ruleCaptor.capture());
-    assertThat(ruleCaptor.getValue().getHitCount()).isEqualTo(4);
-    assertThat(ruleCaptor.getValue().getCategory()).isEqualTo(ExpenseCategory.HEALTH);
+    verify(ruleRepository).upsertRule(
+        any(UUID.class),
+        eq(userId),
+        eq("MERCHANT"),
+        eq("lokalny_warzywniak"),
+        eq("Lokalny Warzywniak"),
+        eq("HEALTH"),
+        eq("EXPENSE"),
+        eq("USER_OVERRIDE"));
   }
 
   @Test
@@ -819,20 +847,21 @@ class ExpenseServiceTest {
 
     when(transactionRepository.findByIdAndUserId(txId, userId)).thenReturn(Optional.of(googleTx));
     when(transactionRepository.save(any(ExpenseTransaction.class))).thenAnswer(inv -> inv.getArgument(0));
-    when(ruleRepository.findByUserIdAndMatchTypeAndMatchKey(userId, RuleMatchType.MERCHANT, "google"))
-        .thenReturn(Optional.empty());
 
     expenseService.updateTransaction(
         userId,
         txId,
         new UpdateExpenseTransactionRequest(ExpenseCategory.SUBSCRIPTIONS, FlowKind.EXPENSE, false, null, true, false));
 
-    ArgumentCaptor<ExpenseMerchantRule> ruleCaptor = ArgumentCaptor.forClass(ExpenseMerchantRule.class);
-    verify(ruleRepository).save(ruleCaptor.capture());
-    assertThat(ruleCaptor.getValue().getMatchType()).isEqualTo(RuleMatchType.MERCHANT);
-    assertThat(ruleCaptor.getValue().getMatchKey()).isEqualTo("google");
-    assertThat(ruleCaptor.getValue().getCategory()).isEqualTo(ExpenseCategory.SUBSCRIPTIONS);
-    assertThat(ruleCaptor.getValue().getFlowKind()).isEqualTo(FlowKind.EXPENSE);
+    verify(ruleRepository).upsertRule(
+        any(UUID.class),
+        eq(userId),
+        eq("MERCHANT"),
+        eq("google"),
+        eq("Google"),
+        eq("SUBSCRIPTIONS"),
+        eq("EXPENSE"),
+        eq("USER_OVERRIDE"));
   }
 
   @Test
@@ -1172,6 +1201,158 @@ class ExpenseServiceTest {
     ArgumentCaptor<List<ExpenseTransaction>> savedCaptor = ArgumentCaptor.forClass(List.class);
     verify(transactionRepository).saveAll(savedCaptor.capture());
     assertThat(savedCaptor.getValue()).containsExactlyInAnyOrder(empikTx, selfTransfer);
+  }
+
+  @Test
+  void expenseTransaction_hasOptimisticLockVersionField() {
+    boolean hasVersion = java.util.Arrays.stream(ExpenseTransaction.class.getDeclaredFields())
+        .anyMatch(f -> f.isAnnotationPresent(jakarta.persistence.Version.class));
+    assertThat(hasVersion).isTrue();
+  }
+
+  @Test
+  void reclassifyTransactions_skipsRowsOverriddenConcurrentlyDuringLlmCall() {
+    stubUserPln();
+    llmPort.enabled = true;
+    UUID txId = UUID.randomUUID();
+    ExpenseTransaction staleSnapshot = entityTx(
+        txId, userId, LocalDate.of(2026, 10, 9), "unknown_studio", "Unknown Studio", "unknown studio",
+        "-120.00", FlowKind.EXPENSE, ExpenseCategory.OTHER_EXPENSE);
+    staleSnapshot.setRawDescription("STUDIO FRYZJERSKIE XYZ");
+    staleSnapshot.setClassificationSource(ClassificationSource.FALLBACK);
+
+    ExpenseTransaction concurrentlyOverridden = entityTx(
+        txId, userId, LocalDate.of(2026, 10, 9), "unknown_studio", "Unknown Studio", "unknown studio",
+        "-120.00", FlowKind.EXPENSE, ExpenseCategory.GIFTS);
+    concurrentlyOverridden.setRawDescription("STUDIO FRYZJERSKIE XYZ");
+    concurrentlyOverridden.setClassificationSource(ClassificationSource.USER_OVERRIDE);
+
+    when(ruleRepository.findAllByUserIdOrderByUpdatedAtDesc(userId)).thenReturn(List.of());
+    when(transactionRepository.findAllByUserIdOrderByTxDateDescCreatedAtDesc(userId))
+        .thenReturn(List.of(staleSnapshot));
+    org.mockito.Mockito.lenient().when(transactionRepository.findAllById(anyCollection()))
+        .thenReturn(List.of(concurrentlyOverridden));
+    llmPort.suggestions = Map.of(
+        txId.toString(),
+        new LlmCategorySuggestion(ExpenseCategory.BEAUTY_CARE, FlowKind.EXPENSE, "Studio XYZ", new BigDecimal("0.91")));
+
+    ReclassifyExpensesResponse res = expenseService.reclassifyTransactions(
+        userId, new ReclassifyExpensesRequest(null, null, null, false));
+
+    assertThat(res.updatedCount()).isZero();
+    verify(transactionRepository, never()).saveAll(any());
+  }
+
+  @Test
+  void commitStatement_rejectsMismatchedBaseAmountOrNonPositiveFxRateAndIsIdempotentOnDuplicate() {
+    org.mockito.Mockito.lenient().when(statementRepository.save(any(ExpenseStatement.class))).thenAnswer(inv -> {
+      ExpenseStatement st = inv.getArgument(0);
+      st.setId(UUID.randomUUID());
+      return st;
+    });
+    LocalDate txDate = LocalDate.of(2026, 10, 8);
+    CommitTransactionItem mismatchedSign = new CommitTransactionItem(
+        txDate, txDate, "BIEDRONKA", "biedronka", "Biedronka", null,
+        new BigDecimal("-50.00"), "PLN", new BigDecimal("50.00"), "PLN", BigDecimal.ONE, false,
+        FlowKind.EXPENSE, ExpenseCategory.GROCERIES, ClassificationSource.RULE_ENGINE, BigDecimal.ONE,
+        "fp-mismatch", false, false, null);
+
+    assertThatThrownBy(() -> expenseService.commitStatement(
+        userId,
+        new CommitStatementRequest(
+            "bad.csv", "hash-mismatch", StatementFormat.CSV, BankProfile.GENERIC, null, "PLN",
+            txDate, txDate, null, null, null, null, ReconciliationStatus.UNAVAILABLE, null,
+            List.of(mismatchedSign))))
+        .isInstanceOf(IllegalArgumentException.class);
+
+    CommitTransactionItem zeroFx = new CommitTransactionItem(
+        txDate, txDate, "BIEDRONKA", "biedronka", "Biedronka", null,
+        new BigDecimal("-50.00"), "EUR", new BigDecimal("-200.00"), "PLN", BigDecimal.ZERO, false,
+        FlowKind.EXPENSE, ExpenseCategory.GROCERIES, ClassificationSource.RULE_ENGINE, BigDecimal.ONE,
+        "fp-zero-fx", false, false, null);
+
+    assertThatThrownBy(() -> expenseService.commitStatement(
+        userId,
+        new CommitStatementRequest(
+            "bad2.csv", "hash-zero-fx", StatementFormat.CSV, BankProfile.GENERIC, null, "EUR",
+            txDate, txDate, null, null, null, null, ReconciliationStatus.UNAVAILABLE, null,
+            List.of(zeroFx))))
+        .isInstanceOf(IllegalArgumentException.class);
+
+    CommitTransactionItem dupItem = commitItem(
+        "fp-dup-1", "biedronka", "Biedronka", null, "-50.00", ExpenseCategory.GROCERIES, false);
+    when(transactionRepository.findExistingFingerprints(eq(userId), anyCollection()))
+        .thenReturn(Set.of("fp-dup-1"));
+    UUID existingStatementId = UUID.randomUUID();
+    ExpenseStatement persistedStatement = new ExpenseStatement();
+    persistedStatement.setId(existingStatementId);
+    persistedStatement.setUserId(userId);
+    persistedStatement.setFileName("dup.csv");
+    persistedStatement.setFormat(StatementFormat.CSV);
+    persistedStatement.setBankProfile(BankProfile.GENERIC);
+    persistedStatement.setAccountLabel("Main PLN");
+    persistedStatement.setCurrency("PLN");
+    persistedStatement.setPeriodStart(txDate);
+    persistedStatement.setPeriodEnd(txDate);
+    persistedStatement.setReconciliationStatus(ReconciliationStatus.UNAVAILABLE);
+    persistedStatement.setReconciliationDelta(BigDecimal.ZERO);
+    persistedStatement.setCreatedAt(java.time.LocalDateTime.of(2026, 10, 8, 9, 30));
+    when(statementRepository.findFirstByUserIdAndFileHashSha256OrderByCreatedAtDesc(userId, "hash-dup"))
+        .thenReturn(Optional.of(persistedStatement));
+
+    StatementSummaryResponse dupSummary = expenseService.commitStatement(
+        userId,
+        new CommitStatementRequest(
+            "dup.csv", "hash-dup", StatementFormat.CSV, BankProfile.GENERIC, null, "PLN",
+            txDate, txDate, null, null, null, new BigDecimal("50.00"), ReconciliationStatus.UNAVAILABLE, null,
+            List.of(dupItem)));
+
+    assertThat(dupSummary.id()).isEqualTo(existingStatementId);
+    assertThat(dupSummary.accountLabel()).isEqualTo("Main PLN");
+    assertThat(dupSummary.savedCount()).isZero();
+    assertThat(dupSummary.skippedDuplicates()).isEqualTo(1);
+    verify(statementRepository, never()).save(any());
+  }
+
+  @Test
+  @SuppressWarnings("unchecked")
+  void commitStatement_chunksExistingFingerprintLookupsIntoAtMostThousandItemBatches() {
+    when(statementRepository.save(any(ExpenseStatement.class))).thenAnswer(inv -> {
+      ExpenseStatement st = inv.getArgument(0);
+      st.setId(UUID.randomUUID());
+      return st;
+    });
+    when(transactionRepository.findExistingFingerprints(eq(userId), anyCollection()))
+        .thenReturn(Set.of());
+
+    int totalItems = 2050;
+    List<CommitTransactionItem> items = new ArrayList<>(totalItems);
+    for (int i = 0; i < totalItems; i++) {
+      items.add(commitItem(
+          "fp-chunk-" + i,
+          "biedronka",
+          "Biedronka",
+          null,
+          "-10.00",
+          ExpenseCategory.GROCERIES,
+          false));
+    }
+
+    LocalDate txDate = LocalDate.of(2026, 10, 8);
+    StatementSummaryResponse summary = expenseService.commitStatement(
+        userId,
+        new CommitStatementRequest(
+            "large.csv", "hash-large", StatementFormat.CSV, BankProfile.GENERIC, null, "PLN",
+            txDate, txDate, null, null, null, null, ReconciliationStatus.UNAVAILABLE, null, items));
+
+    assertThat(summary.savedCount()).isEqualTo(totalItems);
+
+    ArgumentCaptor<Collection<String>> chunkCaptor = ArgumentCaptor.forClass(Collection.class);
+    verify(transactionRepository, org.mockito.Mockito.times(3))
+        .findExistingFingerprints(eq(userId), chunkCaptor.capture());
+    assertThat(chunkCaptor.getAllValues())
+        .extracting(Collection::size)
+        .containsExactly(1000, 1000, 50);
   }
 
   private void stubUserPln() {
