@@ -430,10 +430,12 @@ class TestAnalyticsServiceFixes(unittest.TestCase):
 
     def test_zero_close_price_does_not_cause_div_by_zero_or_nan(self):
         from app.services.analytics_service import AnalyticsService
+        from app.services.market_utils import warsaw_today
 
-        d1 = (datetime.date.today() - datetime.timedelta(days=3)).isoformat()
-        d2 = (datetime.date.today() - datetime.timedelta(days=2)).isoformat()
-        d3 = (datetime.date.today() - datetime.timedelta(days=1)).isoformat()
+        today = warsaw_today()
+        d1 = (today - datetime.timedelta(days=3)).isoformat()
+        d2 = (today - datetime.timedelta(days=2)).isoformat()
+        d3 = (today - datetime.timedelta(days=1)).isoformat()
 
         prices = [
             {"date": d1, "closePrice": 0.0, "currency": "USD"},
@@ -444,7 +446,7 @@ class TestAnalyticsServiceFixes(unittest.TestCase):
         with patch("app.services.market_history_repo.market_history_repo.get_max_date", return_value=d3):
             with patch(
                 "app.services.market_history_repo.market_history_repo.get_profile_metrics",
-                return_value={"ter": None, "lastUpdated": datetime.date.today().isoformat()},
+                return_value={"ter": None, "lastUpdated": today.isoformat()},
             ):
                 with patch("app.services.market_history_repo.market_history_repo.get_historical_prices", return_value=prices):
                     with patch("app.services.yahoo_service.YahooService.get_historical_fx_rates", return_value={d1: 4.0, d2: 4.0, d3: 4.0}):
