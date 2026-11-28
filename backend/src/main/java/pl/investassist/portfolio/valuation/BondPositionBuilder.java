@@ -151,6 +151,7 @@ final class BondPositionBuilder {
                         .multiply(BigDecimal.valueOf(lotVal.unitPriceNative()))
                         .multiply(openFxRate);
                 BigDecimal lotCostBase = lot.remainingCostBase();
+                acc.openBondGain = acc.openBondGain.add(lotValueBase.subtract(lotCostBase));
                 BigDecimal lotYieldPct = lotVal.rateUnavailable()
                         ? null
                         : BigDecimal.valueOf(lotVal.currentAnnualRatePct());

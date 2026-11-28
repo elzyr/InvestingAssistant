@@ -50,7 +50,8 @@ final class PortfolioStepValuator {
       Map<String, StepGroupContributor> contributorsByKey,
       Map<String, StepCategoryTotals> categoriesByCode,
       boolean degraded,
-      BigDecimal completedBondCouponsBase) {
+      BigDecimal completedBondCouponsBase,
+      List<MetricsCalculator.CashFlow> completedBondCouponFlows) {
 
     StepValuationResult(
         BigDecimal grossTotalValue,
@@ -69,7 +70,7 @@ final class PortfolioStepValuator {
       this(
           grossTotalValue, totalInvested, equityValue, bondValue, totalDividends,
           totalRealizedProfit, grossProfit, totalBelkaTax, netProfit, displayValuation,
-          settledTax, contributorsByKey, categoriesByCode, false, BigDecimal.ZERO);
+          settledTax, contributorsByKey, categoriesByCode, false, BigDecimal.ZERO, List.of());
     }
   }
 
@@ -120,6 +121,8 @@ final class PortfolioStepValuator {
     BigDecimal equityGross = BigDecimal.ZERO;
     BigDecimal bondGross = BigDecimal.ZERO;
     BigDecimal completedBondCouponsBase = BigDecimal.ZERO;
+    BigDecimal openBondGain = BigDecimal.ZERO;
+    List<MetricsCalculator.CashFlow> completedBondCouponFlows = new ArrayList<>();
     List<TaxPolicy.Art30aPayoutEvent> completedBondArt30aEvents = new ArrayList<>();
     boolean degraded = false;
 
@@ -176,6 +179,7 @@ final class PortfolioStepValuator {
           if (qty.compareTo(BigDecimal.ZERO) > 0) {
             grossValBase = bondStep.carryingValueNative().multiply(fx);
             bondGross = bondGross.add(grossValBase);
+            openBondGain = openBondGain.add(grossValBase.subtract(costBase));
             degraded |= bondStep.rateUnavailable();
           }
           BigDecimal couponsBase = bondStep.completedCouponsNative().multiply(fx);
@@ -185,6 +189,12 @@ final class PortfolioStepValuator {
             completedBondCouponsBase = completedBondCouponsBase.add(couponsBase);
             completedBondArt30aEvents.add(
                 new TaxPolicy.Art30aPayoutEvent(stepDateTime, couponsBase, BigDecimal.ZERO));
+            for (MetricsCalculator.CashFlow flow : bondStep.couponFlowsNative()) {
+              BigDecimal couponFx = ValuationSupport.requireFxRate(
+                  qCur, ctx.baseCurrency(), ctx.fxSeriesByPair(), flow.date().toLocalDate(), false);
+              completedBondCouponFlows.add(
+                  new MetricsCalculator.CashFlow(flow.amount() * couponFx.doubleValue(), flow.date()));
+            }
           }
         }
       } else if (qty.compareTo(BigDecimal.ZERO) > 0) {
@@ -342,6 +352,8 @@ final class PortfolioStepValuator {
         allArt30aEvents,
         grossTotalValue,
         totalInvested,
+        openBondGain,
+        stepDate.getYear(),
         !ctx.shouldApplyTax());
     BigDecimal totalBelka = portfolioTax.totalTax();
     BigDecimal netProfit = grossProfit.subtract(totalBelka);
@@ -378,6 +390,7 @@ final class PortfolioStepValuator {
         contributors,
         finalizedCategories,
         degraded,
-        completedBondCouponsBase);
+        completedBondCouponsBase,
+        completedBondCouponFlows);
   }
 }

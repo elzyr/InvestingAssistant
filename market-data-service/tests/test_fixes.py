@@ -1068,6 +1068,35 @@ class TestInflationServiceFixes(unittest.TestCase):
         self.assertIn("2018-01-05", saved_dates)
         conn.close()
 
+    def test_fetch_etf_market_metrics_stores_exchange_local_dates(self):
+        from app.services.analytics_service import AnalyticsService
+        from app.services.market_history_repo import MarketHistoryRepository
+        from app.services import analytics_service as analytics_mod
+        from app.services import cache_service
+
+        conn = sqlite3.connect(":memory:")
+        repo = MarketHistoryRepository(connection=conn, dialect="sqlite")
+        yf_hist = pd.DataFrame(
+            {
+                "Date": pd.date_range("2024-06-03", periods=2, freq="D", tz="Europe/Warsaw"),
+                "Close": [100.0, 101.0],
+                "Volume": [1, 1],
+            }
+        )
+        fake_stock = MagicMock()
+        fake_stock.fast_info = {"currency": "PLN"}
+        fake_stock.info = {}
+
+        with patch.object(analytics_mod, "market_history_repo", repo):
+            with patch.object(cache_service.cache_service, "get_or_set", side_effect=lambda k, fn, **kw: fn()):
+                with patch.object(analytics_mod.yf, "Ticker", return_value=fake_stock):
+                    with patch.object(analytics_mod, "download_clean_history", return_value=yf_hist):
+                        AnalyticsService.fetch_etf_market_metrics("CDR.WA")
+
+        saved_dates = sorted(row["date"] for row in repo.get_historical_prices("CDR.WA"))
+        self.assertEqual(saved_dates, ["2024-06-03", "2024-06-04"])
+        conn.close()
+
     def test_market_history_repo_synchronizes_pool_across_get_connection_and_close(self):
         import threading
         import time

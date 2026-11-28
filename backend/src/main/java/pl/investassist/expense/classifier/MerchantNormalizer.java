@@ -563,7 +563,7 @@ public class MerchantNormalizer {
     add(brands, "ibkr", "Interactive Brokers", ExpenseCategory.INVESTMENTS_SAVINGS, "interactive brokers", "ibkr");
     add(brands, "trading212", "Trading 212", ExpenseCategory.INVESTMENTS_SAVINGS, "trading 212", "trading212");
     add(brands, "finax", "Finax", ExpenseCategory.INVESTMENTS_SAVINGS, "finax");
-    add(brands, "portu", "Portu", ExpenseCategory.INVESTMENTS_SAVINGS, "portu");
+    add(brands, "portu", "Portu", ExpenseCategory.INVESTMENTS_SAVINGS, "portu.pl", "portu pl");
     add(brands, "inpzu", "inPZU", ExpenseCategory.INVESTMENTS_SAVINGS, "inpzu");
     add(brands, "obligacje", "Obligacje Skarbowe", ExpenseCategory.INVESTMENTS_SAVINGS,
         "obligacjeskarbowe", "obligacje skarbowe", "bm pko");

@@ -50,6 +50,7 @@ public final class ValuationEngine {
         BigDecimal totalEquityValue = BigDecimal.ZERO;
         BigDecimal totalBondValue = BigDecimal.ZERO;
         BigDecimal totalDailyChange = BigDecimal.ZERO;
+        BigDecimal openBondGain = BigDecimal.ZERO;
         BigDecimal totalRealizedProfit = BigDecimal.ZERO;
         BigDecimal weightedBondYieldNumerator = BigDecimal.ZERO;
         BigDecimal weightedBondYieldDenominator = BigDecimal.ZERO;
@@ -156,7 +157,8 @@ public final class ValuationEngine {
                 dividendFlowsByKey
                         .computeIfAbsent(divKey, ignored -> new ArrayList<>())
                         .add(new MetricsCalculator.CashFlow(divBase.doubleValue(), tx.getExecutedAt()));
-                BigDecimal divTax = TaxPolicy.computeArt30aTotalTax(divBase, tx.getWithholdingTaxPct(), false);
+                BigDecimal divTax = TaxPolicy.computeArt30aTotalTax(
+                        PortfolioLedger.resolveDividendTaxBase(tx), tx.getWithholdingTaxPct(), false);
                 if (divTax.compareTo(BigDecimal.ZERO) > 0) {
                     dividendTaxFlowsByKey
                             .computeIfAbsent(divKey, ignored -> new ArrayList<>())
@@ -232,6 +234,8 @@ public final class ValuationEngine {
                 allArt30aEvents,
                 grossTotalValue,
                 totalInvested,
+                acc.openBondGain,
+                effectiveNow.getYear(),
                 !shouldApplyTax);
         BigDecimal totalBelkaTax = portfolioTax.totalTax();
         BigDecimal displayPortfolioValue = shouldApplyTax

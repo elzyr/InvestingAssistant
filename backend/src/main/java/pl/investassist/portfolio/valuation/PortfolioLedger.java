@@ -386,12 +386,13 @@ public final class PortfolioLedger {
       boolean isBond = BondValuationEngine.isBondTransaction(tx, inst);
       if (tx.getTransactionType() == TransactionType.DIVIDEND) {
         BigDecimal divBase = resolveProceedsOrDividendBase(tx);
+        BigDecimal taxBase = resolveDividendTaxBase(tx);
         DividendKey divKey = resolveDividendKey(tx, isBond);
         dividendsByKey.merge(divKey, divBase, BigDecimal::add);
         dividendTaxByKey.merge(
-            divKey, TaxPolicy.computeArt30aTotalTax(divBase, tx.getWithholdingTaxPct(), false), BigDecimal::add);
+            divKey, TaxPolicy.computeArt30aTotalTax(taxBase, tx.getWithholdingTaxPct(), false), BigDecimal::add);
         totalDividends = totalDividends.add(divBase);
-        art30aEvents.add(new TaxPolicy.Art30aPayoutEvent(tx.getExecutedAt(), divBase, tx.getWithholdingTaxPct()));
+        art30aEvents.add(new TaxPolicy.Art30aPayoutEvent(tx.getExecutedAt(), taxBase, tx.getWithholdingTaxPct()));
         cumulativeExternalCashFlow = cumulativeExternalCashFlow.subtract(divBase);
         if (tx.getExecutedAt() != null) {
           allFlows.add(new MetricsCalculator.CashFlow(divBase.doubleValue(), tx.getExecutedAt()));
@@ -513,6 +514,16 @@ public final class PortfolioLedger {
 
   public static BigDecimal resolveProceedsOrDividendBase(Transaction tx) {
     return resolveBaseAmount(tx, TransactionType.SELL);
+  }
+
+  public static BigDecimal resolveDividendTaxBase(Transaction tx) {
+    BigDecimal feePct = tx.getFxFeePct();
+    BigDecimal rate = tx.getExchangeRateToBase();
+    if (feePct != null && feePct.signum() > 0 && rate != null && rate.signum() > 0) {
+      return computeNetTotal(tx.getTransactionType(), tx.getPrice(), tx.getQuantity(), tx.getCommission())
+          .multiply(rate);
+    }
+    return resolveProceedsOrDividendBase(tx);
   }
 
   private static BigDecimal resolveBaseAmount(Transaction tx, TransactionType type) {

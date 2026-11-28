@@ -158,6 +158,34 @@ class ExpenseServiceTest {
   }
 
   @Test
+  void previewStatement_skipsZeroRowsAndKeepsTwinPaymentFromAnotherStatementPeriod() {
+    String csv = String.join("\n",
+        "Data,Opis,Kwota,Waluta",
+        "2026-01-31,KIOSK,-10.00,PLN",
+        "2026-01-31,CARD CHECK,0.00,PLN"
+    );
+    MockMultipartFile file = new MockMultipartFile(
+        "file", "feb.csv", "text/csv", csv.getBytes(StandardCharsets.UTF_8));
+    String storedFp = new TransactionFingerprinter().computeFingerprints(List.of(
+        new ParsedTransactionRow(
+            LocalDate.of(2026, 1, 31), LocalDate.of(2026, 1, 31), "KIOSK", new BigDecimal("-10.00"), "PLN")
+    )).get(0);
+
+    when(transactionRepository.findFingerprintsOutsidePeriod(eq(userId), anyCollection(), any(), any()))
+        .thenAnswer(inv -> inv.<java.util.Collection<String>>getArgument(1).contains(storedFp)
+            ? Set.of(storedFp) : Set.of());
+    when(transactionRepository.findExistingFingerprints(eq(userId), anyCollection())).thenReturn(Set.of());
+    when(ruleRepository.findAllByUserIdOrderByUpdatedAtDesc(userId)).thenReturn(List.of());
+
+    StatementPreviewResponse preview =
+        expenseService.previewStatement(userId, file, BankProfile.AUTO, false, null);
+
+    assertThat(preview.transactions()).hasSize(1);
+    assertThat(preview.transactions().get(0).duplicate()).isFalse();
+    assertThat(preview.transactions().get(0).fingerprint()).isNotEqualTo(storedFp);
+  }
+
+  @Test
   void previewStatement_throwsNoTransactionsForHeaderOnlyCsvAndUnparseablePdf() {
     String headerOnlyCsv = "#Data operacji;#Opis operacji;#Kwota;#Saldo po operacji\n";
     MockMultipartFile csvFile = new MockMultipartFile(

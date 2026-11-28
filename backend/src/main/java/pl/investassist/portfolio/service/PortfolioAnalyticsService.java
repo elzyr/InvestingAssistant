@@ -33,6 +33,7 @@ import java.math.RoundingMode;
 import java.time.Clock;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
+import java.time.ZoneId;
 import java.time.temporal.ChronoUnit;
 import java.util.HashMap;
 import java.util.LinkedHashSet;
@@ -64,7 +65,8 @@ public class PortfolioAnalyticsService {
             InstrumentRepository instrumentRepository,
             MarketDataPort marketDataPort,
             PlatformTransactionManager transactionManager) {
-        this(transactionRepository, instrumentRepository, marketDataPort, Clock.systemDefaultZone(), transactionManager);
+        this(transactionRepository, instrumentRepository, marketDataPort,
+                Clock.system(ZoneId.of("Europe/Warsaw")), transactionManager);
     }
 
     PortfolioAnalyticsService(
@@ -163,7 +165,7 @@ public class PortfolioAnalyticsService {
     @Cacheable(
             value = CacheConfig.CACHE_PORTFOLIO_PROJECTION,
             condition = "@portfolioCacheService.isCacheEnabled(#portfolio.id)",
-            unless = "#result == null",
+            unless = "#result == null || #result.degraded()",
             key = "#portfolio.id + ':v' + @portfolioCacheService.versionOf(#portfolio.id) + ':' + #request.cacheKeySuffix()")
     public ProjectionResponse getProjection(Portfolio portfolio, ProjectionRequest request) {
         TaxMode resolvedTaxMode = request.effectiveTaxMode();
@@ -206,7 +208,8 @@ public class PortfolioAnalyticsService {
                 request.targetGoal(),
                 request.etfReturnOverridePct(),
                 42);
-        return marketDataPort.runMonteCarlo(mcReq);
+        ProjectionResponse projection = marketDataPort.runMonteCarlo(mcReq);
+        return projection != null && valuation.isDegraded() ? projection.asDegraded() : projection;
     }
 
     private static MarketDataPort.MonteCarloBondSeed buildMonteCarloBondSeed(

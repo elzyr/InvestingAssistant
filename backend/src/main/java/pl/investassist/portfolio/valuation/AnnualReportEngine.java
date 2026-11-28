@@ -236,8 +236,11 @@ public final class AnnualReportEngine {
             if (monthInflation != null) {
                 Double hurdle = null;
                 if (inflation != null && inflation.monthlyByYear() != null) {
+                    List<MetricsCalculator.CashFlow> flows =
+                            new ArrayList<>(ledger.snapshot().portfolioCashFlows());
+                    flows.addAll(step.completedBondCouponFlows());
                     hurdle = MetricsCalculator.compoundCpiPathHurdle(
-                            ledger.snapshot().portfolioCashFlows(), inflation.monthlyByYear(), targetDateTime);
+                            flows, inflation.monthlyByYear(), targetDateTime);
                 }
                 if (hurdle == null) {
                     List<MetricsCalculator.CostLot> activeLots = new ArrayList<>();

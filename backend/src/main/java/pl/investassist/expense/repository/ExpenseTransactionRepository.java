@@ -1,5 +1,6 @@
 package pl.investassist.expense.repository;
 
+import java.time.LocalDate;
 import java.util.Collection;
 import java.util.List;
 import java.util.Optional;
@@ -25,6 +26,18 @@ public interface ExpenseTransactionRepository extends JpaRepository<ExpenseTrans
       """)
   Set<String> findExistingFingerprints(
       @Param("userId") UUID userId, @Param("fingerprints") Collection<String> fingerprints);
+
+  @Query("""
+      SELECT t.fingerprint
+      FROM ExpenseTransaction t, ExpenseStatement s
+      WHERE s.id = t.statementId AND t.userId = :userId AND t.fingerprint IN :fingerprints
+        AND (s.periodEnd < :periodStart OR s.periodStart > :periodEnd)
+      """)
+  Set<String> findFingerprintsOutsidePeriod(
+      @Param("userId") UUID userId,
+      @Param("fingerprints") Collection<String> fingerprints,
+      @Param("periodStart") LocalDate periodStart,
+      @Param("periodEnd") LocalDate periodEnd);
 
   List<ExpenseTransaction> findAllByUserIdAndMerchantKey(UUID userId, String merchantKey);
 
