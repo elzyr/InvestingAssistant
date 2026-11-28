@@ -11,6 +11,7 @@ import java.util.EnumMap;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
@@ -58,8 +59,22 @@ public class ExpenseAnalyticsEngine {
     BigDecimal netInvestmentsSavings = BigDecimal.ZERO;
     BigDecimal totalInternalTransfers = BigDecimal.ZERO;
 
+    Set<AnalyticsTransaction> known = new LinkedHashSet<>(activeHistory);
+    known.addAll(activePeriod);
+    Map<AnalyticsTransaction, NettedExpense> knownExpenses = new LinkedHashMap<>();
+    List<AnalyticsTransaction> knownRefunds = new ArrayList<>();
+    for (AnalyticsTransaction tx : known) {
+      if (tx.flowKind() == FlowKind.EXPENSE) {
+        BigDecimal amount = tx.baseAmount() != null ? tx.baseAmount().abs() : BigDecimal.ZERO;
+        knownExpenses.put(tx, new NettedExpense(tx, amount));
+      } else if (tx.flowKind() == FlowKind.REFUND) {
+        knownRefunds.add(tx);
+      }
+    }
+    Map<AnalyticsTransaction, NettedExpense> refundTargets = new HashMap<>();
+    applyRefundNetting(new ArrayList<>(knownExpenses.values()), knownRefunds, refundTargets);
+
     List<NettedExpense> periodExpenses = new ArrayList<>();
-    List<AnalyticsTransaction> periodRefunds = new ArrayList<>();
 
     for (AnalyticsTransaction tx : activePeriod) {
       if (tx.needsReview()) {
@@ -74,14 +89,23 @@ public class ExpenseAnalyticsEngine {
         case INCOME -> totalIncome = totalIncome.add(absAmount);
         case INVESTMENT_SAVING -> netInvestmentsSavings = netInvestmentsSavings.add(signedAmount.negate());
         case INTERNAL_TRANSFER -> totalInternalTransfers = totalInternalTransfers.add(absAmount);
-        case EXPENSE -> periodExpenses.add(new NettedExpense(tx, absAmount));
-        case REFUND -> periodRefunds.add(tx);
+        case EXPENSE -> periodExpenses.add(knownExpenses.get(tx));
+        case REFUND -> {}
       }
     }
 
     BigDecimal totalInvestmentsSavings = netInvestmentsSavings.max(BigDecimal.ZERO);
     Set<AnalyticsTransaction> pairedPeriodRefunds = new HashSet<>();
-    BigDecimal totalRefundsNetted = applyRefundNetting(periodExpenses, periodRefunds, pairedPeriodRefunds);
+    Set<NettedExpense> periodTargets = new HashSet<>(periodExpenses);
+    refundTargets.forEach((refund, target) -> {
+      if (periodTargets.contains(target)) {
+        pairedPeriodRefunds.add(refund);
+      }
+    });
+    BigDecimal totalRefundsNetted = BigDecimal.ZERO;
+    for (AnalyticsTransaction refund : pairedPeriodRefunds) {
+      totalRefundsNetted = totalRefundsNetted.add(refund.baseAmount().abs());
+    }
 
     BigDecimal totalExpenses = BigDecimal.ZERO;
     for (NettedExpense ne : periodExpenses) {
@@ -195,17 +219,17 @@ public class ExpenseAnalyticsEngine {
     return out;
   }
 
-  private static BigDecimal applyRefundNetting(
+  private static void applyRefundNetting(
       List<NettedExpense> expenses, List<AnalyticsTransaction> refunds) {
-    return applyRefundNetting(expenses, refunds, null);
+    applyRefundNetting(expenses, refunds, null);
   }
 
-  private static BigDecimal applyRefundNetting(
+  private static void applyRefundNetting(
       List<NettedExpense> expenses,
       List<AnalyticsTransaction> refunds,
-      Set<AnalyticsTransaction> pairedRefundSink) {
+      Map<AnalyticsTransaction, NettedExpense> pairedRefundSink) {
     if (expenses.isEmpty() || refunds.isEmpty()) {
-      return BigDecimal.ZERO;
+      return;
     }
 
     List<AnalyticsTransaction> sortedRefunds = new ArrayList<>(refunds);
@@ -215,7 +239,6 @@ public class ExpenseAnalyticsEngine {
             Comparator.reverseOrder())
         .thenComparing(AnalyticsTransaction::txDate, Comparator.nullsLast(Comparator.naturalOrder())));
 
-    BigDecimal totalNetted = BigDecimal.ZERO;
     for (AnalyticsTransaction refund : sortedRefunds) {
       BigDecimal refundAmt = refund.baseAmount() != null ? refund.baseAmount().abs() : BigDecimal.ZERO;
       if (refundAmt.compareTo(BigDecimal.ZERO) <= 0) {
@@ -230,13 +253,11 @@ public class ExpenseAnalyticsEngine {
       if (bestMatch != null) {
         bestMatch.pairedWithRefund = true;
         bestMatch.netAmount = bestMatch.netAmount.subtract(refundAmt).max(BigDecimal.ZERO);
-        totalNetted = totalNetted.add(refundAmt);
         if (pairedRefundSink != null) {
-          pairedRefundSink.add(refund);
+          pairedRefundSink.put(refund, bestMatch);
         }
       }
     }
-    return totalNetted;
   }
 
   private static NettedExpense findRefundTarget(

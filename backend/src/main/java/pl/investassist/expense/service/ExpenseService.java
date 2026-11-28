@@ -142,9 +142,14 @@ public class ExpenseService {
     String fileName = file.getOriginalFilename();
     IngestedStatement ingested = ingestionService.ingest(fileName, bytes, bankProfile);
 
-    List<ParsedTransactionRow> rows = ingested.rows();
+    List<ParsedTransactionRow> rows = ingested.rows().stream()
+        .filter(r -> ExpenseSupport.scale2(r.amount()).signum() != 0)
+        .toList();
     ReconciliationResult reconciliation = ingested.reconciliation();
     List<String> warnings = new ArrayList<>(ingested.warnings());
+    if (rows.size() < ingested.rows().size()) {
+      warnings.add("Skipped zero-amount rows: " + (ingested.rows().size() - rows.size()));
+    }
 
     if (rows.isEmpty()) {
       throw new IllegalArgumentException("error.expense_no_transactions");
@@ -156,7 +161,8 @@ public class ExpenseService {
         .map(Enum::name)
         .orElse(Currency.PLN.name());
     String accountOwnerName = user.map(ExpenseService::resolveOwnerName).orElse(null);
-    List<String> fingerprints = fingerprinter.computeFingerprints(rows);
+    List<String> fingerprints =
+        fingerprintRows(userId, rows, ingested.periodStart(), ingested.periodEnd());
     Set<String> existingFingerprints = findExistingFingerprintsChunked(userId, fingerprints);
     boolean alreadyUploaded =
         statementRepository.existsByUserIdAndFileHashSha256(userId, ingested.fileHashSha256());
@@ -308,22 +314,22 @@ public class ExpenseService {
             skippedDuplicates,
             st.getCreatedAt() != null ? st.getCreatedAt().toInstant(ZoneOffset.UTC) : Instant.now());
       }
-      if (statementRepository.existsByUserIdAndFileHashSha256(userId, fileHash)) {
-        return new StatementSummaryResponse(
-            null,
-            truncate(request.fileName(), 255),
-            request.format(),
-            request.bankProfile(),
-            truncate(request.accountLabel(), 120),
-            truncate(Currency.normalizeCode(request.currency(), "PLN"), 8),
-            request.periodStart(),
-            request.periodEnd(),
-            request.reconciliationStatus(),
-            request.reconciliationDelta(),
-            0,
-            skippedDuplicates,
-            Instant.now());
-      }
+    }
+    if (toSave.isEmpty() && !items.isEmpty()) {
+      return new StatementSummaryResponse(
+          null,
+          truncate(request.fileName(), 255),
+          request.format(),
+          request.bankProfile(),
+          truncate(request.accountLabel(), 120),
+          truncate(Currency.normalizeCode(request.currency(), "PLN"), 8),
+          request.periodStart(),
+          request.periodEnd(),
+          request.reconciliationStatus(),
+          request.reconciliationDelta(),
+          0,
+          skippedDuplicates,
+          Instant.now());
     }
 
     ExpenseStatement statement = new ExpenseStatement();
@@ -724,6 +730,30 @@ public class ExpenseService {
     return existing;
   }
 
+  private List<String> fingerprintRows(
+      UUID userId, List<ParsedTransactionRow> rows, LocalDate periodStart, LocalDate periodEnd) {
+    List<String> fingerprints = fingerprinter.computeFingerprints(rows);
+    if (periodStart == null || periodEnd == null) {
+      return fingerprints;
+    }
+    Set<String> otherPeriods = new HashSet<>();
+    while (otherPeriods.addAll(
+        findFingerprintsOutsidePeriod(userId, fingerprints, periodStart, periodEnd))) {
+      fingerprints = fingerprinter.computeFingerprints(rows, otherPeriods);
+    }
+    return fingerprints;
+  }
+
+  private Set<String> findFingerprintsOutsidePeriod(
+      UUID userId, List<String> fingerprints, LocalDate periodStart, LocalDate periodEnd) {
+    Set<String> matches = new HashSet<>();
+    for (int i = 0; i < fingerprints.size(); i += FINGERPRINT_CHUNK_SIZE) {
+      List<String> chunk = fingerprints.subList(i, Math.min(i + FINGERPRINT_CHUNK_SIZE, fingerprints.size()));
+      matches.addAll(transactionRepository.findFingerprintsOutsidePeriod(userId, chunk, periodStart, periodEnd));
+    }
+    return matches;
+  }
+
   private static void validateCommitItem(CommitTransactionItem item) {
     if (item == null || item.txDate() == null) {
       throw new IllegalArgumentException("Transaction date is required");
@@ -731,7 +761,7 @@ public class ExpenseService {
     if (item.amount() == null || item.amount().compareTo(BigDecimal.ZERO) == 0) {
       throw new IllegalArgumentException("Transaction amount must be non-zero");
     }
-    if (item.baseAmount() == null || item.baseAmount().signum() != item.amount().signum()) {
+    if (item.baseAmount() == null || item.baseAmount().signum() * item.amount().signum() < 0) {
       throw new IllegalArgumentException("Base amount must match transaction amount sign");
     }
     if (item.fxRate() == null || item.fxRate().compareTo(BigDecimal.ZERO) <= 0) {

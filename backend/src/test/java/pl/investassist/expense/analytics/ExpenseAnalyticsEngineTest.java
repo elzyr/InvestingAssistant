@@ -220,6 +220,21 @@ class ExpenseAnalyticsEngineTest {
   }
 
   @Test
+  void analyze_netsLaterMonthRefundIntoPurchasePeriod() {
+    AnalyticsTransaction purchase = tx(
+        LocalDate.of(2026, 1, 28), "zalando", "Zalando", "-500.00", FlowKind.EXPENSE, ExpenseCategory.SHOPPING);
+    AnalyticsTransaction refund = tx(
+        LocalDate.of(2026, 2, 3), "zalando", "Zalando Zwrot", "500.00", FlowKind.REFUND, ExpenseCategory.REFUND);
+
+    ExpenseAnalyticsResult result = engine.analyze(
+        List.of(purchase), List.of(purchase, refund), "PLN",
+        LocalDate.of(2026, 1, 1), LocalDate.of(2026, 1, 31));
+
+    assertThat(result.kpis().totalExpenses()).isEqualByComparingTo("0.00");
+    assertThat(result.kpis().totalRefundsNetted()).isEqualByComparingTo("500.00");
+  }
+
+  @Test
   void analyze_netsInvestmentWithdrawalsAndFloorsAtZero() {
     LocalDate start = LocalDate.of(2026, 10, 1);
     LocalDate end = LocalDate.of(2026, 10, 31);

@@ -1,10 +1,12 @@
 package pl.investassist.expense.llm;
 
 import java.io.IOException;
+import java.net.ConnectException;
 import java.math.BigDecimal;
 import java.math.RoundingMode;
 import java.net.URI;
 import java.net.http.HttpClient;
+import java.net.http.HttpConnectTimeoutException;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.nio.charset.StandardCharsets;
@@ -120,6 +122,7 @@ public class OllamaSystemOneLlmClient implements ExpenseLlmPort {
 
     int limit = Math.min(MAX_BATCH_ITEMS, items.size());
     Instant deadline = Instant.now().plus(MAX_BATCH_DURATION);
+    RuntimeException failure = null;
     for (int i = 0; i < limit; i++) {
       if (Instant.now().isAfter(deadline)) {
         log.warn("Ollama SystemOne batch deadline exceeded after {} items", results.size());
@@ -137,7 +140,14 @@ public class OllamaSystemOneLlmClient implements ExpenseLlmPort {
         }
       } catch (RuntimeException e) {
         log.warn("Ollama SystemOne classification skipped for item={}: {}", item.id(), e.getMessage());
+        failure = e;
+        if (e.getCause() instanceof ConnectException || e.getCause() instanceof HttpConnectTimeoutException) {
+          break;
+        }
       }
+    }
+    if (results.isEmpty() && failure != null) {
+      throw failure;
     }
     return results;
   }

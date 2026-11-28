@@ -178,8 +178,7 @@ def _is_db_history_complete(db_hist: List[Dict[str, Any]], start_date: str) -> b
     today = warsaw_today()
     if dates[0] > (req_start + datetime.timedelta(days=7)):
         return False
-    min_fresh_date = _last_expected_trading_day(today) - datetime.timedelta(days=2)
-    if dates[-1] < min_fresh_date:
+    if dates[-1] < _last_expected_trading_day(today):
         return False
     for prev_dt, cur_dt in zip(dates, dates[1:]):
         if (cur_dt - prev_dt).days > 10:

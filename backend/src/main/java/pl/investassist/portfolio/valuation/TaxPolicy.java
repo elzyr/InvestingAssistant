@@ -90,6 +90,18 @@ public final class TaxPolicy {
       BigDecimal openGrossTotal,
       BigDecimal openCostTotal,
       boolean skipTax) {
+    return computePortfolioTax(
+        disposals, payouts, openGrossTotal, openCostTotal, BigDecimal.ZERO, null, skipTax);
+  }
+
+  public static PortfolioTaxResult computePortfolioTax(
+      List<CapitalDisposalEvent> disposals,
+      List<Art30aPayoutEvent> payouts,
+      BigDecimal openGrossTotal,
+      BigDecimal openCostTotal,
+      BigDecimal openBondGain,
+      Integer liquidationYear,
+      boolean skipTax) {
     if (skipTax) {
       return new PortfolioTaxResult(
           BigDecimal.ZERO, BigDecimal.ZERO, BigDecimal.ZERO, BigDecimal.ZERO, BigDecimal.ZERO, List.of());
@@ -120,8 +132,55 @@ public final class TaxPolicy {
       }
     }
 
-    List<LossBucket> losses = new ArrayList<>();
     BigDecimal settledCapitalTax = BigDecimal.ZERO;
+    for (Map.Entry<Integer, BigDecimal> entry : capitalTaxByYear(capitalByYear).entrySet()) {
+      int year = entry.getKey();
+      BigDecimal yearCapitalTax = entry.getValue();
+      settledCapitalTax = settledCapitalTax.add(yearCapitalTax);
+      LocalDateTime taxDate = latestDisposalByYear.getOrDefault(year, LocalDateTime.of(year, 12, 31, 23, 59));
+      settledTaxFlows.add(new MetricsCalculator.CashFlow(-yearCapitalTax.doubleValue(), taxDate));
+    }
+
+    if (payouts != null) {
+      for (Art30aPayoutEvent p : payouts) {
+        BigDecimal payoutTax = computeArt30aTotalTax(p.grossBase(), p.withholdingTaxPct(), false);
+        settledArt30aTax = settledArt30aTax.add(payoutTax);
+        if (payoutTax.compareTo(BigDecimal.ZERO) > 0 && p.executedAt() != null) {
+          settledTaxFlows.add(new MetricsCalculator.CashFlow(-payoutTax.doubleValue(), p.executedAt()));
+        }
+      }
+    }
+
+    BigDecimal settledTax = settledCapitalTax.add(settledArt30aTax);
+    BigDecimal safeGross = openGrossTotal != null ? openGrossTotal.max(BigDecimal.ZERO) : BigDecimal.ZERO;
+    BigDecimal safeCost = openCostTotal != null ? openCostTotal : BigDecimal.ZERO;
+    BigDecimal hypotheticalOpenTax =
+        safeGross.compareTo(BigDecimal.ZERO) > 0
+            ? computeBelka(safeGross.subtract(safeCost), false).min(safeGross)
+            : BigDecimal.ZERO;
+    if (liquidationYear != null) {
+      BigDecimal capitalGain =
+          safeGross.subtract(safeCost)
+              .subtract(openBondGain != null ? openBondGain : BigDecimal.ZERO)
+              .max(BigDecimal.ZERO);
+      TreeMap<Integer, BigDecimal> liquidated = new TreeMap<>(capitalByYear);
+      liquidated.merge(liquidationYear, capitalGain, BigDecimal::add);
+      BigDecimal extraTax =
+          capitalTaxByYear(liquidated).values().stream()
+              .reduce(BigDecimal.ZERO, BigDecimal::add)
+              .subtract(settledCapitalTax);
+      BigDecimal lossRelief = computeBelka(capitalGain, false).subtract(extraTax).max(BigDecimal.ZERO);
+      hypotheticalOpenTax = hypotheticalOpenTax.subtract(lossRelief).max(BigDecimal.ZERO);
+    }
+    BigDecimal totalTax = settledTax.add(hypotheticalOpenTax);
+
+    return new PortfolioTaxResult(
+        settledCapitalTax, settledArt30aTax, settledTax, hypotheticalOpenTax, totalTax, List.copyOf(settledTaxFlows));
+  }
+
+  private static TreeMap<Integer, BigDecimal> capitalTaxByYear(TreeMap<Integer, BigDecimal> capitalByYear) {
+    List<LossBucket> losses = new ArrayList<>();
+    TreeMap<Integer, BigDecimal> taxByYear = new TreeMap<>();
     for (Map.Entry<Integer, BigDecimal> entry : capitalByYear.entrySet()) {
       int year = entry.getKey();
       BigDecimal netGain = entry.getValue();
@@ -146,35 +205,12 @@ public final class TaxPolicy {
           }
         }
         BigDecimal yearCapitalTax = computeBelka(remainingGain, false);
-        settledCapitalTax = settledCapitalTax.add(yearCapitalTax);
         if (yearCapitalTax.compareTo(BigDecimal.ZERO) > 0) {
-          LocalDateTime taxDate = latestDisposalByYear.getOrDefault(year, LocalDateTime.of(year, 12, 31, 23, 59));
-          settledTaxFlows.add(new MetricsCalculator.CashFlow(-yearCapitalTax.doubleValue(), taxDate));
+          taxByYear.put(year, yearCapitalTax);
         }
       }
     }
-
-    if (payouts != null) {
-      for (Art30aPayoutEvent p : payouts) {
-        BigDecimal payoutTax = computeArt30aTotalTax(p.grossBase(), p.withholdingTaxPct(), false);
-        settledArt30aTax = settledArt30aTax.add(payoutTax);
-        if (payoutTax.compareTo(BigDecimal.ZERO) > 0 && p.executedAt() != null) {
-          settledTaxFlows.add(new MetricsCalculator.CashFlow(-payoutTax.doubleValue(), p.executedAt()));
-        }
-      }
-    }
-
-    BigDecimal settledTax = settledCapitalTax.add(settledArt30aTax);
-    BigDecimal safeGross = openGrossTotal != null ? openGrossTotal.max(BigDecimal.ZERO) : BigDecimal.ZERO;
-    BigDecimal safeCost = openCostTotal != null ? openCostTotal : BigDecimal.ZERO;
-    BigDecimal hypotheticalOpenTax =
-        safeGross.compareTo(BigDecimal.ZERO) > 0
-            ? computeBelka(safeGross.subtract(safeCost), false).min(safeGross)
-            : BigDecimal.ZERO;
-    BigDecimal totalTax = settledTax.add(hypotheticalOpenTax);
-
-    return new PortfolioTaxResult(
-        settledCapitalTax, settledArt30aTax, settledTax, hypotheticalOpenTax, totalTax, List.copyOf(settledTaxFlows));
+    return taxByYear;
   }
 
   public record PositionTaxBreakdown(

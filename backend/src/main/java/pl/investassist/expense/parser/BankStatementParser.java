@@ -948,7 +948,7 @@ public class BankStatementParser {
       s = s.substring(1, s.length() - 1).trim();
     }
 
-    s = s.replaceAll("(?i)\\b(PLN|EUR|USD|GBP|CHF|CZK|NOK|SEK|DKK|JPY|CAD|AUD|HUF|zł|zl)\\b", "")
+    s = s.replaceAll("(?iu)(?<!\\p{L})(PLN|EUR|USD|GBP|CHF|CZK|NOK|SEK|DKK|JPY|CAD|AUD|HUF|zł|zl)(?!\\p{L})", "")
         .replace("$", "")
         .replace("€", "")
         .replace("£", "")

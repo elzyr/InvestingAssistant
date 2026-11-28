@@ -79,6 +79,8 @@ class BankStatementParserAndIngestionTest {
   @Test
   void parseAmountCsvAndText_handleLeadingZeroDecimalsUnescapedQuotesAndForeignDescriptionAmount() {
     assertThat(BankStatementParser.parseAmount("0.500")).isEqualByComparingTo("0.50");
+    assertThat(BankStatementParser.parseAmount("-45,99 zł")).isEqualByComparingTo("-45.99");
+    assertThat(BankStatementParser.parseAmount("12,50PLN")).isEqualByComparingTo("12.50");
     assertThat(BankStatementParser.parseAmount("0,500")).isEqualByComparingTo("0.50");
 
     String unescapedQuoteCsv = String.join("\n",

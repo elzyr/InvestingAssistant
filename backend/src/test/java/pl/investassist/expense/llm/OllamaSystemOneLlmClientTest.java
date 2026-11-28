@@ -511,17 +511,17 @@ class OllamaSystemOneLlmClientTest {
 
     statusCode.set(500);
     defaultResponseBody.set("{\"error\":\"model unavailable\"}");
-    Map<String, LlmCategorySuggestion> httpErrorResult = client.classifyUnknowns(List.of(
+    org.assertj.core.api.Assertions.assertThatThrownBy(() -> client.classifyUnknowns(List.of(
         new LlmClassifyInput("1", "SKLEP A", new BigDecimal("-10.00"), "PLN"),
-        new LlmClassifyInput("2", "SKLEP B", new BigDecimal("-20.00"), "PLN")));
-    assertThat(httpErrorResult).isEmpty();
+        new LlmClassifyInput("2", "SKLEP B", new BigDecimal("-20.00"), "PLN"))))
+        .hasMessageContaining("HTTP 500");
     assertThat(requestCount.get()).isEqualTo(2);
 
     server.stop(0);
     server = null;
-    Map<String, LlmCategorySuggestion> connectionRefusedResult = client.classifyUnknowns(List.of(
-        new LlmClassifyInput("1", "SKLEP A", new BigDecimal("-10.00"), "PLN")));
-    assertThat(connectionRefusedResult).isEmpty();
+    org.assertj.core.api.Assertions.assertThatThrownBy(() -> client.classifyUnknowns(List.of(
+        new LlmClassifyInput("1", "SKLEP A", new BigDecimal("-10.00"), "PLN"))))
+        .hasMessageContaining("connection failed");
   }
 
   @Test

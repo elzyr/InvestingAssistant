@@ -313,12 +313,12 @@ class AnalyticsService:
                     vols = hist["Volume"].values if "Volume" in hist.columns else [0] * len(hist)
                     records = [
                         {
-                            "date": str(d)[:10],
+                            "date": d,
                             "close_price": round(float(c) * price_scale, 4),
                             "currency": currency,
                             "volume": max(0, int(finite_float(v, 0.0) or 0.0)),
                         }
-                        for d, c, v in zip(hist[date_col].values, hist["Close"].values, vols)
+                        for d, c, v in zip(hist[date_col].astype(str).str[:10], hist["Close"].values, vols)
                     ]
                     if replace_history:
                         market_history_repo.replace_symbol_prices(sym, records, currency)

@@ -133,9 +133,10 @@ public final class ValuationSupport {
     public record BondLotsStepResult(
             BigDecimal carryingValueNative,
             BigDecimal completedCouponsNative,
-            boolean rateUnavailable) {
+            boolean rateUnavailable,
+            List<MetricsCalculator.CashFlow> couponFlowsNative) {
         public BondLotsStepResult(BigDecimal carryingValueNative, BigDecimal completedCouponsNative) {
-            this(carryingValueNative, completedCouponsNative, false);
+            this(carryingValueNative, completedCouponsNative, false, List.of());
         }
     }
 
@@ -146,11 +147,12 @@ public final class ValuationSupport {
             java.util.NavigableMap<LocalDate, BigDecimal> nbpReferenceRates,
             String fallbackSeriesName) {
         if (lots == null || lots.isEmpty()) {
-            return new BondLotsStepResult(BigDecimal.ZERO, BigDecimal.ZERO, false);
+            return new BondLotsStepResult(BigDecimal.ZERO, BigDecimal.ZERO);
         }
         BigDecimal total = BigDecimal.ZERO;
         BigDecimal coupons = BigDecimal.ZERO;
         boolean anyRateUnavailable = false;
+        List<MetricsCalculator.CashFlow> couponFlows = new ArrayList<>();
         for (PortfolioLedger.FifoLot lot : lots) {
             if (lot.initialQuantity().compareTo(BigDecimal.ZERO) <= 0) {
                 continue;
@@ -172,11 +174,13 @@ public final class ValuationSupport {
             for (BondValuationEngine.CompletedCoupon c : lotVal.completedCoupons()) {
                 BigDecimal qtyAtCoupon = lot.quantityAt(c.couponDate());
                 if (qtyAtCoupon.compareTo(BigDecimal.ZERO) > 0) {
-                    coupons = coupons.add(qtyAtCoupon.multiply(BigDecimal.valueOf(c.grossCouponNative())));
+                    BigDecimal coupon = qtyAtCoupon.multiply(BigDecimal.valueOf(c.grossCouponNative()));
+                    coupons = coupons.add(coupon);
+                    couponFlows.add(new MetricsCalculator.CashFlow(coupon.doubleValue(), c.couponDate().atStartOfDay()));
                 }
             }
         }
-        return new BondLotsStepResult(total, coupons, anyRateUnavailable);
+        return new BondLotsStepResult(total, coupons, anyRateUnavailable, couponFlows);
     }
 
     public static String resolveCategoryCode(Instrument inst, Transaction sampleTx) {

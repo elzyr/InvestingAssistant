@@ -39,9 +39,12 @@ public class ExpenseClassifier {
       "xtb", "bossa", "dm bos", "degiro", "interactive brokers", "ibkr",
       "trading 212", "trading212", "emakler", "mbank makler", "bm pko",
       "obligacjeskarbowe", "obligacje skarbowe", "obligacje",
-      "ike", "ikze", "ppk", "finax", "portu", "inpzu", "goldsaver",
+      "ike", "ikze", "ppk", "finax", "portu.pl", "portu pl", "inpzu", "goldsaver",
       "konto oszczednosciowe", "cel oszczednosciowy", "lokata", "savings vault",
       "fundusz inwestycyjny", "tfi", "brokerage");
+
+  private static final List<String> SALARY_PHRASES = List.of(
+      "wynagrodzenie", "pensja", "salary", "payroll", "emerytura", "stypendium");
 
   private static final List<String> REFUND_PHRASES = List.of(
       "zwrot", "refund", "reversal", "chargeback", "cashback", "korekta", "anulowanie");
@@ -297,6 +300,10 @@ public class ExpenseClassifier {
       BigDecimal amount) {
     if (matchesAny(asciiRaw, INTERNAL_TRANSFER_PHRASES)) {
       return buildRuleEngine(row, norm, FlowKind.INTERNAL_TRANSFER, ExpenseCategory.INTERNAL_TRANSFER, "0.95");
+    }
+
+    if (amount.compareTo(BigDecimal.ZERO) > 0 && matchesAny(asciiRaw, SALARY_PHRASES)) {
+      return buildRuleEngine(row, norm, FlowKind.INCOME, ExpenseCategory.INCOME, "0.92");
     }
 
     ExpenseCategory brandCat = normalizer.lookupBrandCategory(norm.merchantKey());
